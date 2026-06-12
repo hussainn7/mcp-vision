@@ -1,0 +1,36 @@
+[project]
+name = "screen-agent"
+version = "0.1.0"
+description = "Local AI screen agent using Ollama, OmniParser, and MCP"
+requires-python = ">=3.12"
+dependencies = [
+    "ollama>=0.3.0",
+    "mcp[cli]>=1.0.0",
+    "pyautogui>=0.9.54",
+    "mss>=9.0.2",
+    "Pillow>=10.0.0",
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "transformers>=4.40.0",
+    "huggingface_hub>=0.22.0",
+    "supervision>=0.19.0",
+    "ultralytics>=8.2.0",
+    "opencv-python>=4.9.0",
+    "numpy>=1.26.0",
+    "einops>=0.7.0",
+    "timm>=0.9.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "rich>=13.0.0",
+    "loguru>=0.7.0",
+]
+
+[project.scripts]
+screen-agent = "phase3_orchestrator.agent:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["phase1_vision", "phase2_mcp", "phase3_orchestrator"]

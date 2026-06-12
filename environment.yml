@@ -1,0 +1,37 @@
+name: screen-agent
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    # OmniParser deps (pinned to match the repo's requirements.txt)
+    - torch
+    - torchvision
+    - supervision==0.18.0
+    - ultralytics==8.3.70
+    - numpy==1.26.4
+    - opencv-python
+    - opencv-python-headless
+    - transformers
+    - einops==0.8.0
+    - timm
+    - accelerate
+    - easyocr
+    - paddlepaddle
+    - paddleocr
+    - dill
+    - openai
+    - requests
+    # agent deps
+    - ollama>=0.3.0
+    - mcp[cli]>=1.0.0
+    - pyautogui>=0.9.54
+    - mss>=9.0.2
+    - Pillow>=10.0.0
+    - huggingface_hub>=0.22.0
+    - pydantic>=2.0.0
+    - pydantic-settings>=2.0.0
+    - rich>=13.0.0
+    - loguru>=0.7.0

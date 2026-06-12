@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Model weights (too large for git, download via scripts/download_weights.py)
+weights/icon_detect/model.pt
+weights/icon_caption_florence/model.safetensors
+
+# Runtime outputs (screenshots, element JSONs)
+outputs/*.png
+outputs/*.jpg
+outputs/elements_*.json
+
+# Environment config
+.env
+*.env.local
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
