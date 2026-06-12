@@ -142,6 +142,57 @@ def type_code(text: str, interval: float = 0.02) -> str:
     return f"Typed: '{preview}{'...' if len(text) > 50 else ''}'"
 
 
+def _press_key_applescript(keys: list[str]) -> bool:
+    """
+    Simulate hotkey press on macOS using native AppleScript System Events.
+    This bypasses the issue where macOS drops virtual hotkeys sent via pyautogui.
+    """
+    import subprocess
+    if not keys:
+        return False
+
+    modifiers_map = {
+        "cmd": "command down",
+        "ctrl": "control down",
+        "alt": "option down",
+        "shift": "shift down",
+    }
+
+    # Extract active modifiers and target key
+    mods = [modifiers_map[k] for k in keys[:-1] if k in modifiers_map]
+    target_key = keys[-1]
+
+    # Map target key to AppleScript key codes/strings
+    key_codes = {
+        "space": 49,
+        "enter": 36,
+        "return": 36,
+        "tab": 48,
+        "escape": 53,
+        "up": 126,
+        "down": 125,
+        "left": 123,
+        "right": 124,
+    }
+
+    using_clause = ""
+    if mods:
+        using_clause = " using {" + ", ".join(mods) + "}"
+
+    if target_key in key_codes:
+        script = f'tell application "System Events" to key code {key_codes[target_key]}{using_clause}'
+    else:
+        # Standard character keystroke
+        script = f'tell application "System Events" to keystroke "{target_key}"{using_clause}'
+
+    try:
+        subprocess.run(["osascript", "-e", script], check=True)
+        return True
+    except Exception as e:
+        logger.error(f"AppleScript hotkey simulation failed: {e}")
+        return False
+
+
 def press_key(key: str) -> str:
     """
     Press a single key or keyboard shortcut.
@@ -155,16 +206,44 @@ def press_key(key: str) -> str:
     Returns:
         a confirmation string
     """
-    logger.info(f"Pressing key: {key}")
+    raw_key = key
+    key_normalized = key.lower().strip()
 
-    if "+" in key:
-        keys = [k.strip() for k in key.split("+")]
-        pyautogui.hotkey(*keys)
+    # Mapping common variations to standard PyAutoGUI names
+    key_map = {
+        "command": "cmd",
+        "win": "cmd",
+        "windows": "cmd",
+        "control": "ctrl",
+        "option": "alt",
+    }
+
+    if "+" in key_normalized:
+        parts = [p.strip() for p in key_normalized.split("+")]
+        keys = [key_map.get(p, p) for p in parts]
+        logger.info(f"Pressing hotkey: {keys} (parsed from '{raw_key}')")
+        
+        # On macOS, use native AppleScript system events to reliably register key combos
+        if sys.platform == "darwin":
+            success = _press_key_applescript(keys)
+            if not success:
+                pyautogui.hotkey(*keys)
+        else:
+            pyautogui.hotkey(*keys)
     else:
-        pyautogui.press(key)
+        normalized = key_map.get(key_normalized, key_normalized)
+        logger.info(f"Pressing key: {normalized} (parsed from '{raw_key}')")
+        
+        # For single special keys on macOS, we can also use AppleScript for reliability
+        if sys.platform == "darwin" and normalized in ["space", "enter", "return", "tab", "escape"]:
+            success = _press_key_applescript([normalized])
+            if not success:
+                pyautogui.press(normalized)
+        else:
+            pyautogui.press(normalized)
 
     time.sleep(0.05)
-    return f"Pressed: {key}"
+    return f"Pressed: {key_normalized}"
 
 
 def scroll_at_element(element_id: int, direction: str = "down", clicks: int = 3) -> str:

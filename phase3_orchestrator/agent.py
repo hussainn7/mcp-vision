@@ -45,6 +45,7 @@ from phase2_mcp.tools import (
 )
 from phase3_orchestrator.prompts import (
     SYSTEM_PROMPT_FIGMA_TO_VSCODE,
+    SYSTEM_PROMPT_GENERAL,
     build_user_message,
     format_elements_summary,
 )
@@ -190,7 +191,11 @@ def execute_tool_call(tool_call: str) -> str:
         return f"ERROR: {e}"
 
 
-def run_agent_cycle(task: str, history: list[dict]) -> tuple[str, bool, list[dict]]:
+def run_agent_cycle(
+    task: str,
+    history: list[dict],
+    system_prompt: str = SYSTEM_PROMPT_GENERAL,
+) -> tuple[str, bool, list[dict]]:
     """
     Run one full cycle of the agent loop.
 
@@ -200,6 +205,7 @@ def run_agent_cycle(task: str, history: list[dict]) -> tuple[str, bool, list[dic
     Args:
         task: the task description
         history: conversation history so far
+        system_prompt: the system prompt text to guide the model
 
     Returns:
         (result_message, is_done, updated_history)
@@ -232,7 +238,7 @@ def run_agent_cycle(task: str, history: list[dict]) -> tuple[str, bool, list[dic
     response = call_ollama(
         image_b64=image_b64,
         user_message=user_message,
-        system_prompt=SYSTEM_PROMPT_FIGMA_TO_VSCODE,
+        system_prompt=system_prompt,
         history=history,
     )
 
@@ -266,13 +272,18 @@ def run_agent_cycle(task: str, history: list[dict]) -> tuple[str, bool, list[dic
         return "PARSE_ERROR", False, history
 
 
-def run(task: str, max_cycles: int | None = None) -> None:
+def run(
+    task: str,
+    max_cycles: int | None = None,
+    system_prompt: str = SYSTEM_PROMPT_GENERAL,
+) -> None:
     """
     Main entry point. Runs the agent loop until the task is done or we hit max_cycles.
 
     Args:
         task: what you want the agent to do
         max_cycles: stop after this many cycles. None = run until done or Ctrl+C.
+        system_prompt: the system prompt text to guide the model
     """
     max_cycles = max_cycles or cfg.max_cycles
     history: list[dict] = []
@@ -292,7 +303,11 @@ def run(task: str, max_cycles: int | None = None) -> None:
 
             console.print(f"\n[bold]--- Cycle {cycle} ---[/bold]")
 
-            result, is_done, history = run_agent_cycle(task, history)
+            result, is_done, history = run_agent_cycle(
+                task,
+                history,
+                system_prompt=system_prompt,
+            )
 
             if is_done:
                 break
@@ -325,9 +340,16 @@ def main():
         default=None,
         help="stop after this many cycles (default: run until done)",
     )
+    parser.add_argument(
+        "--workflow",
+        choices=["general", "figma"],
+        default="general",
+        help="which system prompt workflow to use (default: general)",
+    )
     args = parser.parse_args()
 
-    run(task=args.task, max_cycles=args.max_cycles)
+    prompt = SYSTEM_PROMPT_GENERAL if args.workflow == "general" else SYSTEM_PROMPT_FIGMA_TO_VSCODE
+    run(task=args.task, max_cycles=args.max_cycles, system_prompt=prompt)
 
 
 if __name__ == "__main__":
