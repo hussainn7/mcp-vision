@@ -24,6 +24,9 @@ import sys
 import time
 from pathlib import Path
 
+# For drawing bounding boxes on screenshots
+from PIL import ImageDraw, ImageFont
+
 import ollama
 from loguru import logger
 from rich.console import Console
@@ -35,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import cfg
 from phase1_vision.capture import capture_screen
 from phase1_vision.parse_screen import parse_screen, save_results
+from phase1_vision.perception import get_perception_data, AccessibilityPermissionError, get_perception_method_name
 from phase2_mcp.tools import (
     click_element,
     get_screen_elements,
@@ -51,6 +55,54 @@ from phase3_orchestrator.prompts import (
 )
 
 console = Console()
+
+
+def _draw_bounding_boxes_on_screenshot(screenshot_img, elements):
+    """Draw numbered boxes on a screenshot from AX or Playwright element data."""
+    from PIL import ImageDraw, ImageFont
+
+    annotated = screenshot_img.copy()
+    draw = ImageDraw.Draw(annotated)
+
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 12)
+    except IOError:
+        font = ImageFont.load_default()
+
+    colors = {
+        "button": "red",
+        "link": "blue",
+        "textbox": "green",
+        "textarea": "green",
+        "checkbox": "purple",
+        "radiobutton": "purple",
+        "combobox": "orange",
+        "menuitem": "brown",
+        "tab": "pink",
+        "slider": "yellow",
+        "scrollbar": "gray",
+    }
+
+    for elem in elements:
+        box = elem.get("box", [0, 0, 0, 0])
+        if len(box) != 4:
+            continue
+        x1, y1, x2, y2 = box
+
+        elem_id = elem.get("id", 0)
+        role = elem.get("role", "unknown")
+        color = colors.get(role, "white")
+
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+
+        label_text = str(elem_id)
+        bbox = draw.textbbox((0, 0), label_text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        draw.rectangle([x1, y1, x1 + text_width + 4, y1 + text_height + 4], fill=color)
+        draw.text((x1 + 2, y1 + 2), label_text, fill="white", font=font)
+
+    return annotated
 
 
 def image_to_base64(img) -> str:
@@ -210,26 +262,40 @@ def run_agent_cycle(
     Returns:
         (result_message, is_done, updated_history)
     """
-    # step 1: capture the screen
-    console.print("[dim]Taking screenshot...[/dim]")
-    screenshot, _ = capture_screen(save=False)
+    console.print("[dim]Getting perception data...[/dim]")
+    try:
+        perception_data = get_perception_data()
+    except AccessibilityPermissionError as e:
+        console.print(f"[red]{str(e)}[/red]")
+        raise
 
-    # step 2: run OmniParser and immediately free its memory
-    console.print("[dim]Running OmniParser...[/dim]")
-    annotated, elements = parse_screen(screenshot)
-    del screenshot  # free the raw screenshot, we only need the annotated one now
-    gc.collect()
+    method = perception_data["method"]
+    elements = perception_data["elements"]
+    app_info = perception_data["app_info"]
 
-    # save the results so the tools can look up coordinates
-    timestamp = None
-    img_path, json_path = save_results(annotated, elements)
+    console.print(f"[green]Using {get_perception_method_name(method)} perception[/green]")
+    if app_info["name"]:
+        console.print(f"[dim]Focused app: {app_info['name']} ({app_info['bundle_id']})[/dim]")
+
+    screenshot_img, _ = capture_screen(save=False)
+
+    if method == "omniparser":
+        console.print("[dim]Running OmniParser...[/dim]")
+        annotated, elements = parse_screen(screenshot_img)
+        del screenshot_img
+    else:
+        console.print("[dim]Drawing bounding boxes...[/dim]")
+        annotated = _draw_bounding_boxes_on_screenshot(screenshot_img, elements)
+
+    save_results(annotated, elements)
 
     elements_summary = format_elements_summary(elements)
     console.print(f"[green]Found {len(elements)} elements[/green]")
 
-    # step 3: encode the annotated image and ask Ollama what to do
     image_b64 = image_to_base64(annotated)
-    del annotated  # free the image before loading the LLM
+    del annotated
+    if method != "omniparser":
+        del screenshot_img
     gc.collect()
 
     user_message = build_user_message(task, elements_summary)
@@ -317,6 +383,9 @@ def run(
             console.print(f"[dim]Waiting {cfg.loop_delay}s...[/dim]")
             time.sleep(cfg.loop_delay)
 
+    except AccessibilityPermissionError as e:
+        console.print(f"[red]{str(e)}[/red]")
+        console.print("[yellow]Agent terminated due to missing accessibility permissions.[/yellow]")
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted by user.[/yellow]")
 
