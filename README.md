@@ -2,14 +2,14 @@
 
 A local, autonomous AI agent that watches your screen, understands the visual layout, and executes native OS commands (clicking, typing) on your behalf. **No cloud APIs, no subscriptions, and zero data leaving your machine.**
 
-The architecture is built on a simple premise: bridge local vision models with standard OS automation. The pipeline captures a screenshot, processes it through Microsoft's OmniParser to generate a structured map of interactive elements, and feeds that layout to Llama 3.2 Vision via Ollama. The model then decides the next action, executing it through a clean, composable Model Context Protocol (MCP) server.
+The architecture is built on a simple premise: bridge local vision models with standard OS automation. The pipeline captures a screenshot, processes it through Microsoft's OmniParser to generate a structured map of interactive elements, and feeds that layout to Moondream via Ollama. The model then decides the next action, executing it through a clean, composable Model Context Protocol (MCP) server.
 
 ```mermaid
 graph TD
     A[Start Task] --> B[MSS: Capture Screen]
     B --> C[OmniParser: YOLO Element Detection]
     C --> D[Generate Labeled Bounding Box Image]
-    D --> E[Ollama: Llama 3.2 Vision Decision]
+    D --> E[Ollama: Moondream Decision]
     E --> F{Model Response}
     F -->|TOOL Call| G[PyAutoGUI: Execute Click/Type/Shortcut]
     G -->|Wait 2s| B

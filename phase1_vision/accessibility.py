@@ -21,6 +21,46 @@ from loguru import logger
 
 AXErrorSuccess = 0
 
+# Minimum confidence threshold - elements below this are filtered out
+MIN_CONFIDENCE = cfg.ax_confidence_threshold
+
+# Role confidence weights - standard Cocoa roles we trust highly
+ROLE_CONFIDENCE = {
+    "button": 0.95,
+    "textfield": 0.95,
+    "textarea": 0.95,
+    "checkbox": 0.95,
+    "radiobutton": 0.95,
+    "combobox": 0.9,
+    "list": 0.9,
+    "table": 0.9,
+    "outline": 0.85,
+    "scrollbar": 0.9,
+    "slider": 0.9,
+    "popupbutton": 0.9,
+    "menubutton": 0.9,
+    "tabgroup": 0.85,
+    "searchfield": 0.95,
+    "passwordfield": 0.95,
+    "statictext": 0.7,  # labels, not interactive
+    "group": 0.6,      # container, low signal
+    "window": 0.5,     # top-level container
+    "application": 0.4,# root element
+}
+
+# Subrole boosts
+SUBROLE_BOOST = {
+    "textfield": 0.05,
+    "securetextfield": 0.05,
+    "searchfield": 0.05,
+    "closebutton": 0.1,
+    "minimizebutton": 0.1,
+    "zoombutton": 0.1,
+}
+
+# Minimum confidence threshold - elements below this are filtered out
+MIN_CONFIDENCE = 0.5
+
 
 def _check_ax_permission() -> bool:
     if not HAS_PYOBJC_AX:
@@ -145,37 +185,59 @@ def _extract_element_role(ax_element: Any) -> str:
     return str(value) if value is not None else ""
 
 
-def _is_element_interactable(ax_element: Any) -> bool:
+def _compute_element_confidence(ax_element: Any) -> tuple[bool, float]:
+    """
+    Determine if element is interactable and compute confidence score.
+
+    Returns:
+        (is_interactable, confidence_score) where confidence is 0.0-1.0
+    """
     if not HAS_PYOBJC_AX or ax_element is None:
-        return False
+        return False, 0.0
 
     try:
+        # Base: check if enabled
         enabled_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXEnabledAttribute)
         if enabled_ref is False:
-            return False
+            return False, 0.0
 
         role = _extract_element_role(ax_element).lower()
+        confidence = ROLE_CONFIDENCE.get(role, 0.4)
+
+        # Boost for known subroles
+        subrole_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXSubroleAttribute)
+        if subrole_ref:
+            subrole = str(subrole_ref).lower()
+            confidence += SUBROLE_BOOST.get(subrole, 0.0)
+            # Some subroles imply interactability
+            if subrole in {"textfield", "securetextfield", "searchfield", "closebutton", "minimizebutton", "zoombutton"}:
+                confidence = max(confidence, 0.9)
+                return True, min(confidence, 1.0)
+
+        # Actions attribute is strong signal
+        actions_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXActionsAttribute)
+        if actions_ref:
+            action_names = [str(action).lower() for action in list(actions_ref)]
+            if any(name in {"press", "click", "toggle", "pick", "scroll"} for name in action_names):
+                confidence = max(confidence, 0.95)
+                return True, min(confidence, 1.0)
+
+        # Role-based interactability
         interactable_roles = {
             "button", "textfield", "textarea", "checkbox", "radiobutton",
             "combobox", "list", "table", "outline", "scrollbar", "slider",
             "popupbutton", "menubutton", "tabgroup", "searchfield", "passwordfield",
         }
+        is_interactable = role in interactable_roles or "button" in role or "field" in role
 
-        subrole_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXSubroleAttribute)
-        if subrole_ref:
-            subrole = str(subrole_ref).lower()
-            if subrole in {"textfield", "securetextfield", "searchfield"}:
-                return True
-
-        actions_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXActionsAttribute)
-        if actions_ref:
-            action_names = [str(action).lower() for action in list(actions_ref)]
-            if any(name in {"press", "click", "toggle", "pick", "scroll"} for name in action_names):
-                return True
-
-        return role in interactable_roles or "button" in role or "field" in role
+        return is_interactable, min(confidence, 1.0)
     except Exception:
-        return False
+        return False, 0.0
+
+
+def _is_element_interactable(ax_element: Any) -> bool:
+    """Backward-compatible wrapper."""
+    return _compute_element_confidence(ax_element)[0]
 
 
 @lru_cache(maxsize=32)
@@ -215,9 +277,11 @@ def _extract_ax_elements_internal() -> list[dict[str, Any]]:
                     "interactivity": False,
                     "role": _extract_element_role(app_element),
                     "title": title,
+                    "confidence": 0.5,
                 })
 
-        elements.sort(key=lambda e: (e["y"], e["x"]))
+        # Sort: interactable first, then by confidence desc, then by position
+        elements.sort(key=lambda e: (not e.get("interactivity", False), -e.get("confidence", 0.0), e["y"], e["x"]))
         for i, elem in enumerate(elements):
             elem["id"] = i + 1
 
@@ -251,19 +315,21 @@ def _extract_children_recursive(
             title = _extract_element_title(child)
             role = _extract_element_role(child)
             bounds = _extract_position_bounds(child)
+            is_interactable, confidence = _compute_element_confidence(child)
 
             if bounds and (title or role):
                 x, y, width, height = bounds
-                if width > 0 and height > 0:
+                if width > 0 and height > 0 and confidence >= MIN_CONFIDENCE:
                     elements.append({
                         "id": len(elements) + 1,
                         "label": title or f"{role} element",
                         "x": x + width // 2,
                         "y": y + height // 2,
                         "box": [x, y, x + width, y + height],
-                        "interactivity": _is_element_interactable(child),
+                        "interactivity": is_interactable,
                         "role": role,
                         "title": title,
+                        "confidence": confidence,
                     })
 
             _extract_children_recursive(child, elements, max_depth, current_depth + 1)

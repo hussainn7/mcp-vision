@@ -63,15 +63,20 @@ check("weights/icon_caption_florence/ exists", lambda: Path("weights/icon_captio
 print("\nChecking Ollama connectivity (optional)...")
 try:
     import ollama
-    models = ollama.list()
-    model_names = [m["name"] for m in models.get("models", [])]
-    if "llama3.2-vision:11b" in model_names:
-        print("  [OK] Ollama is running and llama3.2-vision:11b is available")
+    models_response = ollama.list()
+    if hasattr(models_response, "models"):
+        model_names = [m.model for m in models_response.models]
+    elif isinstance(models_response, dict):
+        model_names = [m.get("model") or m.get("name") for m in models_response.get("models", [])]
+    else:
+        model_names = []
+    if "moondream:1.8b" in model_names:
+        print("  [OK] Ollama is running and moondream:1.8b is available")
         checks_passed += 1
     else:
-        print(f"  [WARN] Ollama is running but llama3.2-vision:11b not found.")
+        print(f"  [WARN] Ollama is running but moondream:1.8b not found.")
         print(f"         Available models: {model_names or 'none'}")
-        print(f"         Run: ollama pull llama3.2-vision:11b")
+        print(f"         Run: ollama pull moondream:1.8b")
 except Exception as e:
     print(f"  [WARN] Ollama not reachable: {e}")
     print(f"         Run: ollama serve")

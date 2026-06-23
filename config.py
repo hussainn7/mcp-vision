@@ -15,7 +15,7 @@ class Config(BaseSettings):
     ollama_host: str = "http://localhost:11434"
 
     # the vision model to use - needs to be a multimodal model that understands images
-    ollama_model: str = "llama3.2-vision:latest"
+    ollama_model: str = "moondream:1.8b"
 
     # how long (in seconds) Ollama keeps the model loaded between calls.
     # set to 0 to unload immediately after each call, which frees up memory
@@ -46,7 +46,7 @@ class Config(BaseSettings):
     max_elements: int = 50
 
     # seconds between agent cycles in the main loop
-    loop_delay: float = 2.0
+    loop_delay: float = 0.5
 
     # how many cycles to run before stopping. set to None to run forever.
     max_cycles: int | None = None
@@ -54,6 +54,16 @@ class Config(BaseSettings):
     # minimum number of interactable elements required to use accessibility tree
     # if fewer, fall back to Playwright or OmniParser
     min_interactable_elements: int = 5
+
+    # minimum confidence threshold for AX-tree elements (0.0-1.0)
+    # elements below this are filtered out before reaching the LLM
+    ax_confidence_threshold: float = 0.5
+
+    # text model for planning/task decomposition (fast, no vision)
+    planning_model: str = "llama3.1:8b"
+
+    # vision model for grounding (when AX tree is ambiguous)
+    vision_model: str = "moondream:1.8b"
 
     # MCP server settings
     mcp_host: str = "127.0.0.1"

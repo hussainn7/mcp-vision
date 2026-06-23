@@ -8,7 +8,7 @@ prompts separate from the orchestration logic makes iteration much easier.
 
 # This is the default system prompt for the Figma-to-VS-Code workflow.
 # It tells the model exactly what it should and shouldn't output.
-# Keep it concise - llama3.2-vision follows shorter, direct instructions better.
+# Keep it concise - moondream follows shorter, direct instructions better.
 SYSTEM_PROMPT_FIGMA_TO_VSCODE = """You are a coding agent that controls a computer.
 
 You can see the current state of the screen in the provided image. The image has numbered bounding boxes over every detected UI element from the perception backend (Playwright for browsers, AX for native apps, or OmniParser as fallback).
@@ -64,6 +64,48 @@ TOOL: tool_name(arguments)
 
 If done:
 DONE: brief description of what was accomplished"""
+
+
+# --- Two-stage pipeline prompts ---
+# Moondream and other small VQA models can't reliably follow structured output
+# instructions like "TOOL: click(5)". Instead we use a two-stage pipeline:
+#   Stage 1: Ask the vision model to *describe* the screen relative to the task.
+#   Stage 2: Feed that description to a text model (llama3.1:8b) to produce
+#            the structured tool call.
+
+VISION_DESCRIBE_PROMPT = """Look at this screenshot with numbered boxes on UI elements.
+
+Task: {task}
+
+Elements:
+{elements_summary}
+
+Which numbered element should I interact with next to accomplish the task? If the target app is not visible, say "not visible". Be brief."""
+
+
+TOOL_EXTRACTION_SYSTEM_PROMPT = """You are a macOS automation assistant. You output exactly ONE tool call per turn.
+
+Available tools:
+- click(element_id) -- click a numbered element on screen
+- type_text(text) -- type text at the current cursor position
+- press(key) -- press a key combo like "enter", "tab", "cmd+s", "cmd+space"
+- scroll(element_id, direction, clicks) -- scroll at an element
+
+To open an app, follow this EXACT 3-step sequence:
+  Step 1: press("cmd+space")
+  Step 2: type_text("AppName")
+  Step 3: press("enter")
+
+RULES:
+1. Look at "Actions completed so far" to determine which step you are on.
+2. If 0 actions done → do Step 1.
+3. If Step 1 is done → do Step 2 (replace AppName with the actual app name from the task).
+4. If Steps 1+2 are done → do Step 3.
+5. If all 3 steps are done → output: DONE: opened AppName
+6. NEVER repeat an action that is already in the action log.
+
+Output format: TOOL: tool_name(arguments)
+Or if complete: DONE: description"""
 
 
 def build_user_message(task: str, elements_summary: str) -> str:
