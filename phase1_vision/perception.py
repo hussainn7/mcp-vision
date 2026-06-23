@@ -10,7 +10,7 @@ Picks the fastest backend for the focused app:
 import time
 from typing import Any
 
-from phase1_vision.app_detector import get_frontmost_app
+from phase1_vision.app_detector import get_frontmost_app, get_display_info
 from phase1_vision.accessibility import get_accessibility_elements, HAS_PYOBJC_AX
 from phase2_mcp.playwright_tools import HAS_PLAYWRIGHT, cleanup_playwright
 from config import cfg
@@ -45,15 +45,20 @@ def get_perception_data() -> dict[str, Any]:
             try:
                 elements = get_accessibility_elements(use_cache=True)
                 if elements:
-                    return {
-                        "method": "accessibility",
-                        "elements": elements,
-                        "timestamp": start_time,
-                        "app_info": app_info,
-                        "coord_space": "screenshot",
-                        "error": None,
-                    }
-                error_msg = "Accessibility perception returned no elements"
+                    # Check for sparse tree: too few interactable elements
+                    interactable_count = sum(1 for e in elements if e.get("interactivity", False))
+                    if interactable_count >= cfg.min_interactable_elements:
+                        return {
+                            "method": "accessibility",
+                            "elements": elements,
+                            "timestamp": start_time,
+                            "app_info": app_info,
+                            "coord_space": "screenshot",
+                            "error": None,
+                        }
+                    else:
+                        logger.info(f"AX tree too sparse ({interactable_count} interactable elements), falling back")
+                error_msg = "Accessibility perception returned too few interactable elements"
             except PermissionError as e:
                 raise AccessibilityPermissionError(str(e)) from e
             except Exception as e:
@@ -136,17 +141,28 @@ def _get_playwright_elements() -> list[dict[str, Any]] | None:
                         if len(label.strip()) > 100:
                             label = label[:97] + "..."
 
-                        screen_x, screen_y = _playwright_to_screenshot_coords(box["x"], box["y"])
+                        # Convert bounding box to logical coordinates for the captured monitor
+                        monitor_index = cfg.screenshot_monitor
+                        displays = get_display_info()
+                        if monitor_index < len(displays):
+                            scale = displays[monitor_index]["scale_factor"]
+                        else:
+                            scale = displays[0]["scale_factor"]
+                        log_x = int(box["x"] / scale)
+                        log_y = int(box["y"] / scale)
+                        log_width = int(box["width"] / scale)
+                        log_height = int(box["height"] / scale)
+
                         elements.append({
                             "id": element_id,
                             "label": label.strip(),
-                            "x": int(screen_x + box["width"] / 2),
-                            "y": int(screen_y + box["height"] / 2),
+                            "x": int(log_x + log_width / 2),
+                            "y": int(log_y + log_height / 2),
                             "box": [
-                                int(screen_x),
-                                int(screen_y),
-                                int(screen_x + box["width"]),
-                                int(screen_y + box["height"]),
+                                log_x,
+                                log_y,
+                                log_x + log_width,
+                                log_y + log_height,
                             ],
                             "interactivity": True,
                             "role": role_hint,
@@ -169,9 +185,6 @@ def _get_playwright_elements() -> list[dict[str, Any]] | None:
         return None
 
 
-def _playwright_to_screenshot_coords(x: float, y: float) -> tuple[int, int]:
-    scale = cfg.display_scale_factor
-    return int(x / scale), int(y / scale)
 
 
 def get_perception_method_name(method: str) -> str:

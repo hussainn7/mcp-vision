@@ -16,12 +16,27 @@ from loguru import logger
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import cfg
+from phase1_vision.app_detector import get_display_info
 
 # pyautogui safety settings
 # failsafe means moving your mouse to a corner will abort the script.
 # keep this on during development - you'll thank yourself later.
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.05  # tiny delay between actions, helps with reliability
+
+
+def _logical_to_physical(x: int, y: int) -> tuple[int, int]:
+    """
+    Convert logical coordinates (from perception) to physical coordinates for pyautogui.
+    Uses the scale factor of the captured monitor.
+    """
+    monitor_index = cfg.screenshot_monitor
+    displays = get_display_info()
+    if monitor_index < len(displays):
+        scale = displays[monitor_index]["scale_factor"]
+    else:
+        scale = displays[0]["scale_factor"]
+    return int(x * scale), int(y * scale)
 
 
 def _get_latest_elements() -> list[dict]:
@@ -76,14 +91,17 @@ def click_element(element_id: int, double: bool = False) -> str:
     x, y = elem["x"], elem["y"]
     label = elem.get("label", "unknown element")
 
-    logger.info(f"Clicking element {element_id} '{label}' at ({x}, {y})")
+    # Convert logical coordinates to physical for pyautogui
+    phys_x, phys_y = _logical_to_physical(x, y)
+
+    logger.info(f"Clicking element {element_id} '{label}' at ({x}, {y}) logical -> ({phys_x}, {phys_y}) physical")
 
     # smooth move so it doesn't teleport - easier to see what's happening
-    pyautogui.moveTo(x, y, duration=0.15)
+    pyautogui.moveTo(phys_x, phys_y, duration=0.15)
     if double:
-        pyautogui.doubleClick(x, y)
+        pyautogui.doubleClick(phys_x, phys_y)
     else:
-        pyautogui.click(x, y)
+        pyautogui.click(phys_x, phys_y)
 
     time.sleep(0.1)  # give the UI a moment to respond before the next action
     return f"Clicked element {element_id} ('{label}') at ({x}, {y})"
@@ -103,9 +121,12 @@ def right_click_element(element_id: int) -> str:
     x, y = elem["x"], elem["y"]
     label = elem.get("label", "unknown element")
 
-    logger.info(f"Right-clicking element {element_id} '{label}' at ({x}, {y})")
-    pyautogui.moveTo(x, y, duration=0.15)
-    pyautogui.rightClick(x, y)
+    # Convert logical coordinates to physical for pyautogui
+    phys_x, phys_y = _logical_to_physical(x, y)
+
+    logger.info(f"Right-clicking element {element_id} '{label}' at ({x}, {y}) logical -> ({phys_x}, {phys_y}) physical")
+    pyautogui.moveTo(phys_x, phys_y, duration=0.15)
+    pyautogui.rightClick(phys_x, phys_y)
     time.sleep(0.1)
     return f"Right-clicked element {element_id} ('{label}') at ({x}, {y})"
 
@@ -261,9 +282,12 @@ def scroll_at_element(element_id: int, direction: str = "down", clicks: int = 3)
     elem = _find_element(element_id)
     x, y = elem["x"], elem["y"]
 
-    pyautogui.moveTo(x, y, duration=0.1)
+    # Convert logical coordinates to physical for pyautogui
+    phys_x, phys_y = _logical_to_physical(x, y)
+
+    pyautogui.moveTo(phys_x, phys_y, duration=0.1)
     amount = clicks if direction == "up" else -clicks
-    pyautogui.scroll(amount, x=x, y=y)
+    pyautogui.scroll(amount, x=phys_x, y=phys_y)
 
     return f"Scrolled {direction} {clicks} ticks at element {element_id} ({x}, {y})"
 

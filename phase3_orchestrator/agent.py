@@ -42,10 +42,16 @@ from phase1_vision.perception import get_perception_data, AccessibilityPermissio
 from phase2_mcp.tools import (
     click_element,
     get_screen_elements,
-    press_key,
+    press_key as pyautogui_press_key,
     right_click_element,
     scroll_at_element,
     type_code,
+)
+from phase2_mcp.playwright_tools import (
+    click_element_by_role,
+    click_element_by_text,
+    press_key as playwright_press_key,
+    get_page_text,
 )
 from phase3_orchestrator.prompts import (
     SYSTEM_PROMPT_FIGMA_TO_VSCODE,
@@ -55,6 +61,9 @@ from phase3_orchestrator.prompts import (
 )
 
 console = Console()
+
+# Global to store the perception method from the last cycle
+_last_perception_method = None
 
 
 def _draw_bounding_boxes_on_screenshot(screenshot_img, elements):
@@ -167,15 +176,16 @@ def parse_tool_call(response: str) -> tuple[str | None, str | None]:
     """
     response = response.strip()
 
-    # check for completion signal
-    done_match = re.match(r"^DONE:\s*(.+)$", response, re.IGNORECASE)
-    if done_match:
-        return "done", done_match.group(1).strip()
+    # check for completion signal or tool call line-by-line to handle markdown, reasoning prefaces or extra text
+    for line in response.splitlines():
+        line_stripped = line.strip()
+        done_match = re.match(r"^DONE:\s*(.+)$", line_stripped, re.IGNORECASE)
+        if done_match:
+            return "done", done_match.group(1).strip()
 
-    # check for tool call
-    tool_match = re.match(r"^TOOL:\s*(.+)$", response, re.IGNORECASE)
-    if tool_match:
-        return "tool", tool_match.group(1).strip()
+        tool_match = re.match(r"^TOOL:\s*(.+)$", line_stripped, re.IGNORECASE)
+        if tool_match:
+            return "tool", tool_match.group(1).strip()
 
     logger.warning(f"Model output didn't match expected format: {response[:100]}")
     return None, None
@@ -195,16 +205,56 @@ def execute_tool_call(tool_call: str) -> str:
     Returns:
         the result string from the tool function
     """
-    # the safe execution namespace - only the tools we defined
-    allowed_tools = {
-        "click": lambda eid: click_element(eid, double=False),
-        "double_click": lambda eid: click_element(eid, double=True),
-        "right_click": right_click_element,
-        "type_text": type_code,
-        "press": press_key,
-        "scroll": scroll_at_element,
-        "get_elements": get_screen_elements,
-    }
+    # Choose tool implementation based on the last perception method
+    global _last_perception_method
+    if _last_perception_method == "playwright":
+        # Helper function to click an element by its ID using Playwright
+        def _playwright_click_by_element(element_id: int) -> str:
+            from phase2_mcp.tools import _find_element
+            elem = _find_element(element_id)
+            role = elem.get("role", "button")
+            name = elem.get("label", "")
+            # If name is empty, we might try to use title or something else
+            if not name:
+                name = elem.get("title", "")
+            # Try to click by role and name
+            result = click_element_by_role(role, name if name else None)
+            if result.startswith("ERROR"):
+                # Fallback to click by text if we have a label
+                if elem.get("label"):
+                    result = click_element_by_text(elem["label"])
+            return result
+
+        # Helper function to double-click an element by its ID using Playwright
+        def _playwright_double_click_by_element(element_id: int) -> str:
+            result1 = _playwright_click_by_element(element_id)
+            if result1.startswith("ERROR"):
+                return result1
+            # Wait a bit between clicks
+            time.sleep(0.1)
+            result2 = _playwright_click_by_element(element_id)
+            return result2
+
+        allowed_tools = {
+            "click": _playwright_click_by_element,
+            "double_click": _playwright_double_click_by_element,
+            "right_click": lambda eid: "ERROR: right-click not implemented for Playwright",
+            "type_text": lambda text: "ERROR: type_text not implemented for Playwright - use fill?",
+            "press": playwright_press_key,
+            "scroll": lambda eid, direction="down", clicks=3: "ERROR: scroll not implemented for Playwright",
+            "get_elements": get_screen_elements,  # This still works because it reads the JSON
+        }
+    else:
+        # Use pyautogui tools for accessibility or OmniParser
+        allowed_tools = {
+            "click": lambda eid: click_element(eid, double=False),
+            "double_click": lambda eid: click_element(eid, double=True),
+            "right_click": right_click_element,
+            "type_text": type_code,
+            "press": pyautogui_press_key,
+            "scroll": scroll_at_element,
+            "get_elements": get_screen_elements,
+        }
 
     try:
         # extract function name and arguments
@@ -272,6 +322,9 @@ def run_agent_cycle(
     method = perception_data["method"]
     elements = perception_data["elements"]
     app_info = perception_data["app_info"]
+
+    global _last_perception_method
+    _last_perception_method = method
 
     console.print(f"[green]Using {get_perception_method_name(method)} perception[/green]")
     if app_info["name"]:

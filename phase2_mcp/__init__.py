@@ -6,7 +6,6 @@ from .playwright_tools import (
     type_text_into_input,
     press_key,
     get_page_text,
-    take_screenshot,
     is_browser_available,
-    cleanup_playwright
+    cleanup_playwright,
 )

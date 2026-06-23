@@ -51,6 +51,10 @@ class Config(BaseSettings):
     # how many cycles to run before stopping. set to None to run forever.
     max_cycles: int | None = None
 
+    # minimum number of interactable elements required to use accessibility tree
+    # if fewer, fall back to Playwright or OmniParser
+    min_interactable_elements: int = 5
+
     # MCP server settings
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8765

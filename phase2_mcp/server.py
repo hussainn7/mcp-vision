@@ -24,10 +24,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from phase2_mcp.tools import (
     click_element,
     get_screen_elements,
-    press_key,
+    press_key as pyautogui_press_key,
     right_click_element,
     scroll_at_element,
     type_code,
+)
+from phase2_mcp.playwright_tools import (
+    click_element_by_role,
+    click_element_by_text,
+    press_key as playwright_press_key,
+    get_page_text,
 )
 
 # initialize the FastMCP server with a descriptive name
@@ -129,6 +135,38 @@ def get_elements() -> list[dict]:
     so you know what's on screen.
     """
     return get_screen_elements()
+
+
+@mcp.tool()
+def playwright_click_role(role: str, name: str = None) -> str:
+    """
+    Click an element by its ARIA role and name using Playwright.
+    """
+    return click_element_by_role(role, name)
+
+
+@mcp.tool()
+def playwright_click_text(text: str) -> str:
+    """
+    Click an element by its text content using Playwright.
+    """
+    return click_element_by_text(text)
+
+
+@mcp.tool()
+def playwright_press_key(key: str) -> str:
+    """
+    Press a keyboard key or shortcut using Playwright.
+    """
+    return playwright_press_key(key)
+
+
+@mcp.tool()
+def playwright_get_page_text() -> str:
+    """
+    Get the text content of the current page using Playwright.
+    """
+    return get_page_text()
 
 
 if __name__ == "__main__":

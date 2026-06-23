@@ -85,14 +85,31 @@ def _extract_position_bounds(ax_element: Any) -> tuple[int, int, int, int] | Non
             width = float(size_ref[0]) if len(size_ref) > 0 else 0
             height = float(size_ref[1]) if len(size_ref) > 1 else 0
 
-        screen_x, screen_y = _global_to_screenshot_coords(int(pos_x), int(pos_y))
-        scale = cfg.display_scale_factor
-        return (
-            screen_x,
-            screen_y,
-            int(width / scale),
-            int(height / scale),
-        )
+        # Convert global physical coordinates to logical coordinates for the captured monitor
+        monitor_index = cfg.screenshot_monitor
+        displays = get_display_info()
+        if monitor_index < len(displays):
+            display = displays[monitor_index]
+            # Check if the element is within this monitor's bounds (optional, but we can clip)
+            # For simplicity, we assume the element is within the captured monitor.
+            local_x = pos_x - display["origin_x"]
+            local_y = pos_y - display["origin_y"]
+            # Convert to logical coordinates by dividing by the display's scale factor
+            logical_x = int(local_x / display["scale_factor"])
+            logical_y = int(local_y / display["scale_factor"])
+            logical_width = int(width / display["scale_factor"])
+            logical_height = int(height / display["scale_factor"])
+            return (logical_x, logical_y, logical_width, logical_height)
+        else:
+            # Fallback to primary monitor if index out of range
+            display = displays[0]
+            local_x = pos_x - display["origin_x"]
+            local_y = pos_y - display["origin_y"]
+            logical_x = int(local_x / display["scale_factor"])
+            logical_y = int(local_y / display["scale_factor"])
+            logical_width = int(width / display["scale_factor"])
+            logical_height = int(height / display["scale_factor"])
+            return (logical_x, logical_y, logical_width, logical_height)
     except Exception as e:
         logger.debug(f"Failed to read AX bounds: {e}")
         return None
