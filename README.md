@@ -30,3 +30,4 @@ During the initial execution cycle, the agent captures the current state of your
 ## Current State & Roadmap
 
 Currently, `mcp-vision` is highly capable of executing simple, repetitive daily OS tasks and navigating static UI layouts autonomously. However, as a v1 release, there is ongoing optimization needed. Future improvements will focus on handling complex, multi-step workflows, managing heavy dynamic scrolling, and reducing inference latency for faster execution cycles.
+

@@ -63,6 +63,7 @@ from phase3_orchestrator.prompts import (
     format_elements_summary,
 )
 from phase3_orchestrator.plan import PlanManager, decompose_task_with_llm, StepStatus
+from phase3_orchestrator.overlay import Overlay, PlanStep as OverlayPlanStep, StepStatus as OverlayStepStatus
 
 console = Console()
 
@@ -227,7 +228,7 @@ def parse_tool_call(response: str) -> tuple[str | None, str | None]:
             pass
         else:
             arg_val = f'"{arg_val}"'
-        
+
         return "tool", f"{normalized_tool}({arg_val})"
 
     # Fallback to returning the tool_name if no arguments block is found
@@ -398,7 +399,7 @@ def run_agent_cycle(
 
     user_message = build_user_message(task, elements_summary)
 
-    console.print("[dim]Running vision pipeline (Moondream → llama3.1)...[/dim]")
+    console.print("[dim]Running vision pipeline (Moondream -> llama3.1)...[/dim]")
     description, response = call_vision_pipeline(
         image_b64=image_b64,
         task=task,
@@ -588,6 +589,10 @@ def run_with_plan(
     # Initialize PlanManager with AX-tree verifier
     plan_manager = PlanManager(ax_verifier_func=get_accessibility_elements)
 
+    # Start overlay with plan
+    overlay = Overlay()
+    overlay.start(task=task)
+
     console.print(Panel(
         f"[bold green]Starting screen agent (plan mode)[/bold green]\n\nTask: {task}",
         border_style="green",
@@ -596,18 +601,30 @@ def run_with_plan(
     # Step 1: Decompose task into plan using fast text model
     console.print("[dim]Decomposing task with planning model...[/dim]")
     try:
-        plan_steps = decompose_task_with_llm(task, model=cfg.planning_model)
-        if not plan_steps:
+        plan_steps_data = decompose_task_with_llm(task, model=cfg.planning_model)
+        if not plan_steps_data:
             raise ValueError("Empty plan")
     except Exception as e:
         logger.warning(f"Planning model failed, using single-step fallback: {e}")
-        plan_steps = [{"description": task, "expected_element": None, "expected_role": None, "action": None}]
+        plan_steps_data = [{"description": task, "expected_element": None, "expected_role": None, "action": None}]
 
-    plan_manager.create_plan(task, plan_steps)
+    plan_manager.create_plan(task, plan_steps_data)
     console.print(plan_manager.get_plan_summary())
+
+    # Send plan to overlay
+    overlay_steps = [
+        OverlayPlanStep(
+            description=s.get("description", ""),
+            expected_element=s.get("expected_element"),
+            expected_role=s.get("expected_role"),
+        )
+        for s in plan_steps_data
+    ]
+    overlay.update_plan(overlay_steps)
 
     history: list[dict] = []
     cycle = 0
+    retry = False
 
     try:
         while True:
@@ -618,6 +635,7 @@ def run_with_plan(
 
             console.print(f"\n[bold]--- Cycle {cycle} ---[/bold]")
             console.print(plan_manager.get_plan_summary())
+            overlay.set_status(f"Cycle {cycle}")
 
             # Check if plan is complete
             if plan_manager.current_plan.is_complete:
@@ -625,8 +643,12 @@ def run_with_plan(
                 break
 
             step = plan_manager.current_plan.current_step
+            step_idx = plan_manager.current_plan.current_step_index
             if not step:
                 break
+
+            # Update overlay with current step
+            overlay.update_step(step_idx, OverlayStepStatus.IN_PROGRESS, current=step_idx)
 
             # Get perception data (cheap - only when needed)
             console.print("[dim]Getting perception data...[/dim]")
@@ -675,7 +697,7 @@ def run_with_plan(
             gc.collect()
 
             step_task = f"{task}\n\n{step_context}"
-            console.print("[dim]Running vision pipeline (Moondream → llama3.1)...[/dim]")
+            console.print("[dim]Running vision pipeline (Moondream -> llama3.1)...[/dim]")
             description, response = call_vision_pipeline(
                 image_b64=image_b64,
                 task=step_task,
@@ -690,15 +712,13 @@ def run_with_plan(
 
             if action_type == "done":
                 console.print(Panel(f"[green]Task complete: {content}[/green]", border_style="green"))
-                updated_history = history + [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": response},
-                ]
-                history = updated_history
+                overlay.add_action("DONE", content, success=True)
+                overlay.mark_done(content)
                 break
 
             elif action_type == "tool":
                 console.print(f"[yellow]Executing: {content}[/yellow]")
+                overlay.add_action(content, "", success=True)  # result will be filled after
 
                 # Execute with PlanManager verification
                 def execute_action(action_str: str) -> str:
@@ -707,9 +727,14 @@ def run_with_plan(
                 result, success, verified = plan_manager.execute_and_verify(content, execute_action)
                 console.print(f"[dim]Result: {result}[/dim]")
                 if verified:
-                    console.print("[green]✓ Step verified via AX-tree[/green]")
+                    console.print("[green]Step verified via AX-tree[/green]")
+                    overlay.update_step(step_idx, OverlayStepStatus.COMPLETED, result=result)
                 else:
-                    console.print("[yellow]⚠ Step verification failed[/yellow]")
+                    console.print("[yellow]Step verification failed[/yellow]")
+                    overlay.update_step(step_idx, OverlayStepStatus.VERIFICATION_FAILED, result=result)
+
+                # Update action result in overlay
+                overlay.add_action(content, result, success=success)
 
                 updated_history = history + [
                     {"role": "user", "content": user_message},
@@ -740,31 +765,23 @@ def run_with_plan(
     except AccessibilityPermissionError as e:
         console.print(f"[red]{str(e)}[/red]")
         console.print("[yellow]Agent terminated due to missing accessibility permissions.[/yellow]")
+        overlay.mark_done(f"Error: {e}")
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted by user.[/yellow]")
+        overlay.mark_done("Interrupted")
+    finally:
+        overlay.stop()
 
 
-def run(
-    task: str,
-    max_cycles: int | None = None,
-    system_prompt: str = SYSTEM_PROMPT_GENERAL,
-) -> None:
-    """
-    Main entry point. Runs the agent loop until the task is done or we hit max_cycles.
+# Agent logic functions (run in background thread) -------------------------------------------------
 
-    Args:
-        task: what you want the agent to do
-        max_cycles: stop after this many cycles. None = run until done or Ctrl+C.
-        system_prompt: the system prompt text to guide the model
-    """
+def _run_agent_simple(overlay: Overlay, task: str, max_cycles: int | None, system_prompt: str):
+    """Simple agent loop without plan."""
     max_cycles = max_cycles or cfg.max_cycles
     history: list[dict] = []
     cycle = 0
 
-    console.print(Panel(
-        f"[bold green]Starting screen agent[/bold green]\n\nTask: {task}",
-        border_style="green",
-    ))
+    overlay.set_status("Starting...")
 
     try:
         while True:
@@ -774,6 +791,7 @@ def run(
                 break
 
             console.print(f"\n[bold]--- Cycle {cycle} ---[/bold]")
+            overlay.set_status(f"Cycle {cycle}")
 
             result, is_done, history = run_agent_cycle(
                 task,
@@ -782,18 +800,224 @@ def run(
             )
 
             if is_done:
+                overlay.add_action("DONE", result, success=True)
+            else:
+                overlay.add_action(f"Cycle {cycle}", result, success=not result.startswith("ERROR"))
+
+            if is_done:
+                overlay.mark_done(result)
                 break
 
-            # wait between cycles - gives UIs time to respond and lets you
-            # hit Ctrl+C if something looks wrong
             console.print(f"[dim]Waiting {cfg.loop_delay}s...[/dim]")
             time.sleep(cfg.loop_delay)
 
     except AccessibilityPermissionError as e:
         console.print(f"[red]{str(e)}[/red]")
         console.print("[yellow]Agent terminated due to missing accessibility permissions.[/yellow]")
+        overlay.mark_done(f"Error: {e}")
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted by user.[/yellow]")
+        overlay.mark_done("Interrupted")
+    except Exception as e:
+        logger.error(f"Agent error: {e}")
+        overlay.mark_done(f"Error: {e}")
+
+
+def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_prompt: str):
+    """Agent loop with persistent plan and AX-tree verification."""
+    max_cycles = max_cycles or cfg.max_cycles
+
+    plan_manager = PlanManager(ax_verifier_func=get_accessibility_elements)
+
+    console.print(Panel(
+        f"[bold green]Starting screen agent (plan mode)[/bold green]\n\nTask: {task}",
+        border_style="green",
+    ))
+
+    console.print("[dim]Decomposing task with planning model...[/dim]")
+    try:
+        plan_steps_data = decompose_task_with_llm(task, model=cfg.planning_model)
+        if not plan_steps_data:
+            raise ValueError("Empty plan")
+    except Exception as e:
+        logger.warning(f"Planning model failed, using single-step fallback: {e}")
+        plan_steps_data = [{"description": task, "expected_element": None, "expected_role": None, "action": None}]
+
+    plan_manager.create_plan(task, plan_steps_data)
+    console.print(plan_manager.get_plan_summary())
+
+    # Send plan to overlay
+    overlay_steps = [
+        OverlayPlanStep(
+            description=s.get("description", ""),
+            expected_element=s.get("expected_element"),
+            expected_role=s.get("expected_role"),
+        )
+        for s in plan_steps_data
+    ]
+    overlay.update_plan(overlay_steps)
+
+    history: list[dict] = []
+    cycle = 0
+
+    try:
+        while True:
+            cycle += 1
+            if max_cycles and cycle > max_cycles:
+                console.print(f"[yellow]Reached max cycles ({max_cycles}), stopping.[/yellow]")
+                break
+
+            console.print(f"\n[bold]--- Cycle {cycle} ---[/bold]")
+            console.print(plan_manager.get_plan_summary())
+            overlay.set_status(f"Cycle {cycle}")
+
+            if plan_manager.current_plan.is_complete:
+                console.print(Panel("[green]All plan steps completed![/green]", border_style="green"))
+                break
+
+            step = plan_manager.current_plan.current_step
+            step_idx = plan_manager.current_plan.current_step_index
+            if not step:
+                break
+
+            overlay.update_step(step_idx, OverlayStepStatus.IN_PROGRESS, current=step_idx)
+
+            console.print("[dim]Getting perception data...[/dim]")
+            try:
+                perception_data = get_perception_data()
+            except AccessibilityPermissionError as e:
+                console.print(f"[red]{str(e)}[/red]")
+                raise
+
+            method = perception_data["method"]
+            elements = perception_data["elements"]
+            app_info = perception_data["app_info"]
+
+            global _last_perception_method
+            _last_perception_method = method
+
+            console.print(f"[green]Using {get_perception_method_name(method)} perception[/green]")
+            if app_info["name"]:
+                console.print(f"[dim]Focused app: {app_info['name']} ({app_info['bundle_id']})[/dim]")
+
+            screenshot_img, _ = capture_screen(save=False)
+
+            if method == "omniparser":
+                console.print("[dim]Running OmniParser...[/dim]")
+                annotated, elements = parse_screen(screenshot_img)
+                del screenshot_img
+            else:
+                console.print("[dim]Drawing bounding boxes...[/dim]")
+                annotated = _draw_bounding_boxes_on_screenshot(screenshot_img, elements)
+
+            save_results(annotated, elements)
+
+            elements_summary = format_elements_summary(elements)
+            console.print(f"[green]Found {len(elements)} elements[/green]")
+
+            step_context = f"Current step: {step.description}\n"
+            if step.action:
+                step_context += f"Suggested action: {step.action}\n"
+            user_message = build_user_message(task, elements_summary) + "\n\n" + step_context
+
+            image_b64 = image_to_base64(annotated)
+            del annotated
+            if method != "omniparser":
+                del screenshot_img
+            gc.collect()
+
+            step_task = f"{task}\n\n{step_context}"
+            console.print("[dim]Running vision pipeline (Moondream -> llama3.1)...[/dim]")
+            description, response = call_vision_pipeline(
+                image_b64=image_b64,
+                task=step_task,
+                elements_summary=elements_summary,
+                history=history,
+            )
+
+            console.print(Panel(Text(response, style="cyan"), title="Tool Decision (llama3.1)", border_style="blue"))
+
+            action_type, content = parse_tool_call(response)
+
+            if action_type == "done":
+                console.print(Panel(f"[green]Task complete: {content}[/green]", border_style="green"))
+                overlay.add_action("DONE", content, success=True)
+                overlay.mark_done(content)
+                break
+
+            elif action_type == "tool":
+                console.print(f"[yellow]Executing: {content}[/yellow]")
+                overlay.add_action(content, "", success=True)
+
+                def execute_action(action_str: str) -> str:
+                    return execute_tool_call(action_str)
+
+                result, success, verified = plan_manager.execute_and_verify(content, execute_action)
+                console.print(f"[dim]Result: {result}[/dim]")
+                if verified:
+                    console.print("[green]Step verified via AX-tree[/green]")
+                    overlay.update_step(step_idx, OverlayStepStatus.COMPLETED, result=result)
+                else:
+                    console.print("[yellow]Step verification failed[/yellow]")
+                    overlay.update_step(step_idx, OverlayStepStatus.VERIFICATION_FAILED, result=result)
+
+                overlay.add_action(content, result, success=success)
+
+                updated_history = history + [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": response},
+                ]
+                history = updated_history
+
+                should_continue, _ = plan_manager.advance_or_retry()
+                if not should_continue:
+                    if plan_manager.current_plan.is_complete:
+                        console.print(Panel("[green]Plan complete![/green]", border_style="green"))
+                    else:
+                        console.print(Panel("[red]Plan failed - max retries exceeded[/red]", border_style="red"))
+                    break
+
+            else:
+                logger.warning("Model response didn't parse, skipping this cycle")
+                should_continue, _ = plan_manager.advance_or_retry()
+                if not should_continue:
+                    break
+
+            console.print(f"[dim]Waiting {cfg.loop_delay}s...[/dim]")
+            time.sleep(cfg.loop_delay)
+
+    except AccessibilityPermissionError as e:
+        console.print(f"[red]{str(e)}[/red]")
+        console.print("[yellow]Agent terminated due to missing accessibility permissions.[/yellow]")
+        overlay.mark_done(f"Error: {e}")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted by user.[/yellow]")
+        overlay.mark_done("Interrupted")
+    except Exception as e:
+        logger.error(f"Agent error: {e}")
+        overlay.mark_done(f"Error: {e}")
+
+
+# CLI entry point ------------------------------------------------------------
+
+def run(
+    task: str,
+    max_cycles: int | None = None,
+    system_prompt: str = SYSTEM_PROMPT_GENERAL,
+) -> None:
+    """Run simple agent with overlay."""
+    overlay = Overlay()
+    overlay.run(task=task, agent_fn=lambda o: _run_agent_simple(o, task, max_cycles, system_prompt))
+
+
+def run_with_plan(
+    task: str,
+    max_cycles: int | None = None,
+    system_prompt: str = SYSTEM_PROMPT_GENERAL,
+) -> None:
+    """Run plan-mode agent with overlay."""
+    overlay = Overlay()
+    overlay.run(task=task, agent_fn=lambda o: _run_agent_plan(o, task, max_cycles, system_prompt))
 
 
 def main():
