@@ -312,6 +312,10 @@ def execute_tool_call(tool_call: str) -> str:
             func_name = "type_text"
         args_str = func_match.group(2).strip()
 
+        # Clean up keyword arguments if the model outputs them (e.g. click(element_id=6) -> click(6))
+        if args_str:
+            args_str = re.sub(r"\b\w+=\s*", "", args_str)
+
         if func_name not in allowed_tools:
             return f"ERROR: unknown tool '{func_name}'. Available: {list(allowed_tools.keys())}"
 
@@ -405,6 +409,7 @@ def run_agent_cycle(
         task=task,
         elements_summary=elements_summary,
         history=history,
+        app_info=app_info,
     )
 
     console.print(Panel(Text(response, style="cyan"), title="Tool Decision (llama3.1)", border_style="blue"))
@@ -468,6 +473,7 @@ def call_vision_pipeline(
     task: str,
     elements_summary: str,
     history: list[dict],
+    app_info: dict | None = None,
 ) -> tuple[str, str]:
     """
     Two-stage vision pipeline for small VQA models like Moondream.
@@ -480,6 +486,7 @@ def call_vision_pipeline(
         task: the current task description
         elements_summary: text summary of detected elements
         history: previous conversation turns
+        app_info: currently focused application info
 
     Returns:
         (vision_description, tool_call_response)
@@ -530,8 +537,12 @@ def call_vision_pipeline(
         actions_text = "  (none yet)"
 
     # Stage 2: Text model converts description to a structured tool call
+    focused_app_str = f"Currently focused app: {app_info.get('name') or 'unknown'}\n" if app_info else ""
+    # Include elements with valid IDs so the model never hallucinates out-of-range element IDs
+    elements_str = f"\nAvailable elements on screen (ONLY use IDs from this list):\n{elements_summary}\n" if elements_summary else ""
     extraction_message = f"""Task: {task}
-
+{focused_app_str}Vision description of the screen: {description}
+{elements_str}
 Actions completed so far:
 {actions_text}
 
@@ -546,7 +557,7 @@ What is the next tool call?"""
         ],
         options={
             "temperature": 0.1,
-            "num_predict": 32,  # tool call is one short line
+            "num_predict": 128,  # enough for brief reasoning + TOOL: line
             "keep_alive": cfg.ollama_keep_alive,
         },
     )
@@ -573,204 +584,7 @@ Example:
 Only output the JSON array. No explanation."""
 
 
-def run_with_plan(
-    task: str,
-    max_cycles: int | None = None,
-    system_prompt: str = SYSTEM_PROMPT_GENERAL,
-) -> None:
-    """
-    Run the agent with persistent plan management and AX-tree verification.
-
-    Uses a fast text model for planning, vision model only for grounding.
-    Verifies each step with cheap AX-tree diff instead of full re-perception.
-    """
-    max_cycles = max_cycles or cfg.max_cycles
-
-    # Initialize PlanManager with AX-tree verifier
-    plan_manager = PlanManager(ax_verifier_func=get_accessibility_elements)
-
-    # Start overlay with plan
-    overlay = Overlay()
-    overlay.start(task=task)
-
-    console.print(Panel(
-        f"[bold green]Starting screen agent (plan mode)[/bold green]\n\nTask: {task}",
-        border_style="green",
-    ))
-
-    # Step 1: Decompose task into plan using fast text model
-    console.print("[dim]Decomposing task with planning model...[/dim]")
-    try:
-        plan_steps_data = decompose_task_with_llm(task, model=cfg.planning_model)
-        if not plan_steps_data:
-            raise ValueError("Empty plan")
-    except Exception as e:
-        logger.warning(f"Planning model failed, using single-step fallback: {e}")
-        plan_steps_data = [{"description": task, "expected_element": None, "expected_role": None, "action": None}]
-
-    plan_manager.create_plan(task, plan_steps_data)
-    console.print(plan_manager.get_plan_summary())
-
-    # Send plan to overlay
-    overlay_steps = [
-        OverlayPlanStep(
-            description=s.get("description", ""),
-            expected_element=s.get("expected_element"),
-            expected_role=s.get("expected_role"),
-        )
-        for s in plan_steps_data
-    ]
-    overlay.update_plan(overlay_steps)
-
-    history: list[dict] = []
-    cycle = 0
-    retry = False
-
-    try:
-        while True:
-            cycle += 1
-            if max_cycles and cycle > max_cycles:
-                console.print(f"[yellow]Reached max cycles ({max_cycles}), stopping.[/yellow]")
-                break
-
-            console.print(f"\n[bold]--- Cycle {cycle} ---[/bold]")
-            console.print(plan_manager.get_plan_summary())
-            overlay.set_status(f"Cycle {cycle}")
-
-            # Check if plan is complete
-            if plan_manager.current_plan.is_complete:
-                console.print(Panel("[green]All plan steps completed![/green]", border_style="green"))
-                break
-
-            step = plan_manager.current_plan.current_step
-            step_idx = plan_manager.current_plan.current_step_index
-            if not step:
-                break
-
-            # Update overlay with current step
-            overlay.update_step(step_idx, OverlayStepStatus.IN_PROGRESS, current=step_idx)
-
-            # Get perception data (cheap - only when needed)
-            console.print("[dim]Getting perception data...[/dim]")
-            try:
-                perception_data = get_perception_data()
-            except AccessibilityPermissionError as e:
-                console.print(f"[red]{str(e)}[/red]")
-                raise
-
-            method = perception_data["method"]
-            elements = perception_data["elements"]
-            app_info = perception_data["app_info"]
-
-            global _last_perception_method
-            _last_perception_method = method
-
-            console.print(f"[green]Using {get_perception_method_name(method)} perception[/green]")
-            if app_info["name"]:
-                console.print(f"[dim]Focused app: {app_info['name']} ({app_info['bundle_id']})[/dim]")
-
-            screenshot_img, _ = capture_screen(save=False)
-
-            if method == "omniparser":
-                console.print("[dim]Running OmniParser...[/dim]")
-                annotated, elements = parse_screen(screenshot_img)
-                del screenshot_img
-            else:
-                console.print("[dim]Drawing bounding boxes...[/dim]")
-                annotated = _draw_bounding_boxes_on_screenshot(screenshot_img, elements)
-
-            save_results(annotated, elements)
-
-            elements_summary = format_elements_summary(elements)
-            console.print(f"[green]Found {len(elements)} elements[/green]")
-
-            # Build user message with current step context
-            step_context = f"Current step: {step.description}\n"
-            if step.action:
-                step_context += f"Suggested action: {step.action}\n"
-            user_message = build_user_message(task, elements_summary) + "\n\n" + step_context
-
-            image_b64 = image_to_base64(annotated)
-            del annotated
-            if method != "omniparser":
-                del screenshot_img
-            gc.collect()
-
-            step_task = f"{task}\n\n{step_context}"
-            console.print("[dim]Running vision pipeline (Moondream -> llama3.1)...[/dim]")
-            description, response = call_vision_pipeline(
-                image_b64=image_b64,
-                task=step_task,
-                elements_summary=elements_summary,
-                history=history,
-            )
-
-            console.print(Panel(Text(response, style="cyan"), title="Tool Decision (llama3.1)", border_style="blue"))
-
-            # Parse and execute tool call
-            action_type, content = parse_tool_call(response)
-
-            if action_type == "done":
-                console.print(Panel(f"[green]Task complete: {content}[/green]", border_style="green"))
-                overlay.add_action("DONE", content, success=True)
-                overlay.mark_done(content)
-                break
-
-            elif action_type == "tool":
-                console.print(f"[yellow]Executing: {content}[/yellow]")
-                overlay.add_action(content, "", success=True)  # result will be filled after
-
-                # Execute with PlanManager verification
-                def execute_action(action_str: str) -> str:
-                    return execute_tool_call(action_str)
-
-                result, success, verified = plan_manager.execute_and_verify(content, execute_action)
-                console.print(f"[dim]Result: {result}[/dim]")
-                if verified:
-                    console.print("[green]Step verified via AX-tree[/green]")
-                    overlay.update_step(step_idx, OverlayStepStatus.COMPLETED, result=result)
-                else:
-                    console.print("[yellow]Step verification failed[/yellow]")
-                    overlay.update_step(step_idx, OverlayStepStatus.VERIFICATION_FAILED, result=result)
-
-                # Update action result in overlay
-                overlay.add_action(content, result, success=success)
-
-                updated_history = history + [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": response},
-                ]
-                history = updated_history
-
-                # Advance or retry
-                should_continue, is_retry = plan_manager.advance_or_retry()
-                if not should_continue:
-                    if plan_manager.current_plan.is_complete:
-                        console.print(Panel("[green]Plan complete![/green]", border_style="green"))
-                    else:
-                        console.print(Panel("[red]Plan failed - max retries exceeded[/red]", border_style="red"))
-                    break
-
-            else:
-                logger.warning("Model response didn't parse, skipping this cycle")
-                # Still check if we should retry/advance
-                should_continue, _ = plan_manager.advance_or_retry()
-                if not should_continue:
-                    break
-
-            # wait between cycles
-            console.print(f"[dim]Waiting {cfg.loop_delay}s...[/dim]")
-            time.sleep(cfg.loop_delay)
-
-    except AccessibilityPermissionError as e:
-        console.print(f"[red]{str(e)}[/red]")
-        console.print("[yellow]Agent terminated due to missing accessibility permissions.[/yellow]")
-        overlay.mark_done(f"Error: {e}")
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted by user.[/yellow]")
-        overlay.mark_done("Interrupted")
-    finally:
-        overlay.stop()
+# Note: The agent runs in plan mode via run_with_plan() defined below, which uses the background thread wrapper _run_agent_plan to keep the Tkinter UI responsive on macOS.
 
 
 # Agent logic functions (run in background thread) -------------------------------------------------
@@ -933,6 +747,7 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
                 task=step_task,
                 elements_summary=elements_summary,
                 history=history,
+                app_info=app_info,
             )
 
             console.print(Panel(Text(response, style="cyan"), title="Tool Decision (llama3.1)", border_style="blue"))

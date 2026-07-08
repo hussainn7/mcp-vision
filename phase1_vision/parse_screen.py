@@ -5,8 +5,10 @@ We clone OmniParser into vendor/omniparser and drive its util.utils functions
 directly. This keeps us on the real implementation rather than a reimplementation,
 and makes it easy to pull upstream fixes by just updating the submodule.
 
-Memory: models are loaded, run, then explicitly deleted before we return.
-The orchestrator calls Ollama right after, so we need that memory back.
+Memory notes:
+- YOLO + Florence-2 are loaded/freed each cycle (they're large and conflict with Ollama)
+- PaddleOCR is kept as a module-level singleton — reinitializing it every cycle
+  costs ~14 seconds and causes segfaults on macOS when the object is torn down.
 """
 
 import base64
@@ -33,13 +35,43 @@ if not OMNIPARSER_DIR.exists():
     )
 sys.path.insert(0, str(OMNIPARSER_DIR))
 
+import numpy as np
 from util.utils import get_caption_model_processor, get_som_labeled_img, get_yolo_model
 
 from config import cfg
 
 
+# ---------------------------------------------------------------------------
+# PaddleOCR singleton — initialized once, reused every cycle.
+# Reinitializing PaddleOCR each call loads 5 models (~14s) and crashes with
+# a segfault on macOS when the object is garbage-collected.
+# ---------------------------------------------------------------------------
+_paddle_ocr = None
+
+
+def _get_paddle_ocr():
+    """Return the module-level PaddleOCR instance, creating it on first call."""
+    global _paddle_ocr
+    if _paddle_ocr is None:
+        try:
+            from paddleocr import PaddleOCR as _PaddleOCR
+            logger.info("Initializing PaddleOCR singleton (first call only)...")
+            _paddle_ocr = _PaddleOCR(lang="en")
+            logger.info("PaddleOCR ready.")
+        except Exception as e:
+            logger.warning(f"PaddleOCR init failed: {e}")
+            _paddle_ocr = None
+    return _paddle_ocr
+
 def _pick_device() -> str:
-    """Best available device. MPS on Apple Silicon, then CUDA, then CPU."""
+    """Best available device. We default to CPU on macOS to prevent MPS background-thread deadlocks with Tkinter."""
+    import sys
+    import os
+    env_device = os.environ.get("SCREEN_AGENT_DEVICE")
+    if env_device:
+        return env_device
+    if sys.platform == "darwin":
+        return "cpu"
     if torch.backends.mps.is_available():
         return "mps"
     if torch.cuda.is_available():
@@ -62,7 +94,7 @@ def parse_screen(image: Image.Image) -> tuple[Image.Image, list[dict[str, Any]]]
         elements: list of dicts - id, label, x, y, box, interactivity
     """
     yolo_device = _pick_device()
-    logger.info(f"OmniParser: YOLO on {yolo_device} (caption pass disabled)")
+    logger.info(f"OmniParser: YOLO on {yolo_device}")
     logger.info(f"Image size: {image.size[0]}x{image.size[1]} px")
 
     detect_path = str(cfg.weights_dir / "icon_detect" / "model.pt")
@@ -74,8 +106,53 @@ def parse_screen(image: Image.Image) -> tuple[Image.Image, list[dict[str, Any]]]
             f"Run: python scripts/download_weights.py"
         )
 
-    # load YOLO only - no caption model
+    # load YOLO
     yolo_model = get_yolo_model(model_path=detect_path)
+
+    # load Florence-2 caption model on MPS (0.23B params, runs on Apple Silicon)
+    # We skip loading/running it on CPU to keep execution fast.
+    caption_model_processor = None
+    if Path(caption_path).exists() and yolo_device != "cpu":
+        try:
+            caption_model_processor = get_caption_model_processor(
+                model_name="florence2",
+                model_name_or_path=caption_path,
+                device=yolo_device,
+            )
+            # Optimize: use smaller batch size and shorter generation for speed
+            logger.info(f"Florence-2 loaded on {yolo_device}")
+        except Exception as e:
+            logger.warning(f"Failed to load Florence-2, using YOLO-only: {e}")
+
+    # Run PaddleOCR to get real text labels for each bounding box.
+    # Uses a module-level singleton so models are only loaded once across all cycles.
+    ocr_text: list[str] = []
+    ocr_bbox: list | None = None
+    try:
+        _ocr = _get_paddle_ocr()
+        if _ocr is not None:
+            img_np = np.array(image.convert("RGB"))
+            raw = _ocr.ocr(img_np)  # PaddleOCR v3: returns list of dicts
+            if raw:
+                r = raw[0]  # first (and only) page result
+                texts = r.get("rec_texts", [])
+                scores = r.get("rec_scores", [])
+                polys = r.get("rec_polys", [])  # list of Nx2 int16 arrays
+                for txt, score, poly in zip(texts, scores, polys):
+                    if score < 0.4 or not txt.strip():
+                        continue
+                    xs = poly[:, 0].tolist()
+                    ys = poly[:, 1].tolist()
+                    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+                    ocr_text.append(txt.strip())
+                    if ocr_bbox is None:
+                        ocr_bbox = []
+                    ocr_bbox.append([x1, y1, x2, y2])
+            logger.info(f"OCR found {len(ocr_text)} text regions")
+    except Exception as e:
+        logger.warning(f"OCR failed, proceeding without text labels: {e}")
+        ocr_text = []
+        ocr_bbox = None
 
     # get_som_labeled_img returns: (base64_png_str, label_coordinates_dict, filtered_boxes_elem_list)
     #   label_coordinates: {"0": [cx, cy, w, h] normalized}
@@ -87,28 +164,30 @@ def parse_screen(image: Image.Image) -> tuple[Image.Image, list[dict[str, Any]]]
         "thickness": 2,
     }
 
-    # use_local_semantics=False skips Florence-2 entirely.
-    # YOLO-only takes ~600ms vs 4+ minutes for CPU captioning.
-    # The orchestrator's vision LLM sees the full annotated image anyway.
+    # use_local_semantics=True enables Florence-2 captioning for semantic labels
+    # On MPS, Florence-2-base (~0.23B) takes ~2-3s per image - acceptable tradeoff
     annotated_b64, label_coordinates, filtered_boxes_elem = get_som_labeled_img(
         image,
         yolo_model,
         BOX_TRESHOLD=cfg.detection_threshold,
         output_coord_in_ratio=True,
-        ocr_bbox=None,
+        ocr_bbox=ocr_bbox,
         draw_bbox_config=draw_bbox_config,
-        caption_model_processor=None,
-        ocr_text=[],
-        use_local_semantics=False,
+        caption_model_processor=caption_model_processor,
+        ocr_text=ocr_text,
+        use_local_semantics=caption_model_processor is not None,
         iou_threshold=0.1,
         imgsz=640,
+        batch_size=cfg.caption_batch_size,
     )
 
     del yolo_model
+    if caption_model_processor:
+        del caption_model_processor
     gc.collect()
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
-    logger.debug("YOLO model freed")
+    logger.debug("Models freed")
 
     # decode the annotated image
     annotated_image = Image.open(io.BytesIO(base64.b64decode(annotated_b64)))

@@ -39,7 +39,10 @@ class Config(BaseSettings):
 
     # OmniParser detection threshold - higher means fewer, more confident boxes.
     # lower means more boxes but also more false positives.
-    detection_threshold: float = 0.05
+    detection_threshold: float = 0.15
+
+    # Florence-2 captioning batch size. Lower values (like 16 or 8) prevent GPU out of memory errors.
+    caption_batch_size: int = 16
 
     # max elements OmniParser will label before truncating.
     # 50 is usually plenty for a normal screen.
@@ -68,6 +71,10 @@ class Config(BaseSettings):
     # MCP server settings
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8765
+
+    # Playwright CDP endpoint for attaching to existing Chrome
+    # Set to "http://localhost:9222" to attach to Chrome launched with --remote-debugging-port=9222
+    playwright_cdp_endpoint: str = "http://localhost:9222"
 
     class Config:
         env_prefix = "SCREEN_AGENT_"

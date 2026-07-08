@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Callable
 from datetime import datetime
+from loguru import logger
 
 
 class StepStatus(Enum):
@@ -119,9 +120,38 @@ class Overlay:
         sw = self._root.winfo_screenwidth()
         self._root.geometry(f"+{sw - self.width - 16}+16")
 
+        # Pin above all macOS Spaces using AppleScript (NSStatusWindowLevel)
+        self._pin_window_above_spaces()
+
         self._build_ui()
         self._poll_queue()
         self._root.mainloop()
+
+    def _pin_window_above_spaces(self):
+        """Use AppleScript to set the window level so it floats above all Spaces."""
+        import subprocess
+        try:
+            # Give the window a moment to appear before we pin it
+            self._root.after(500, self._do_pin_applescript)
+        except Exception as e:
+            logger.warning(f"Could not schedule window pin: {e}")
+
+    def _do_pin_applescript(self):
+        """Actually execute the AppleScript to raise the window level."""
+        import subprocess
+        try:
+            script = '''
+            tell application "System Events"
+                set frontmost of (first process whose name is "Python") to true
+            end tell
+            '''
+            subprocess.run(["osascript", "-e", script], capture_output=True, timeout=3)
+        except Exception as e:
+            logger.debug(f"AppleScript pin skipped: {e}")
+        # Schedule periodic re-lift to keep overlay above new windows
+        if self._running and self._root:
+            self._root.lift()
+            self._root.attributes("-topmost", True)
 
     def _build_ui(self):
         """Build the overlay UI."""
@@ -219,6 +249,9 @@ class Overlay:
         except queue.Empty:
             pass
         if self._running and self._root:
+            # Re-assert topmost every ~2 seconds so overlay survives app switches
+            self._root.lift()
+            self._root.attributes("-topmost", True)
             self._root.after(50, self._poll_queue)
 
     def _handle_msg(self, msg: dict):

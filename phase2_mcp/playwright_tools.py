@@ -2,9 +2,13 @@
 Playwright helpers for browser windows.
 Used when the focused app is a browser — perception scrapes the DOM,
 actions can go through Playwright instead of pyautogui.
+
+Connects to existing Chrome via CDP (remote debugging port) instead of launching new instance.
+Run Chrome with: /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
 """
 
 import asyncio
+import os
 from typing import Any, Optional
 
 from loguru import logger
@@ -16,13 +20,19 @@ except ImportError:
     HAS_PLAYWRIGHT = False
     logger.warning("Playwright not installed. Run: pip install playwright && playwright install")
 
+# Default CDP endpoint for existing Chrome
+DEFAULT_CDP_ENDPOINT = "http://localhost:9222"
+
 
 class PlaywrightManager:
-    def __init__(self):
+    def __init__(self, cdp_endpoint: str | None = None):
+        from config import cfg
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.page: Optional[Page] = None
         self._lock = asyncio.Lock() if HAS_PLAYWRIGHT else None
+        self.cdp_endpoint = cdp_endpoint or cfg.playwright_cdp_endpoint
+        self._owns_browser = False  # True if we launched it, False if attached
 
     async def start(self) -> bool:
         if not HAS_PLAYWRIGHT:
@@ -34,8 +44,27 @@ class PlaywrightManager:
 
             try:
                 self.playwright = await async_playwright().start()
-                self.browser = await self.playwright.chromium.launch(headless=False)
-                self.page = await self.browser.new_page()
+
+                # Try to connect to existing Chrome via CDP
+                try:
+                    logger.info(f"Connecting to Chrome at {self.cdp_endpoint}...")
+                    self.browser = await self.playwright.chromium.connect_over_cdp(self.cdp_endpoint)
+                    logger.info("Successfully attached to existing Chrome instance")
+                except Exception as e:
+                    logger.warning(f"Could not attach to existing Chrome: {e}")
+                    # Do NOT launch a new un-profiled Chrome session.
+                    # This ensures the agent uses visual/AX perception on the user's real browser instead.
+                    return False
+
+                # Get or create a page
+                contexts = self.browser.contexts
+                if contexts:
+                    pages = contexts[0].pages
+                    self.page = pages[0] if pages else await contexts[0].new_page()
+                else:
+                    context = await self.browser.new_context()
+                    self.page = await context.new_page()
+
                 self.page.set_default_timeout(10000)
                 return True
             except Exception as e:
@@ -54,7 +83,11 @@ class PlaywrightManager:
 
             if self.browser:
                 try:
-                    await self.browser.close()
+                    if self._owns_browser:
+                        await self.browser.close()
+                    else:
+                        # Just disconnect, don't close the user's browser
+                        pass
                 except Exception:
                     pass
                 self.browser = None

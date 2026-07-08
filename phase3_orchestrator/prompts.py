@@ -73,39 +73,35 @@ DONE: brief description of what was accomplished"""
 #   Stage 2: Feed that description to a text model (llama3.1:8b) to produce
 #            the structured tool call.
 
-VISION_DESCRIBE_PROMPT = """Look at this screenshot with numbered boxes on UI elements.
-
-Task: {task}
-
-Elements:
-{elements_summary}
-
-Which numbered element should I interact with next to accomplish the task? If the target app is not visible, say "not visible". Be brief."""
+VISION_DESCRIBE_PROMPT = """Look at this screenshot. What application window is currently active and focused on the screen, and what page, URL, or main content is visible inside it? Describe in one short sentence."""
 
 
-TOOL_EXTRACTION_SYSTEM_PROMPT = """You are a macOS automation assistant. You output exactly ONE tool call per turn.
+TOOL_EXTRACTION_SYSTEM_PROMPT = """You are a macOS desktop automation assistant. Accomplish tasks by issuing ONE tool call at a time.
 
 Available tools:
-- click(element_id) -- click a numbered element on screen
-- type_text(text) -- type text at the current cursor position
-- press(key) -- press a key combo like "enter", "tab", "cmd+s", "cmd+space"
-- scroll(element_id, direction, clicks) -- scroll at an element
+- click(N)              -- click element N from the list
+- type_text("text")     -- type text at current focus
+- press("key")          -- key combos: "enter", "tab", "escape", "cmd+space", "cmd+t", "cmd+l", "cmd+c", "cmd+v", "cmd+a", "cmd+w"
+- scroll(N, "down", 3)  -- scroll at element N
 
-To open an app, follow this EXACT 3-step sequence:
-  Step 1: press("cmd+space")
-  Step 2: type_text("AppName")
-  Step 3: press("enter")
+YOUR RESPONSE MUST START WITH "TOOL:" OR "DONE:" — NO PREAMBLE, NO EXPLANATION BEFORE IT.
 
-RULES:
-1. Look at "Actions completed so far" to determine which step you are on.
-2. If 0 actions done → do Step 1.
-3. If Step 1 is done → do Step 2 (replace AppName with the actual app name from the task).
-4. If Steps 1+2 are done → do Step 3.
-5. If all 3 steps are done → output: DONE: opened AppName
-6. NEVER repeat an action that is already in the action log.
+Format:
+TOOL: tool_name(arguments)
+Reason: one-sentence justification
 
-Output format: TOOL: tool_name(arguments)
-Or if complete: DONE: description"""
+Or when fully complete:
+DONE: what was accomplished
+
+KEY RULES (follow exactly):
+- click(N): N must exist in "Available elements on screen". Never invent IDs.
+- If no element matches, use press() or type_text() shortcuts instead of clicking.
+- App already open + browser focused → use press("cmd+l") or press("cmd+t"), NOT press("cmd+space")
+- Open app: press("cmd+space") → type_text("AppName") → press("enter")
+- New tab in browser: press("cmd+t") → press("cmd+l") → type_text("url") → press("enter")
+- Navigate current tab: press("cmd+l") → type_text("url") → press("enter")
+- Copy text: press("cmd+a") then press("cmd+c")
+- Never repeat a successful action."""
 
 
 def build_user_message(task: str, elements_summary: str) -> str:
