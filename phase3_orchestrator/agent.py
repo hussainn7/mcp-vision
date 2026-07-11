@@ -15,6 +15,14 @@ explicitly frees OmniParser from memory, then hits the Ollama API. Ollama
 handles its own model lifecycle as a separate process.
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import base64
 import gc
 import io
@@ -23,6 +31,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import Optional, Callable, Any
 
 # For drawing bounding boxes on screenshots
 from PIL import ImageDraw, ImageFont
@@ -347,6 +356,7 @@ def run_agent_cycle(
     task: str,
     history: list[dict],
     system_prompt: str = SYSTEM_PROMPT_GENERAL,
+    overlay: Optional[Overlay] = None,
 ) -> tuple[str, bool, list[dict]]:
     """
     Run one full cycle of the agent loop.
@@ -380,15 +390,123 @@ def run_agent_cycle(
     if app_info["name"]:
         console.print(f"[dim]Focused app: {app_info['name']} ({app_info['bundle_id']})[/dim]")
 
+    # --- Hard app-switch guard ---
+    # If a different app has focus but the task clearly names a target app,
+    # switch to it immediately without burning a full LLM cycle.
+    KNOWN_APPS = {
+        "safari": ("com.apple.Safari", "Safari"),
+        "chrome": ("com.google.Chrome", "Chrome"),
+        "firefox": ("org.mozilla.firefox", "Firefox"),
+        "finder": ("com.apple.finder", "Finder"),
+        "notes": ("com.apple.Notes", "Notes"),
+        "messages": ("com.apple.MobileSMS", "Messages"),
+        "mail": ("com.apple.mail", "Mail"),
+        "terminal": ("com.apple.Terminal", "Terminal"),
+        "calendar": ("com.apple.iCal", "Calendar"),
+        "maps": ("com.apple.Maps", "Maps"),
+        "music": ("com.apple.Music", "Music"),
+        "photos": ("com.apple.Photos", "Photos"),
+        "reminders": ("com.apple.reminders", "Reminders"),
+        "textedit": ("com.apple.TextEdit", "TextEdit"),
+    }
+    # Also match browser-related keywords to Safari/Chrome
+    BROWSER_KEYWORDS = {"gmail", "google", "browser", "url", "http", "email", "website", "web", "flight"}
+
+    focused_bundle = (app_info.get("bundle_id") or "").lower()
+    task_lower = task.lower()
+
+    # Find the target app from the task
+    target_app = None
+    for keyword, (bundle_id, app_name) in KNOWN_APPS.items():
+        if keyword in task_lower:
+            target_app = (bundle_id, app_name)
+            break
+
+    # Fallback: browser keywords → Safari
+    if not target_app and any(kw in task_lower for kw in BROWSER_KEYWORDS):
+        target_app = ("com.apple.Safari", "Safari")
+
+    if target_app and focused_bundle != target_app[0].lower():
+        target_name = target_app[1]
+        console.print(f"[yellow]⚠ Wrong app focused — switching to {target_name}...[/yellow]")
+        import pyautogui as _pag
+        import time as _time
+        _pag.hotkey("command", "space")
+        _time.sleep(0.4)
+        _pag.write(target_name, interval=0.05)
+        _time.sleep(0.3)
+        _pag.press("enter")
+        _time.sleep(1.0)
+        console.print(f"[green]Switched to {target_name}. Re-scanning...[/green]")
+        # Re-capture perception after switching
+        perception_data = get_perception_data()
+        elements = perception_data["elements"]
+        app_info = perception_data["app_info"]
+
     screenshot_img, _ = capture_screen(save=False)
+
+    # --- Overlay mask and filter guard ---
+    overlay_geom = None
+    if overlay:
+        overlay_geom = overlay.get_geometry()
+        if overlay_geom:
+            scale = cfg.display_scale_factor
+            ox, oy, ow, oh = overlay_geom
+            ox_shot = ox / scale
+            oy_shot = oy / scale
+            ow_shot = ow / scale
+            oh_shot = oh / scale
+            
+            pad = 10
+            ox_pad = max(0, ox_shot - pad)
+            oy_pad = max(0, oy_shot - pad)
+            ow_pad = ow_shot + 2 * pad
+            oh_pad = oh_shot + 2 * pad
+            
+            logger.debug(f"Overlay mask: tkinter=({ox},{oy},{ow},{oh}) -> screenshot=({ox_pad:.0f},{oy_pad:.0f},{ow_pad:.0f},{oh_pad:.0f}) img={screenshot_img.size}")
+            
+            # Blank out overlay region on screenshot so OmniParser/VQA doesn't see it
+            from PIL import ImageDraw as _ImageDraw
+            draw = _ImageDraw.Draw(screenshot_img)
+            draw.rectangle([ox_pad, oy_pad, ox_pad + ow_pad, oy_pad + oh_pad], fill="#444444")
+            
+            # Filter out accessibility elements inside overlay region
+            elements = [
+                e for e in elements
+                if not (ox_pad <= e.get("x", 0) <= ox_pad + ow_pad and oy_pad <= e.get("y", 0) <= oy_pad + oh_pad)
+            ]
 
     if method == "omniparser":
         console.print("[dim]Running OmniParser...[/dim]")
         annotated, elements = parse_screen(screenshot_img)
+        # Re-filter elements detected inside overlay region by OmniParser
+        if overlay_geom:
+            elements = [
+                e for e in elements
+                if not (ox_pad <= e.get("x", 0) <= ox_pad + ow_pad and oy_pad <= e.get("y", 0) <= oy_pad + oh_pad)
+            ]
         del screenshot_img
     else:
         console.print("[dim]Drawing bounding boxes...[/dim]")
         annotated = _draw_bounding_boxes_on_screenshot(screenshot_img, elements)
+
+    # Label-based overlay filtering: remove any elements whose text matches
+    # the overlay UI (task title, "Agent Overlay", cycle labels, etc.)
+    # This is a safety net in case coordinate masking doesn't fully cover it.
+    OVERLAY_POISON_PATTERNS = (
+        "agent overlay", "cycle ", "time action", "time ",
+    )
+    task_lower = task.lower()
+    pre_filter_count = len(elements)
+    elements = [
+        e for e in elements
+        if not (
+            e.get("label", "").lower().strip() == task_lower.strip()
+            or any(e.get("label", "").lower().startswith(p) for p in OVERLAY_POISON_PATTERNS)
+        )
+    ]
+    if len(elements) < pre_filter_count:
+        logger.debug(f"Label filter removed {pre_filter_count - len(elements)} overlay elements")
 
     save_results(annotated, elements)
 
@@ -476,52 +594,78 @@ def call_vision_pipeline(
     app_info: dict | None = None,
 ) -> tuple[str, str]:
     """
-    Two-stage vision pipeline for small VQA models like Moondream.
+    Two-stage vision pipeline.
 
-    Stage 1: Ask the vision model to describe the screen relative to the task.
-    Stage 2: Ask the planning/text model to convert that into a structured tool call.
+    Stage 1: Build a reliable screen description from structured OCR data + app info.
+             Falls back to Moondream only when OCR finds zero text.
+    Stage 2: Ask Llama 3.1 to convert that into a structured tool call.
 
     Args:
         image_b64: base64-encoded PNG of the annotated screenshot
         task: the current task description
-        elements_summary: text summary of detected elements
+        elements_summary: text summary of detected elements (OCR-labeled)
         history: previous conversation turns
         app_info: currently focused application info
 
     Returns:
         (vision_description, tool_call_response)
     """
-    # Stage 1: Vision model describes the screen
-    vision_prompt = VISION_DESCRIBE_PROMPT.format(
-        task=task,
-        elements_summary=elements_summary,
-    )
+    focused_app = (app_info or {}).get("name") or "unknown"
 
-    logger.debug(f"Stage 1: Asking vision model ({cfg.ollama_model}) to describe screen...")
-    vision_response = ollama.chat(
-        model=cfg.ollama_model,
-        messages=[
-            *history[-4:],
-            {
-                "role": "user",
-                "content": vision_prompt,
-                "images": [image_b64],
+    # --- Stage 1: Build screen description ---
+    # Extract all unique text labels from elements_summary (the OCR labels).
+    # This is ground-truth data — no hallucination possible.
+    ocr_labels = []
+    if elements_summary:
+        for line in elements_summary.splitlines():
+            # Lines look like: "  [3] tesla stock price at (60, 24)"
+            import re as _re
+            m = _re.search(r"\]\s+(.+?)\s+at\s+\(", line)
+            if m:
+                label = m.group(1).strip()
+                if label and label.lower() != "unknown":
+                    ocr_labels.append(label)
+
+    if ocr_labels:
+        # Reliable description built from structured data — no LLM hallucination
+        unique_labels = list(dict.fromkeys(ocr_labels))[:20]  # deduplicate, cap at 20
+        description = (
+            f"App: {focused_app}. "
+            f"Visible text on screen: {', '.join(unique_labels)}."
+        )
+        logger.debug("Stage 1: Using OCR-based screen description (no Moondream needed).")
+    else:
+        # Fallback: use Moondream only when OCR found nothing
+        logger.debug(f"Stage 1: OCR found no text, falling back to Moondream ({cfg.ollama_model})...")
+        vision_prompt = VISION_DESCRIBE_PROMPT.format(
+            task=task,
+            elements_summary=elements_summary,
+        )
+        vision_response = ollama.chat(
+            model=cfg.ollama_model,
+            messages=[
+                *history[-4:],
+                {
+                    "role": "user",
+                    "content": vision_prompt,
+                    "images": [image_b64],
+                },
+            ],
+            options={
+                "temperature": 0.1,
+                "num_predict": 80,
+                "keep_alive": cfg.ollama_keep_alive,
             },
-        ],
-        options={
-            "temperature": 0.1,
-            "num_predict": 100,  # brief description only, keeps latency low
-            "keep_alive": cfg.ollama_keep_alive,
-        },
-    )
-    description = vision_response["message"]["content"].strip()
+        )
+        description = vision_response["message"]["content"].strip()
+
     console.print(Panel(
         Text(description, style="dim cyan"),
-        title="Vision Description (Moondream)",
+        title="Screen State",
         border_style="dim blue",
     ))
 
-    # Extract ALL previous actions from history so Stage 2 can see the full sequence
+    # Extract last 8 actions from history (cap to avoid stale state confusion)
     action_log = []
     for entry in history:
         if entry.get("role") == "assistant":
@@ -530,20 +674,20 @@ def call_vision_pipeline(
                 if line.strip().upper().startswith("TOOL:"):
                     action_log.append(line.strip())
                     break
+    action_log = action_log[-8:]  # keep only most recent 8
 
     if action_log:
         actions_text = "\n".join(f"  {i+1}. {a}" for i, a in enumerate(action_log))
     else:
         actions_text = "  (none yet)"
 
-    # Stage 2: Text model converts description to a structured tool call
-    focused_app_str = f"Currently focused app: {app_info.get('name') or 'unknown'}\n" if app_info else ""
-    # Include elements with valid IDs so the model never hallucinates out-of-range element IDs
+    # --- Stage 2: Llama 3.1 decides next tool call ---
+    focused_app_str = f"Currently focused app: {focused_app}\n"
     elements_str = f"\nAvailable elements on screen (ONLY use IDs from this list):\n{elements_summary}\n" if elements_summary else ""
     extraction_message = f"""Task: {task}
-{focused_app_str}Vision description of the screen: {description}
+{focused_app_str}Screen state: {description}
 {elements_str}
-Actions completed so far:
+Actions completed so far (most recent last):
 {actions_text}
 
 What is the next tool call?"""
@@ -557,7 +701,7 @@ What is the next tool call?"""
         ],
         options={
             "temperature": 0.1,
-            "num_predict": 128,  # enough for brief reasoning + TOOL: line
+            "num_predict": 128,  # enough for TOOL: line + Reason:
             "keep_alive": cfg.ollama_keep_alive,
         },
     )
@@ -599,6 +743,9 @@ def _run_agent_simple(overlay: Overlay, task: str, max_cycles: int | None, syste
 
     try:
         while True:
+            if not overlay._running:
+                console.print("[yellow]Overlay window closed, stopping simple agent loop.[/yellow]")
+                break
             cycle += 1
             if max_cycles and cycle > max_cycles:
                 console.print(f"[yellow]Reached max cycles ({max_cycles}), stopping.[/yellow]")
@@ -611,6 +758,7 @@ def _run_agent_simple(overlay: Overlay, task: str, max_cycles: int | None, syste
                 task,
                 history,
                 system_prompt=system_prompt,
+                overlay=overlay,
             )
 
             if is_done:
@@ -676,6 +824,9 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
 
     try:
         while True:
+            if not overlay._running:
+                console.print("[yellow]Overlay window closed, stopping plan agent loop.[/yellow]")
+                break
             cycle += 1
             if max_cycles and cycle > max_cycles:
                 console.print(f"[yellow]Reached max cycles ({max_cycles}), stopping.[/yellow]")
@@ -716,13 +867,64 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
 
             screenshot_img, _ = capture_screen(save=False)
 
+            # --- Overlay mask and filter guard ---
+            overlay_geom = overlay.get_geometry()
+            if overlay_geom:
+                scale = cfg.display_scale_factor
+                ox, oy, ow, oh = overlay_geom
+                ox_shot = ox / scale
+                oy_shot = oy / scale
+                ow_shot = ow / scale
+                oh_shot = oh / scale
+                
+                pad = 10
+                ox_pad = max(0, ox_shot - pad)
+                oy_pad = max(0, oy_shot - pad)
+                ow_pad = ow_shot + 2 * pad
+                oh_pad = oh_shot + 2 * pad
+                
+                logger.debug(f"Overlay mask: tkinter=({ox},{oy},{ow},{oh}) -> screenshot=({ox_pad:.0f},{oy_pad:.0f},{ow_pad:.0f},{oh_pad:.0f}) img={screenshot_img.size}")
+                
+                # Blank out overlay region on screenshot so OmniParser/VQA doesn't see it
+                from PIL import ImageDraw as _ImageDraw
+                draw = _ImageDraw.Draw(screenshot_img)
+                draw.rectangle([ox_pad, oy_pad, ox_pad + ow_pad, oy_pad + oh_pad], fill="#444444")
+                
+                # Filter out accessibility elements inside overlay region
+                elements = [
+                    e for e in elements
+                    if not (ox_pad <= e.get("x", 0) <= ox_pad + ow_pad and oy_pad <= e.get("y", 0) <= oy_pad + oh_pad)
+                ]
+
             if method == "omniparser":
                 console.print("[dim]Running OmniParser...[/dim]")
                 annotated, elements = parse_screen(screenshot_img)
+                # Re-filter elements detected inside overlay region by OmniParser
+                if overlay_geom:
+                    elements = [
+                        e for e in elements
+                        if not (ox_pad <= e.get("x", 0) <= ox_pad + ow_pad and oy_pad <= e.get("y", 0) <= oy_pad + oh_pad)
+                    ]
                 del screenshot_img
             else:
                 console.print("[dim]Drawing bounding boxes...[/dim]")
                 annotated = _draw_bounding_boxes_on_screenshot(screenshot_img, elements)
+
+            # Label-based overlay filtering (safety net)
+            OVERLAY_POISON_PATTERNS = (
+                "agent overlay", "cycle ", "time action", "time ",
+            )
+            task_lower = task.lower()
+            pre_filter_count = len(elements)
+            elements = [
+                e for e in elements
+                if not (
+                    e.get("label", "").lower().strip() == task_lower.strip()
+                    or any(e.get("label", "").lower().startswith(p) for p in OVERLAY_POISON_PATTERNS)
+                )
+            ]
+            if len(elements) < pre_filter_count:
+                logger.debug(f"Label filter removed {pre_filter_count - len(elements)} overlay elements")
 
             save_results(annotated, elements)
 

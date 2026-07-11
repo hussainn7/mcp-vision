@@ -76,6 +76,7 @@ class Overlay:
         self._prompt_msg: Optional[str] = None
         self._agent_thread: Optional[threading.Thread] = None
         self._agent_fn: Optional[Callable] = None
+        self._geometry_cache: Optional[tuple[int, int, int, int]] = None
 
     def run(self, task: str = "", plan_steps: Optional[list[PlanStep]] = None, agent_fn: Optional[Callable] = None):
         """
@@ -89,6 +90,7 @@ class Overlay:
         self._done = False
         self._prompt_msg = None
         self._agent_fn = agent_fn
+        self._running = True  # Set True before thread starts to prevent race condition
 
         # Run agent in background thread
         if agent_fn:
@@ -123,9 +125,18 @@ class Overlay:
         # Pin above all macOS Spaces using AppleScript (NSStatusWindowLevel)
         self._pin_window_above_spaces()
 
+        # Intercept window close event to stop background thread gracefully
+        self._root.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self._build_ui()
         self._poll_queue()
         self._root.mainloop()
+
+    def _on_close(self):
+        """Handle user closing the overlay window."""
+        self._running = False
+        if self._root:
+            self._root.destroy()
 
     def _pin_window_above_spaces(self):
         """Use AppleScript to set the window level so it floats above all Spaces."""
@@ -240,6 +251,10 @@ class Overlay:
         self._render_plan()
         self._running = True
 
+    def get_geometry(self) -> Optional[tuple[int, int, int, int]]:
+        """Get the last known geometry of the overlay window as (x, y, width, height)."""
+        return self._geometry_cache
+
     def _poll_queue(self):
         """Process queue and schedule next poll."""
         try:
@@ -249,6 +264,15 @@ class Overlay:
         except queue.Empty:
             pass
         if self._running and self._root:
+            try:
+                self._geometry_cache = (
+                    self._root.winfo_x(),
+                    self._root.winfo_y(),
+                    self._root.winfo_width(),
+                    self._root.winfo_height(),
+                )
+            except Exception:
+                pass
             # Re-assert topmost every ~2 seconds so overlay survives app switches
             self._root.lift()
             self._root.attributes("-topmost", True)

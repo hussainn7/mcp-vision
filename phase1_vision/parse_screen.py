@@ -11,6 +11,14 @@ Memory notes:
   costs ~14 seconds and causes segfaults on macOS when the object is torn down.
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import base64
 import gc
 import io
@@ -42,11 +50,13 @@ from config import cfg
 
 
 # ---------------------------------------------------------------------------
-# PaddleOCR singleton — initialized once, reused every cycle.
-# Reinitializing PaddleOCR each call loads 5 models (~14s) and crashes with
-# a segfault on macOS when the object is garbage-collected.
+# YOLO and PaddleOCR singletons — initialized once, reused every cycle.
+# Reinitializing these models each call loads them from disk/memory and crashes
+# with a segfault on macOS when the Python objects are garbage-collected or
+# when multiple OpenMP threads clash.
 # ---------------------------------------------------------------------------
 _paddle_ocr = None
+_yolo_model = None
 
 
 def _get_paddle_ocr():
@@ -62,6 +72,21 @@ def _get_paddle_ocr():
             logger.warning(f"PaddleOCR init failed: {e}")
             _paddle_ocr = None
     return _paddle_ocr
+
+
+def _get_yolo_model(detect_path):
+    """Return the module-level YOLO instance, creating it on first call."""
+    global _yolo_model
+    if _yolo_model is None:
+        try:
+            logger.info("Initializing YOLO singleton (first call only)...")
+            _yolo_model = get_yolo_model(model_path=detect_path)
+            logger.info("YOLO ready.")
+        except Exception as e:
+            logger.error(f"YOLO init failed: {e}")
+            raise
+    return _yolo_model
+
 
 def _pick_device() -> str:
     """Best available device. We default to CPU on macOS to prevent MPS background-thread deadlocks with Tkinter."""
@@ -106,8 +131,8 @@ def parse_screen(image: Image.Image) -> tuple[Image.Image, list[dict[str, Any]]]
             f"Run: python scripts/download_weights.py"
         )
 
-    # load YOLO
-    yolo_model = get_yolo_model(model_path=detect_path)
+    # load YOLO (singleton)
+    yolo_model = _get_yolo_model(detect_path)
 
     # load Florence-2 caption model on MPS (0.23B params, runs on Apple Silicon)
     # We skip loading/running it on CPU to keep execution fast.
@@ -181,7 +206,6 @@ def parse_screen(image: Image.Image) -> tuple[Image.Image, list[dict[str, Any]]]
         batch_size=cfg.caption_batch_size,
     )
 
-    del yolo_model
     if caption_model_processor:
         del caption_model_processor
     gc.collect()

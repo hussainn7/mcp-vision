@@ -51,7 +51,7 @@ class PlaywrightManager:
                     self.browser = await self.playwright.chromium.connect_over_cdp(self.cdp_endpoint)
                     logger.info("Successfully attached to existing Chrome instance")
                 except Exception as e:
-                    logger.warning(f"Could not attach to existing Chrome: {e}")
+                    logger.info("Chrome remote debugging is not active on port 9222. Falling back to visual/accessibility GUI control (pyautogui + OmniParser). This is normal and expected.")
                     # Do NOT launch a new un-profiled Chrome session.
                     # This ensures the agent uses visual/AX perception on the user's real browser instead.
                     return False

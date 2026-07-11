@@ -86,13 +86,17 @@ def get_display_info() -> list[dict]:
 
         for i, display_id in enumerate(display_ids):
             bounds = Quartz.CGDisplayBounds(display_id)
+            try:
+                scale = float(Quartz.CGDisplayBackingScaleFactor(display_id))
+            except AttributeError:
+                scale = 2.0  # Retina default on Apple Silicon
             displays.append({
                 "index": i,
                 "width": int(Quartz.CGDisplayPixelsWide(display_id)),
                 "height": int(Quartz.CGDisplayPixelsHigh(display_id)),
                 "origin_x": int(bounds.origin.x),
                 "origin_y": int(bounds.origin.y),
-                "scale_factor": float(Quartz.CGDisplayBackingScaleFactor(display_id)),
+                "scale_factor": scale,
             })
 
         return displays
