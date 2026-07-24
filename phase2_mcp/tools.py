@@ -203,8 +203,11 @@ def _press_key_applescript(keys: list[str]) -> bool:
     if target_key in key_codes:
         script = f'tell application "System Events" to key code {key_codes[target_key]}{using_clause}'
     else:
-        # Standard character keystroke
-        script = f'tell application "System Events" to keystroke "{target_key}"{using_clause}'
+        if any(ord(char) < 32 for char in target_key):
+            logger.error("AppleScript key contains control characters")
+            return False
+        escaped_key = target_key.replace("\\", "\\\\").replace('"', '\\"')
+        script = f'tell application "System Events" to keystroke "{escaped_key}"{using_clause}'
 
     try:
         subprocess.run(["osascript", "-e", script], check=True)
@@ -282,7 +285,11 @@ def scroll_at_element(element_id: int, direction: str = "down", clicks: int = 3)
     elem = _find_element(element_id)
     x, y = elem["x"], elem["y"]
 
-    # Convert logical coordinates to physical for pyautogui
+    # Tab bar / browser chrome — scroll the main viewport instead
+    if y <= 90:
+        sw, sh = pyautogui.size()
+        x, y = sw // 2, sh // 2
+
     phys_x, phys_y = _logical_to_physical(x, y)
 
     pyautogui.moveTo(phys_x, phys_y, duration=0.1)

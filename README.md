@@ -4,6 +4,29 @@ A local, autonomous AI agent that watches your screen, understands the visual la
 
 The architecture is built on a simple premise: bridge local vision models with standard OS automation. The pipeline captures a screenshot, processes it through Microsoft's OmniParser to generate a structured map of interactive elements, and feeds that layout to Moondream via Ollama. The model then decides the next action, executing it through a clean, composable Model Context Protocol (MCP) server.
 
+## Quick start
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+playwright install chromium
+ollama pull moondream:1.8b
+ollama pull llama3.1:8b
+python scripts/download_weights.py
+python scripts/check_setup.py
+```
+
+Grant the terminal Accessibility and Screen Recording permissions in macOS System Settings before running the agent.
+
+```bash
+screen-agent "Open Safari and search for local weather" --max-cycles 12
+screen-agent "Create a new TextEdit document and write a short note" --plan --max-cycles 20
+python phase2_mcp/server.py
+```
+
+The agent can click, double-click, right-click, type, press shortcuts, and scroll. With Chrome launched using `--remote-debugging-port=9222`, browser tabs also use Playwright for faster DOM-based clicks, typing, scrolling, and key presses.
+
 ```mermaid
 graph TD
     A[Start Task] --> B[MSS: Capture Screen]

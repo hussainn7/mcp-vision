@@ -6,6 +6,9 @@ requires-python = ">=3.12"
 dependencies = [
     "ollama>=0.3.0",
     "mcp[cli]>=1.0.0",
+    "playwright>=1.40.0",
+    "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
     "pyautogui>=0.9.54",
     "mss>=9.0.2",
     "Pillow>=10.0.0",

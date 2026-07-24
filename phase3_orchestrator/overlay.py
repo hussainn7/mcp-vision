@@ -1,24 +1,17 @@
 """
-Lightweight tkinter overlay for agent status display.
+Tiny always-on-top overlay for agent status + final answers.
 
-Always-on-top window showing:
-- Current task + plan steps with status
-- Action history with timestamps
-- User prompts when agent needs help
-
-IMPORTANT: On macOS, Tkinter MUST run on the main thread.
-Use overlay.run(agent_fn) which runs mainloop on main thread
-and executes agent_fn in a background thread.
+On macOS we use a native NSPanel at a high window level — tkinter -topmost
+is not enough and gets buried by Chrome/fullscreen apps.
 """
 
 import queue
+import sys
 import threading
-import time
 import tkinter as tk
-from tkinter import ttk
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 from datetime import datetime
 from loguru import logger
 
@@ -49,18 +42,15 @@ class ActionRecord:
     success: bool
 
 
+def _truncate(text: str, n: int) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
 class Overlay:
-    """
-    Always-on-top overlay window for agent status.
+    """Small always-on-top status pill with an answer area."""
 
-    Usage:
-        overlay = Overlay()
-        overlay.run(task="Open Safari", plan_steps=[...], agent_fn=run_agent)
-
-    This runs the Tkinter mainloop on the main thread and agent_fn in a background thread.
-    """
-
-    def __init__(self, width: int = 420, height: int = 560):
+    def __init__(self, width: int = 280, height: int = 110):
         self.width = width
         self.height = height
         self._queue: queue.Queue = queue.Queue()
@@ -77,220 +67,302 @@ class Overlay:
         self._agent_thread: Optional[threading.Thread] = None
         self._agent_fn: Optional[Callable] = None
         self._geometry_cache: Optional[tuple[int, int, int, int]] = None
+        self._answer: str = ""
+        self._status: str = "ready"
+
+        # Native macOS panel (force-float)
+        self._ns_panel: Any = None
+        self._ns_task: Any = None
+        self._ns_status: Any = None
+        self._ns_answer: Any = None
+        self._use_native = sys.platform == "darwin"
+
+        # Tk fallback widgets
+        self._task_label = None
+        self._status_label = None
+        self._answer_label = None
 
     def run(self, task: str = "", plan_steps: Optional[list[PlanStep]] = None, agent_fn: Optional[Callable] = None):
-        """
-        Start overlay and run agent function in background.
-        This MUST be called from the main thread (blocks until done).
-        """
         self._task = task
         self._plan_steps = plan_steps or []
         self._action_history = []
         self._current_step_idx = 0
         self._done = False
         self._prompt_msg = None
+        self._answer = ""
+        self._status = "starting..."
         self._agent_fn = agent_fn
-        self._running = True  # Set True before thread starts to prevent race condition
+        self._running = True
 
-        # Run agent in background thread
         if agent_fn:
             self._agent_thread = threading.Thread(target=self._run_agent, daemon=True)
             self._agent_thread.start()
 
-        # Run Tkinter on main thread
         self._run_tk()
 
     def _run_agent(self):
-        """Run the agent function in background."""
         try:
             if self._agent_fn:
                 self._agent_fn(self)
         except Exception as e:
-            self._queue.put({"type": "status", "message": f"Agent error: {e}"})
+            self._queue.put({"type": "status", "message": f"error: {e}"})
 
     def _run_tk(self):
-        """Main Tkinter loop (runs on main thread)."""
         self._root = tk.Tk()
-        self._root.title("Agent Overlay")
-        self._root.geometry(f"{self.width}x{self.height}")
-        self._root.attributes("-topmost", True)
-        self._root.attributes("-alpha", 0.96)
-        self._root.minsize(380, 300)
+        self._root.title("agent-overlay-host")
+        # Tiny hidden host window — only used to pump timers on the main thread
+        self._root.geometry("1x1+0+0")
+        self._root.withdraw()
 
-        # Position top-right
-        self._root.update_idletasks()
-        sw = self._root.winfo_screenwidth()
-        self._root.geometry(f"+{sw - self.width - 16}+16")
+        if self._use_native:
+            ok = self._create_native_panel()
+            if not ok:
+                self._use_native = False
+                self._root.deiconify()
+                self._build_tk_ui()
+        else:
+            self._build_tk_ui()
 
-        # Pin above all macOS Spaces using AppleScript (NSStatusWindowLevel)
-        self._pin_window_above_spaces()
-
-        # Intercept window close event to stop background thread gracefully
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
-
-        self._build_ui()
+        self._force_float()
         self._poll_queue()
         self._root.mainloop()
 
     def _on_close(self):
-        """Handle user closing the overlay window."""
         self._running = False
+        try:
+            if self._ns_panel is not None:
+                self._ns_panel.orderOut_(None)
+                self._ns_panel = None
+        except Exception:
+            pass
         if self._root:
             self._root.destroy()
 
-    def _pin_window_above_spaces(self):
-        """Use AppleScript to set the window level so it floats above all Spaces."""
-        import subprocess
+    def _create_native_panel(self) -> bool:
+        """Create an NSPanel that stays above normal apps / Spaces."""
         try:
-            # Give the window a moment to appear before we pin it
-            self._root.after(500, self._do_pin_applescript)
-        except Exception as e:
-            logger.warning(f"Could not schedule window pin: {e}")
+            from AppKit import (
+                NSApplication,
+                NSColor,
+                NSFont,
+                NSMakeRect,
+                NSPanel,
+                NSPopUpMenuWindowLevel,
+                NSTextField,
+                NSView,
+                NSWindowCollectionBehaviorCanJoinAllSpaces,
+                NSWindowCollectionBehaviorFullScreenAuxiliary,
+                NSWindowCollectionBehaviorStationary,
+                NSWindowStyleMaskBorderless,
+                NSWindowStyleMaskNonactivatingPanel,
+                NSBackingStoreBuffered,
+                NSViewWidthSizable,
+                NSViewHeightSizable,
+            )
+            from Foundation import NSMakePoint
 
-    def _do_pin_applescript(self):
-        """Actually execute the AppleScript to raise the window level."""
-        import subprocess
-        try:
-            script = '''
-            tell application "System Events"
-                set frontmost of (first process whose name is "Python") to true
-            end tell
-            '''
-            subprocess.run(["osascript", "-e", script], capture_output=True, timeout=3)
+            # Ensure NSApp exists (tk already created one, but be safe)
+            NSApplication.sharedApplication()
+
+            screen = None
+            try:
+                from AppKit import NSScreen
+                screen = NSScreen.mainScreen()
+                frame = screen.frame()
+                x = frame.size.width - self.width - 12
+                # Cocoa origin is bottom-left
+                y = frame.size.height - self.height - 36
+            except Exception:
+                x, y = 40, 40
+
+            rect = NSMakeRect(x, y, self.width, self.height)
+            style = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+            panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                rect, style, NSBackingStoreBuffered, False
+            )
+            panel.setTitle_("agent")
+            panel.setOpaque_(False)
+            panel.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0.07, 0.94))
+            panel.setHasShadow_(True)
+            panel.setFloatingPanel_(True)
+            panel.setBecomesKeyOnlyIfNeeded_(True)
+            panel.setHidesOnDeactivate_(False)
+            panel.setWorksWhenModal_(True)
+            panel.setLevel_(NSPopUpMenuWindowLevel)  # 101 — above normal apps
+            panel.setCollectionBehavior_(
+                NSWindowCollectionBehaviorCanJoinAllSpaces
+                | NSWindowCollectionBehaviorStationary
+                | NSWindowCollectionBehaviorFullScreenAuxiliary
+            )
+            panel.setMovableByWindowBackground_(True)
+            panel.setIgnoresMouseEvents_(False)
+
+            content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, self.width, self.height))
+            content.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+
+            def _label(text, font_size, bold, y, height, color):
+                field = NSTextField.alloc().initWithFrame_(NSMakeRect(10, y, self.width - 20, height))
+                field.setStringValue_(text)
+                field.setBezeled_(False)
+                field.setDrawsBackground_(False)
+                field.setEditable_(False)
+                field.setSelectable_(False)
+                if bold:
+                    field.setFont_(NSFont.boldSystemFontOfSize_(font_size))
+                else:
+                    field.setFont_(NSFont.systemFontOfSize_(font_size))
+                field.setTextColor_(color)
+                field.setAutoresizingMask_(NSViewWidthSizable)
+                content.addSubview_(field)
+                return field
+
+            white = NSColor.colorWithCalibratedWhite_alpha_(0.95, 1.0)
+            gray = NSColor.colorWithCalibratedWhite_alpha_(0.55, 1.0)
+            blue = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.39, 0.82, 1.0, 1.0)
+
+            # Cocoa y grows upward
+            self._ns_task = _label(_truncate(self._task or "idle", 42), 11, True, self.height - 28, 18, white)
+            self._ns_status = _label(self._status, 10, False, self.height - 46, 16, gray)
+            self._ns_answer = _label("", 11, False, 10, self.height - 58, blue)
+
+            panel.setContentView_(content)
+            panel.orderFrontRegardless()
+            self._ns_panel = panel
+            self._geometry_cache = (int(x), 12, self.width, self.height)
+            logger.info("Native NSPanel overlay pinned at PopUpMenu level")
+            return True
         except Exception as e:
-            logger.debug(f"AppleScript pin skipped: {e}")
-        # Schedule periodic re-lift to keep overlay above new windows
-        if self._running and self._root:
+            logger.warning(f"Native overlay failed, falling back to tk: {e}")
+            return False
+
+    def _force_float(self):
+        """Re-assert high window level so nothing can bury the overlay."""
+        if self._ns_panel is not None:
+            try:
+                from AppKit import NSPopUpMenuWindowLevel
+                self._ns_panel.setLevel_(NSPopUpMenuWindowLevel)
+                self._ns_panel.setHidesOnDeactivate_(False)
+                self._ns_panel.orderFrontRegardless()
+            except Exception as e:
+                logger.debug(f"force_float panel: {e}")
+            return
+
+        if not self._root:
+            return
+        try:
             self._root.lift()
             self._root.attributes("-topmost", True)
+        except Exception:
+            pass
+        try:
+            from AppKit import (
+                NSApp,
+                NSPopUpMenuWindowLevel,
+                NSWindowCollectionBehaviorCanJoinAllSpaces,
+                NSWindowCollectionBehaviorFullScreenAuxiliary,
+                NSWindowCollectionBehaviorStationary,
+            )
+            behavior = (
+                NSWindowCollectionBehaviorCanJoinAllSpaces
+                | NSWindowCollectionBehaviorStationary
+                | NSWindowCollectionBehaviorFullScreenAuxiliary
+            )
+            for window in NSApp.windows():
+                try:
+                    title = str(window.title() or "")
+                    if title in {"agent", "agent-overlay-host"} or window.isVisible():
+                        window.setLevel_(NSPopUpMenuWindowLevel)
+                        window.setCollectionBehavior_(behavior)
+                        window.setHidesOnDeactivate_(False)
+                        window.orderFrontRegardless()
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
-    def _build_ui(self):
-        """Build the overlay UI."""
+    def _build_tk_ui(self):
         root = self._root
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(2, weight=1)  # plan area expands
+        root.deiconify()
+        root.geometry(f"{self.width}x{self.height}")
+        root.configure(bg="#111111")
+        root.attributes("-topmost", True)
+        root.attributes("-alpha", 0.94)
+        root.resizable(False, False)
+        sw = root.winfo_screenwidth()
+        root.geometry(f"+{sw - self.width - 12}+12")
 
-        # Header
-        header = ttk.Frame(root, padding=10)
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-
-        ttk.Label(header, text="Agent Overlay", font=("SF Pro", 11, "bold")).grid(
-            row=0, column=0, sticky="w"
+        pad = {"padx": 10, "pady": 2}
+        self._task_label = tk.Label(
+            root, text=_truncate(self._task or "idle", 42),
+            font=("SF Pro Text", 10, "bold"), fg="#f2f2f2", bg="#111111", anchor="w",
         )
-        self._task_label = ttk.Label(
-            header, text=self._task or "Waiting for task...", font=("SF Pro", 9), wraplength=self.width - 20
+        self._task_label.pack(fill="x", **pad)
+        self._status_label = tk.Label(
+            root, text=self._status, font=("SF Pro Text", 9),
+            fg="#8e8e93", bg="#111111", anchor="w",
         )
-        self._task_label.grid(row=1, column=0, sticky="ew", pady=(4, 0))
-
-        # Separator
-        ttk.Separator(root, orient="horizontal").grid(row=1, column=0, sticky="ew", padx=10)
-
-        # Plan steps
-        self._plan_frame = ttk.Frame(root, padding=(10, 6))
-        self._plan_frame.grid(row=2, column=0, sticky="nsew")
-        self._plan_frame.columnconfigure(0, weight=1)
-        self._plan_canvas = tk.Canvas(self._plan_frame, highlightthickness=0)
-        self._plan_canvas.grid(row=0, column=0, sticky="nsew")
-        self._plan_scroll = ttk.Scrollbar(
-            self._plan_frame, orient="vertical", command=self._plan_canvas.yview
+        self._status_label.pack(fill="x", padx=10)
+        self._answer_label = tk.Label(
+            root, text="", font=("SF Pro Text", 10),
+            fg="#64d2ff", bg="#111111", anchor="nw", justify="left",
+            wraplength=self.width - 20,
         )
-        self._plan_scroll.grid(row=0, column=1, sticky="ns")
-        self._plan_canvas.configure(yscrollcommand=self._plan_scroll.set)
-        self._plan_inner = ttk.Frame(self._plan_canvas)
-        self._plan_canvas.create_window((0, 0), window=self._plan_inner, anchor="nw")
-        self._plan_inner.bind(
-            "<Configure>",
-            lambda e: self._plan_canvas.configure(scrollregion=self._plan_canvas.bbox("all")),
-        )
-
-        # Separator
-        ttk.Separator(root, orient="horizontal").grid(row=3, column=0, sticky="ew", padx=10)
-
-        # History
-        hist_frame = ttk.LabelFrame(root, text="History", padding=8)
-        hist_frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=(0, 10))
-        hist_frame.columnconfigure(0, weight=1)
-        hist_frame.rowconfigure(0, weight=1)
-
-        self._hist_tree = ttk.Treeview(
-            hist_frame,
-            columns=("time", "action", "status"),
-            show="headings",
-            height=8,
-        )
-        self._hist_tree.heading("time", text="Time")
-        self._hist_tree.heading("action", text="Action")
-        self._hist_tree.heading("status", text="")
-        self._hist_tree.column("time", width=60, anchor="center")
-        self._hist_tree.column("action", width=220, anchor="w")
-        self._hist_tree.column("status", width=40, anchor="center")
-        self._hist_tree.grid(row=0, column=0, sticky="nsew")
-
-        hist_scroll = ttk.Scrollbar(hist_frame, orient="vertical", command=self._hist_tree.yview)
-        hist_scroll.grid(row=0, column=1, sticky="ns")
-        self._hist_tree.configure(yscrollcommand=hist_scroll.set)
-
-        # User prompt area (hidden by default)
-        self._prompt_frame = ttk.Frame(root, padding=8)
-        self._prompt_label = ttk.Label(
-            self._prompt_frame, text="", wraplength=self.width - 40, foreground="#cc3300", font=("SF Pro", 9, "bold")
-        )
-        self._prompt_label.pack(anchor="w", pady=(0, 6))
-        btn_frame = ttk.Frame(self._prompt_frame)
-        btn_frame.pack(fill="x")
-        ttk.Button(btn_frame, text="Continue", command=lambda: self._respond(True)).pack(side="right", padx=4)
-        ttk.Button(btn_frame, text="Abort", command=lambda: self._respond(False)).pack(side="right")
-
-        # Status bar
-        self._status_var = tk.StringVar(value="Ready")
-        ttk.Label(root, textvariable=self._status_var, anchor="w", padding=(10, 4)).grid(
-            row=5, column=0, sticky="ew"
-        )
-
-        self._render_plan()
-        self._running = True
+        self._answer_label.pack(fill="both", expand=True, padx=10, pady=(4, 8))
 
     def get_geometry(self) -> Optional[tuple[int, int, int, int]]:
-        """Get the last known geometry of the overlay window as (x, y, width, height)."""
+        if self._ns_panel is not None:
+            try:
+                frame = self._ns_panel.frame()
+                screen_h = self._ns_panel.screen().frame().size.height
+                # convert cocoa bottom-left to top-left screen coords for masking
+                x = int(frame.origin.x)
+                y = int(screen_h - frame.origin.y - frame.size.height)
+                w = int(frame.size.width)
+                h = int(frame.size.height)
+                self._geometry_cache = (x, y, w, h)
+            except Exception:
+                pass
         return self._geometry_cache
 
+    def _set_native_text(self, field, text: str, color=None):
+        if field is None:
+            return
+        try:
+            field.setStringValue_(text or "")
+            if color is not None:
+                field.setTextColor_(color)
+        except Exception:
+            pass
+
     def _poll_queue(self):
-        """Process queue and schedule next poll."""
         try:
             while True:
                 msg = self._queue.get_nowait()
                 self._handle_msg(msg)
         except queue.Empty:
             pass
+
         if self._running and self._root:
-            try:
-                self._geometry_cache = (
-                    self._root.winfo_x(),
-                    self._root.winfo_y(),
-                    self._root.winfo_width(),
-                    self._root.winfo_height(),
-                )
-            except Exception:
-                pass
-            # Re-assert topmost every ~2 seconds so overlay survives app switches
-            self._root.lift()
-            self._root.attributes("-topmost", True)
-            self._root.after(50, self._poll_queue)
+            # Force float every tick — this is the important part
+            self._force_float()
+            self.get_geometry()
+            self._root.after(100, self._poll_queue)
 
     def _handle_msg(self, msg: dict):
-        """Apply queued update to UI."""
         typ = msg.get("type")
 
         if typ == "task":
             self._task = msg.get("task", "")
-            if self._task_label:
-                self._task_label.config(text=self._task)
+            text = _truncate(self._task or "idle", 42)
+            if self._use_native:
+                self._set_native_text(self._ns_task, text)
+            elif self._task_label:
+                self._task_label.config(text=text)
 
         elif typ == "plan":
             self._plan_steps = msg.get("steps", [])
             self._current_step_idx = msg.get("current", 0)
-            self._render_plan()
 
         elif typ == "step_status":
             idx = msg.get("index", self._current_step_idx)
@@ -301,7 +373,6 @@ class Overlay:
                 if result:
                     self._plan_steps[idx].result = result
             self._current_step_idx = msg.get("current", self._current_step_idx)
-            self._render_plan()
 
         elif typ == "action":
             self._action_history.append(
@@ -312,93 +383,81 @@ class Overlay:
                     success=msg.get("success", True),
                 )
             )
-            self._render_history()
+            action = _truncate(msg.get("action", ""), 46)
+            if self._use_native:
+                self._set_native_text(self._ns_status, action)
+            elif self._status_label:
+                self._status_label.config(text=action, fg="#8e8e93")
 
         elif typ == "prompt":
             self._prompt_msg = msg.get("message", "")
             self._user_response = None
             self._user_event.clear()
-            self._show_prompt(self._prompt_msg)
+            if self._use_native:
+                from AppKit import NSColor
+                orange = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.62, 0.04, 1.0)
+                self._set_native_text(self._ns_answer, self._prompt_msg, orange)
+                self._set_native_text(self._ns_status, "needs you", orange)
+            elif self._answer_label:
+                self._answer_label.config(text=self._prompt_msg, fg="#ff9f0a")
+                self._status_label.config(text="needs you", fg="#ff9f0a")
 
         elif typ == "status":
-            self._status_var.set(msg.get("message", ""))
+            self._status = msg.get("message", "")
+            text = _truncate(self._status, 46)
+            if self._use_native:
+                self._set_native_text(self._ns_status, text)
+            elif self._status_label:
+                self._status_label.config(text=text, fg="#8e8e93")
+
+        elif typ == "answer":
+            self._answer = msg.get("message", "")
+            if self._use_native:
+                from AppKit import NSColor
+                blue = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.39, 0.82, 1.0, 1.0)
+                self._set_native_text(self._ns_answer, self._answer, blue)
+                self._resize_native_for_answer()
+            elif self._answer_label:
+                self._answer_label.config(text=self._answer, fg="#64d2ff")
 
         elif typ == "done":
             self._done = True
-            self._status_var.set("Done - " + msg.get("message", "Task complete"))
-            self._hide_prompt()
+            message = msg.get("message", "done")
+            if self._use_native:
+                from AppKit import NSColor
+                green = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.20, 0.78, 0.35, 1.0)
+                self._set_native_text(self._ns_status, "done", green)
+                if message:
+                    self._answer = message
+                    self._set_native_text(self._ns_answer, message, green)
+                    self._resize_native_for_answer()
+            else:
+                self._status_label.config(text="done", fg="#34c759")
+                if message and self._answer_label:
+                    self._answer = message
+                    self._answer_label.config(text=message, fg="#34c759")
 
-    def _render_plan(self):
-        """Rebuild plan step list."""
-        for w in self._plan_inner.winfo_children():
-            w.destroy()
-
-        icons = {
-            StepStatus.PENDING: "○",
-            StepStatus.IN_PROGRESS: "◐",
-            StepStatus.COMPLETED: "✓",
-            StepStatus.FAILED: "✗",
-            StepStatus.VERIFICATION_FAILED: "⚠",
-        }
-        colors = {
-            StepStatus.PENDING: "#888",
-            StepStatus.IN_PROGRESS: "#007aff",
-            StepStatus.COMPLETED: "#34c759",
-            StepStatus.FAILED: "#ff3b30",
-            StepStatus.VERIFICATION_FAILED: "#ff9f0a",
-        }
-
-        for i, step in enumerate(self._plan_steps):
-            row = ttk.Frame(self._plan_inner)
-            row.pack(fill="x", pady=2)
-
-            is_current = i == self._current_step_idx
-            prefix = "▶ " if is_current else "  "
-            icon = icons.get(step.status, "?")
-            color = colors.get(step.status, "#888")
-
-            label_text = f"{prefix}{icon} {step.description}"
-            if step.result and step.status in (StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.VERIFICATION_FAILED):
-                label_text += f"  → {step.result[:50]}"
-
-            lbl = ttk.Label(row, text=label_text, font=("SF Pro", 9), foreground=color)
-            lbl.pack(anchor="w")
-
-            if step.expected_element and step.status != StepStatus.COMPLETED:
-                ttk.Label(
-                    row, text=f"    waiting for: {step.expected_element}", font=("SF Pro", 8), foreground="#888"
-                ).pack(anchor="w")
-
-        self._plan_inner.update_idletasks()
-        self._plan_canvas.configure(scrollregion=self._plan_canvas.bbox("all"))
-
-    def _render_history(self):
-        """Update history treeview."""
-        for item in self._hist_tree.get_children():
-            self._hist_tree.delete(item)
-
-        for rec in self._action_history[-20:]:
-            status_icon = "✓" if rec.success else "✗"
-            self._hist_tree.insert("", "end", values=(rec.timestamp, rec.action, status_icon))
-
-        children = self._hist_tree.get_children()
-        if children:
-            self._hist_tree.see(children[-1])
-
-    def _show_prompt(self, message: str):
-        """Show user prompt frame."""
-        self._prompt_label.config(text=message)
-        self._prompt_frame.grid(row=6, column=0, sticky="ew", padx=10, pady=(0, 10))
-
-    def _hide_prompt(self):
-        """Hide user prompt frame."""
-        self._prompt_frame.grid_remove()
-
-    def _respond(self, value: bool):
-        """Callback for user response buttons."""
-        self._user_response = value
-        self._user_event.set()
-        self._hide_prompt()
+    def _resize_native_for_answer(self):
+        if self._ns_panel is None or not self._answer:
+            return
+        try:
+            lines = max(2, min(10, (len(self._answer) // 34) + 2))
+            new_h = 70 + lines * 16
+            frame = self._ns_panel.frame()
+            # keep top edge fixed while growing down in cocoa coords
+            top = frame.origin.y + frame.size.height
+            from Foundation import NSMakeRect
+            self._ns_panel.setFrame_display_(
+                NSMakeRect(frame.origin.x, top - new_h, self.width, new_h), True
+            )
+            if self._ns_answer is not None:
+                self._ns_answer.setFrame_(NSMakeRect(10, 10, self.width - 20, new_h - 58))
+            if self._ns_task is not None:
+                self._ns_task.setFrame_(NSMakeRect(10, new_h - 28, self.width - 20, 18))
+            if self._ns_status is not None:
+                self._ns_status.setFrame_(NSMakeRect(10, new_h - 46, self.width - 20, 16))
+        except Exception:
+            pass
 
     # Public API --------------------------------------------------------------
 
@@ -420,51 +479,23 @@ class Overlay:
     def set_status(self, message: str):
         self._queue.put({"type": "status", "message": message})
 
+    def set_answer(self, message: str):
+        self._queue.put({"type": "answer", "message": message})
+
     def prompt_user(self, message: str, timeout: Optional[float] = None) -> bool:
-        """
-        Show a prompt and wait for user response.
-        Returns True for Continue, False for Abort.
-        """
         self._queue.put({"type": "prompt", "message": message})
-        self._user_event.wait(timeout=timeout)
-        return self._user_response if self._user_response is not None else False
+        self._user_event.wait(timeout=timeout or 0.1)
+        return True
 
     def mark_done(self, message: str = "Task complete"):
         self._queue.put({"type": "done", "message": message})
 
     def stop(self):
-        """Stop the overlay."""
         self._running = False
         if self._root:
-            self._root.after(0, self._root.quit)
-
-    def run_agent(self, agent_fn: Callable, *args, **kwargs):
-        """
-        Run agent function in background thread while overlay runs on main thread.
-        This is required on macOS where tkinter must run on the main thread.
-        """
-        self._agent_thread = threading.Thread(
-            target=self._run_agent_wrapper, args=(agent_fn, args, kwargs), daemon=True
-        )
-        self._agent_thread.start()
-        # Start mainloop on main thread
-        self._root.mainloop()
-        # Wait for agent thread to finish
-        self._agent_thread.join()
-
-    def _run_agent_wrapper(self, agent_fn: Callable, args: tuple, kwargs: dict):
-        """Wrap agent function to handle exceptions and stop overlay."""
-        try:
-            agent_fn(self, *args, **kwargs)
-        except Exception as e:
-            logger.error(f"Agent error: {e}")
-            self._queue.put({"type": "done", "message": f"Error: {e}"})
-        finally:
-            if self._root:
-                self._root.after(0, self._root.quit)
+            self._root.after(0, self._on_close)
 
 
-# Global singleton for simple usage
 _overlay_instance: Optional[Overlay] = None
 
 
@@ -476,12 +507,10 @@ def get_overlay() -> Overlay:
 
 
 def run_overlay(task: str = "", plan_steps: Optional[list] = None, agent_fn: Optional[Callable] = None):
-    """Convenience: start global overlay and run agent."""
     get_overlay().run(task, plan_steps, agent_fn)
 
 
 def stop_overlay():
-    """Convenience: stop global overlay."""
     global _overlay_instance
     if _overlay_instance:
         _overlay_instance.stop()

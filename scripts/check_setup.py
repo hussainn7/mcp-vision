@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from config import cfg
 
 issues = []
 checks_passed = 0
@@ -51,8 +52,8 @@ check("rich", lambda: __import__("rich") and "ok")
 
 print("\nChecking project config...")
 check("config.py loads", lambda: (
-    lambda c: f"output_dir={c.output_dir}, model={c.ollama_model}"
-)(__import__("config").cfg))
+    f"output_dir={cfg.output_dir}, vision={cfg.vision_model}, planning={cfg.planning_model}"
+))
 
 print("\nChecking directory structure...")
 check("outputs/ exists", lambda: Path("outputs").mkdir(exist_ok=True) or "ok")
@@ -70,13 +71,16 @@ try:
         model_names = [m.get("model") or m.get("name") for m in models_response.get("models", [])]
     else:
         model_names = []
-    if "moondream:1.8b" in model_names:
-        print("  [OK] Ollama is running and moondream:1.8b is available")
+    required_models = {cfg.vision_model, cfg.planning_model}
+    missing_models = required_models - set(model_names)
+    if not missing_models:
+        print("  [OK] Ollama is running and required models are available")
         checks_passed += 1
     else:
-        print(f"  [WARN] Ollama is running but moondream:1.8b not found.")
+        print(f"  [WARN] Ollama is running but missing: {', '.join(sorted(missing_models))}")
         print(f"         Available models: {model_names or 'none'}")
-        print(f"         Run: ollama pull moondream:1.8b")
+        for model in sorted(missing_models):
+            print(f"         Run: ollama pull {model}")
 except Exception as e:
     print(f"  [WARN] Ollama not reachable: {e}")
     print(f"         Run: ollama serve")

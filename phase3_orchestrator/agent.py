@@ -47,6 +47,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import cfg
 from phase1_vision.capture import capture_screen
 from phase1_vision.parse_screen import parse_screen, save_results
+from phase1_vision.page_read import (
+    BROWSER_CHROME_MAX_Y,
+    consecutive_scrolls,
+    filter_browser_content_elements,
+    has_submitted_search,
+    is_browser_chrome_only,
+    next_browser_search_action,
+    page_relevant_to_task,
+    read_visible_text,
+    search_query_from_task,
+    try_answer_from_page,
+)
 from phase1_vision.perception import get_perception_data, AccessibilityPermissionError, get_perception_method_name
 from phase1_vision.accessibility import get_accessibility_elements
 from phase2_mcp.tools import (
@@ -62,6 +74,8 @@ from phase2_mcp.playwright_tools import (
     click_element_by_text,
     press_key as playwright_press_key,
     get_page_text,
+    scroll as playwright_scroll,
+    type_text as playwright_type_text,
 )
 from phase3_orchestrator.prompts import (
     SYSTEM_PROMPT_FIGMA_TO_VSCODE,
@@ -69,7 +83,10 @@ from phase3_orchestrator.prompts import (
     VISION_DESCRIBE_PROMPT,
     TOOL_EXTRACTION_SYSTEM_PROMPT,
     build_user_message,
+    build_screen_state,
     format_elements_summary,
+    task_appears_complete,
+    _is_research_task,
 )
 from phase3_orchestrator.plan import PlanManager, decompose_task_with_llm, StepStatus
 from phase3_orchestrator.overlay import Overlay, PlanStep as OverlayPlanStep, StepStatus as OverlayStepStatus
@@ -126,6 +143,10 @@ def _draw_bounding_boxes_on_screenshot(screenshot_img, elements):
         draw.text((x1 + 2, y1 + 2), label_text, fill="white", font=font)
 
     return annotated
+
+
+# Apps we've already forced to the front this process (avoid doing it every cycle)
+_brought_front: set[str] = set()
 
 
 def image_to_base64(img) -> str:
@@ -205,6 +226,8 @@ def parse_tool_call(response: str) -> tuple[str | None, str | None]:
         tool_match = re.match(r"^[\*\_]*TOOL[\*\_]*:\s*(.+)$", line, re.IGNORECASE)
         if tool_match:
             tool_name = tool_match.group(1).strip("*_ ")
+            if "->" in tool_name:
+                tool_name = tool_name.split("->", 1)[0].strip()
             tool_idx = i
             break
 
@@ -292,9 +315,9 @@ def execute_tool_call(tool_call: str) -> str:
             "click": _playwright_click_by_element,
             "double_click": _playwright_double_click_by_element,
             "right_click": lambda eid: "ERROR: right-click not implemented for Playwright",
-            "type_text": lambda text: "ERROR: type_text not implemented for Playwright - use fill?",
+            "type_text": playwright_type_text,
             "press": playwright_press_key,
-            "scroll": lambda eid, direction="down", clicks=3: "ERROR: scroll not implemented for Playwright",
+            "scroll": lambda _eid, direction="down", clicks=3: playwright_scroll(direction, clicks),
             "get_elements": get_screen_elements,  # This still works because it reads the JSON
         }
     else:
@@ -352,6 +375,48 @@ def execute_tool_call(tool_call: str) -> str:
         return f"ERROR: {e}"
 
 
+def _enrich_browser_perception(
+    screenshot_img,
+    elements: list[dict],
+    app_info: dict | None,
+    task: str,
+) -> tuple[list[dict], str]:
+    """When AX only sees browser chrome, OCR the page and fix click targets."""
+    page_text = ""
+    if screenshot_img is None:
+        return elements, page_text
+
+    is_browser = (app_info or {}).get("is_browser")
+    if not is_browser:
+        return elements, page_text
+
+    chrome_only = is_browser_chrome_only(elements, app_info)
+    if _is_research_task(task) or chrome_only:
+        console.print("[dim]Reading visible page text...[/dim]")
+        page_text = read_visible_text(screenshot_img, min_y=BROWSER_CHROME_MAX_Y)
+        if page_text:
+            logger.debug(f"OCR captured {len(page_text)} chars of page text")
+
+    filtered = filter_browser_content_elements(elements)
+    if filtered:
+        elements = filtered
+    elif chrome_only:
+        w, h = screenshot_img.size
+        elements = [{
+            "id": 1,
+            "label": "page viewport (scroll here)",
+            "role": "group",
+            "x": w // 2,
+            "y": h // 2,
+            "interactivity": True,
+        }]
+
+    for i, e in enumerate(elements, 1):
+        e["id"] = i
+
+    return elements, page_text
+
+
 def run_agent_cycle(
     task: str,
     history: list[dict],
@@ -395,7 +460,7 @@ def run_agent_cycle(
     # switch to it immediately without burning a full LLM cycle.
     KNOWN_APPS = {
         "safari": ("com.apple.Safari", "Safari"),
-        "chrome": ("com.google.Chrome", "Chrome"),
+        "chrome": ("com.google.Chrome", "Google Chrome"),
         "firefox": ("org.mozilla.firefox", "Firefox"),
         "finder": ("com.apple.finder", "Finder"),
         "notes": ("com.apple.Notes", "Notes"),
@@ -409,8 +474,12 @@ def run_agent_cycle(
         "reminders": ("com.apple.reminders", "Reminders"),
         "textedit": ("com.apple.TextEdit", "TextEdit"),
     }
-    # Also match browser-related keywords to Safari/Chrome
-    BROWSER_KEYWORDS = {"gmail", "google", "browser", "url", "http", "email", "website", "web", "flight"}
+    # Browser / web-research tasks → open Chrome even if task doesn't say "chrome"
+    BROWSER_KEYWORDS = {
+        "gmail", "google", "browser", "url", "http", "email", "website", "web", "flight",
+        "price", "cost", "how much", "lookup", "look up", "search for", "find",
+        "tickets", "flights", "cheap", "compare", "buy", "shop",
+    }
 
     focused_bundle = (app_info.get("bundle_id") or "").lower()
     task_lower = task.lower()
@@ -422,28 +491,64 @@ def run_agent_cycle(
             target_app = (bundle_id, app_name)
             break
 
-    # Fallback: browser keywords → Safari
+    # Fallback: browser/research keywords → Chrome (user's default browser workflow)
     if not target_app and any(kw in task_lower for kw in BROWSER_KEYWORDS):
-        target_app = ("com.apple.Safari", "Safari")
+        target_app = ("com.google.Chrome", "Google Chrome")
 
-    if target_app and focused_bundle != target_app[0].lower():
+    if target_app:
         target_name = target_app[1]
-        console.print(f"[yellow]⚠ Wrong app focused — switching to {target_name}...[/yellow]")
-        import pyautogui as _pag
-        import time as _time
-        _pag.hotkey("command", "space")
-        _time.sleep(0.4)
-        _pag.write(target_name, interval=0.05)
-        _time.sleep(0.3)
-        _pag.press("enter")
-        _time.sleep(1.0)
-        console.print(f"[green]Switched to {target_name}. Re-scanning...[/green]")
-        # Re-capture perception after switching
-        perception_data = get_perception_data()
-        elements = perception_data["elements"]
-        app_info = perception_data["app_info"]
+        target_key = target_app[0].lower()
+        wrong = focused_bundle != target_key
+        # First time this run, always pull it onto the current Space even if AX
+        # already says it's focused (common when Notes is on another desktop).
+        if wrong or target_key not in _brought_front:
+            import subprocess
+            import time as _time
+
+            if wrong:
+                console.print(f"[yellow]⚠ Wrong app focused — switching to {target_name}...[/yellow]")
+            else:
+                console.print(f"[dim]Bringing {target_name} to front...[/dim]")
+
+            try:
+                subprocess.run(["open", "-a", target_name], check=False)
+                script = (
+                    f'tell application "{target_name}" to reopen\n'
+                    f'tell application "{target_name}" to activate\n'
+                    f'delay 0.3\n'
+                    f'tell application "System Events" to set frontmost of '
+                    f'process "{target_name}" to true'
+                )
+                subprocess.run(["osascript", "-e", script], check=True, capture_output=True)
+            except Exception:
+                import pyautogui as _pag
+                _pag.hotkey("command", "space")
+                _time.sleep(0.4)
+                _pag.write(target_name, interval=0.05)
+                _time.sleep(0.3)
+                _pag.press("enter")
+            _time.sleep(1.2)
+
+            from phase1_vision.app_detector import get_frontmost_app
+            check = get_frontmost_app()
+            if (check.get("bundle_id") or "").lower() != target_key:
+                console.print(f"[yellow]Still not frontmost — forcing {target_name} again...[/yellow]")
+                subprocess.run(["open", "-a", target_name], check=False)
+                _time.sleep(1.0)
+
+            _brought_front.add(target_key)
+            console.print(f"[green]{target_name} should be frontmost. Re-scanning...[/green]")
+            perception_data = get_perception_data()
+            method = perception_data["method"]
+            elements = perception_data["elements"]
+            app_info = perception_data["app_info"]
+            _last_perception_method = method
+            console.print(f"[green]Using {get_perception_method_name(method)} perception[/green]")
+            if app_info["name"]:
+                console.print(f"[dim]Focused app: {app_info['name']} ({app_info['bundle_id']})[/dim]")
 
     screenshot_img, _ = capture_screen(save=False)
+    page_text = ""
 
     # --- Overlay mask and filter guard ---
     overlay_geom = None
@@ -486,7 +591,11 @@ def run_agent_cycle(
                 if not (ox_pad <= e.get("x", 0) <= ox_pad + ow_pad and oy_pad <= e.get("y", 0) <= oy_pad + oh_pad)
             ]
         del screenshot_img
+        screenshot_img = None
     else:
+        elements, page_text = _enrich_browser_perception(
+            screenshot_img, elements, app_info, task,
+        )
         console.print("[dim]Drawing bounding boxes...[/dim]")
         annotated = _draw_bounding_boxes_on_screenshot(screenshot_img, elements)
 
@@ -510,7 +619,7 @@ def run_agent_cycle(
 
     save_results(annotated, elements)
 
-    elements_summary = format_elements_summary(elements)
+    elements_summary = format_elements_summary(elements, page_text)
     console.print(f"[green]Found {len(elements)} elements[/green]")
 
     image_b64 = image_to_base64(annotated)
@@ -528,12 +637,31 @@ def run_agent_cycle(
         elements_summary=elements_summary,
         history=history,
         app_info=app_info,
+        elements=elements,
+        page_text=page_text,
     )
 
     console.print(Panel(Text(response, style="cyan"), title="Tool Decision (llama3.1)", border_style="blue"))
 
     # step 4: parse and execute the tool call
     action_type, content = parse_tool_call(response)
+
+    # Reject / rewrite early DONE on research tasks before search is submitted
+    if action_type == "done" and _is_research_task(task):
+        prior = []
+        for entry in history:
+            if entry.get("role") != "assistant":
+                continue
+            for line in entry.get("content", "").splitlines():
+                s = line.strip()
+                if s.upper().startswith("TOOL:"):
+                    prior.append(s.split("->", 1)[0].replace("TOOL:", "", 1).strip())
+        if not prior:
+            logger.warning("Rejected premature DONE on research task with no actions yet")
+            return "PREMATURE_DONE", False, history
+        if not has_submitted_search(prior):
+            console.print("[yellow]Rejected early DONE — search not submitted yet, pressing Enter[/yellow]")
+            action_type, content = "tool", 'press("enter")'
 
     if action_type == "done":
         console.print(Panel(f"[green]Task complete: {content}[/green]", border_style="green"))
@@ -548,9 +676,14 @@ def run_agent_cycle(
         result = execute_tool_call(content)
         console.print(f"[dim]Result: {result}[/dim]")
 
+        # Give SERP / page time to render after submit
+        if "enter" in content.lower() and "press" in content.lower():
+            console.print("[dim]Waiting for page load...[/dim]")
+            time.sleep(2.0)
+
         updated_history = history + [
             {"role": "user", "content": user_message},
-            {"role": "assistant", "content": response},
+            {"role": "assistant", "content": f"{response}\nResult: {result}"},
         ]
         return result, False, updated_history
 
@@ -577,6 +710,7 @@ def call_ollama_text(
     response = ollama.chat(
         model=model_name,
         messages=messages,
+        think=False,
         options={
             "temperature": 0.1,
             "num_predict": 512,
@@ -592,57 +726,93 @@ def call_vision_pipeline(
     elements_summary: str,
     history: list[dict],
     app_info: dict | None = None,
+    elements: list[dict] | None = None,
+    page_text: str = "",
 ) -> tuple[str, str]:
     """
     Two-stage vision pipeline.
 
-    Stage 1: Build a reliable screen description from structured OCR data + app info.
-             Falls back to Moondream only when OCR finds zero text.
+    Stage 1: Build a structured screen description from AX/DOM elements + app info.
+             Falls back to Moondream only when there are no useful labels.
     Stage 2: Ask Llama 3.1 to convert that into a structured tool call.
-
-    Args:
-        image_b64: base64-encoded PNG of the annotated screenshot
-        task: the current task description
-        elements_summary: text summary of detected elements (OCR-labeled)
-        history: previous conversation turns
-        app_info: currently focused application info
-
-    Returns:
-        (vision_description, tool_call_response)
     """
     focused_app = (app_info or {}).get("name") or "unknown"
+    elements = elements or []
 
-    # --- Stage 1: Build screen description ---
-    # Extract all unique text labels from elements_summary (the OCR labels).
-    # This is ground-truth data — no hallucination possible.
-    ocr_labels = []
-    if elements_summary:
-        for line in elements_summary.splitlines():
-            # Lines look like: "  [3] tesla stock price at (60, 24)"
-            import re as _re
-            m = _re.search(r"\]\s+(.+?)\s+at\s+\(", line)
-            if m:
-                label = m.group(1).strip()
-                if label and label.lower() != "unknown":
-                    ocr_labels.append(label)
+    # Collect prior actions for completion checks / action log
+    action_log = []
+    action_results = []
+    for entry in history:
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content", "")
+        tool_line = None
+        result_line = None
+        for line in content.strip().splitlines():
+            stripped = line.strip()
+            if stripped.upper().startswith("TOOL:"):
+                # strip any echoed "-> result" the model may have copied
+                raw = stripped.split("->", 1)[0].strip()
+                tool_line = raw[5:].strip() if raw.upper().startswith("TOOL:") else raw
+            elif stripped.lower().startswith("result:"):
+                result_line = stripped[len("Result:"):].strip()
+                action_results.append(result_line)
+        if tool_line:
+            action_log.append(tool_line)
+    action_log = action_log[-8:]
 
-    if ocr_labels:
-        # Reliable description built from structured data — no LLM hallucination
-        unique_labels = list(dict.fromkeys(ocr_labels))[:20]  # deduplicate, cap at 20
-        description = (
-            f"App: {focused_app}. "
-            f"Visible text on screen: {', '.join(unique_labels)}."
-        )
-        logger.debug("Stage 1: Using OCR-based screen description (no Moondream needed).")
+    page_answer = try_answer_from_page(task, page_text, action_log)
+    if page_answer:
+        description = build_screen_state(app_info, elements, task, page_text)
+        console.print(Panel(
+            Text(description, style="dim cyan"),
+            title="Screen State",
+            border_style="dim blue",
+        ))
+        return description, f"DONE: {page_answer}"
+
+    done_reason = task_appears_complete(task, elements, action_results)
+    if done_reason:
+        description = build_screen_state(app_info, elements, task, page_text)
+        console.print(Panel(
+            Text(description, style="dim cyan"),
+            title="Screen State",
+            border_style="dim blue",
+        ))
+        return description, f"DONE: {done_reason}"
+
+    description = build_screen_state(app_info, elements, task, page_text)
+
+    # Don't trust the planner to search: if page ≠ task and no query submitted, force it.
+    forced = next_browser_search_action(
+        task,
+        page_text,
+        action_log,
+        is_browser=bool((app_info or {}).get("is_browser")),
+        needs_web_info=_is_research_task(task),
+    )
+    if forced:
+        console.print(Panel(
+            Text(description, style="dim cyan"),
+            title="Screen State",
+            border_style="dim blue",
+        ))
+        console.print("[yellow]Page doesn't match task yet — forcing search step[/yellow]")
+        return description, forced
+    useful = any(
+        line.startswith(("Buttons/actions:", "Inputs:", "Visible content:", "Other labels:"))
+        for line in description.splitlines()
+    )
+    if useful:
+        logger.debug("Stage 1: Using structured element screen description.")
     else:
-        # Fallback: use Moondream only when OCR found nothing
-        logger.debug(f"Stage 1: OCR found no text, falling back to Moondream ({cfg.ollama_model})...")
+        logger.debug(f"Stage 1: No useful labels, falling back to vision model ({cfg.vision_model})...")
         vision_prompt = VISION_DESCRIBE_PROMPT.format(
             task=task,
             elements_summary=elements_summary,
         )
         vision_response = ollama.chat(
-            model=cfg.ollama_model,
+            model=cfg.vision_model,
             messages=[
                 *history[-4:],
                 {
@@ -657,7 +827,10 @@ def call_vision_pipeline(
                 "keep_alive": cfg.ollama_keep_alive,
             },
         )
-        description = vision_response["message"]["content"].strip()
+        description = (
+            f"Focused app: {focused_app}. "
+            f"Vision: {vision_response['message']['content'].strip()}"
+        )
 
     console.print(Panel(
         Text(description, style="dim cyan"),
@@ -665,32 +838,31 @@ def call_vision_pipeline(
         border_style="dim blue",
     ))
 
-    # Extract last 8 actions from history (cap to avoid stale state confusion)
-    action_log = []
-    for entry in history:
-        if entry.get("role") == "assistant":
-            content = entry.get("content", "")
-            for line in content.strip().splitlines():
-                if line.strip().upper().startswith("TOOL:"):
-                    action_log.append(line.strip())
-                    break
-    action_log = action_log[-8:]  # keep only most recent 8
-
     if action_log:
         actions_text = "\n".join(f"  {i+1}. {a}" for i, a in enumerate(action_log))
     else:
         actions_text = "  (none yet)"
 
-    # --- Stage 2: Llama 3.1 decides next tool call ---
-    focused_app_str = f"Currently focused app: {focused_app}\n"
-    elements_str = f"\nAvailable elements on screen (ONLY use IDs from this list):\n{elements_summary}\n" if elements_summary else ""
+    stuck = consecutive_scrolls(action_log) >= 2
+    stuck_note = ""
+    if stuck:
+        stuck_note = (
+            "\nWARNING: You already scrolled multiple times. Page is unchanged or still "
+            "unrelated. Do NOT scroll again — try press(\"cmd+l\") + type_text + enter, "
+            "or read Page content and DONE if the answer is there.\n"
+        )
+
+    elements_str = (
+        f"\nAvailable elements on screen (ONLY use IDs from this list):\n{elements_summary}\n"
+        if elements_summary else ""
+    )
     extraction_message = f"""Task: {task}
-{focused_app_str}Screen state: {description}
+{description}
 {elements_str}
 Actions completed so far (most recent last):
 {actions_text}
-
-What is the next tool call?"""
+{stuck_note}
+What is the ONE next tool call? If the task is already complete, output DONE."""
 
     logger.debug(f"Stage 2: Asking planning model ({cfg.planning_model}) for tool call...")
     tool_raw = ollama.chat(
@@ -699,13 +871,23 @@ What is the next tool call?"""
             {"role": "system", "content": TOOL_EXTRACTION_SYSTEM_PROMPT},
             {"role": "user", "content": extraction_message},
         ],
+        think=False,
         options={
             "temperature": 0.1,
-            "num_predict": 128,  # enough for TOOL: line + Reason:
+            "num_predict": 128,
             "keep_alive": cfg.ollama_keep_alive,
         },
     )
     tool_response = tool_raw["message"]["content"].strip()
+
+    # Hard reject scroll loops when the page still doesn't match the task
+    if stuck and "scroll(" in tool_response.lower() and not page_relevant_to_task(page_text, task):
+        q = search_query_from_task(task).replace('"', "")
+        console.print("[yellow]Rejecting scroll loop — forcing address-bar search[/yellow]")
+        tool_response = (
+            'TOOL: press("cmd+l")\n'
+            f'Reason: Stop scrolling; search for "{q}" instead.'
+        )
 
     return description, tool_response
 
@@ -763,6 +945,7 @@ def _run_agent_simple(overlay: Overlay, task: str, max_cycles: int | None, syste
 
             if is_done:
                 overlay.add_action("DONE", result, success=True)
+                overlay.set_answer(result)
             else:
                 overlay.add_action(f"Cycle {cycle}", result, success=not result.startswith("ERROR"))
 
@@ -866,6 +1049,7 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
                 console.print(f"[dim]Focused app: {app_info['name']} ({app_info['bundle_id']})[/dim]")
 
             screenshot_img, _ = capture_screen(save=False)
+            page_text = ""
 
             # --- Overlay mask and filter guard ---
             overlay_geom = overlay.get_geometry()
@@ -906,7 +1090,11 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
                         if not (ox_pad <= e.get("x", 0) <= ox_pad + ow_pad and oy_pad <= e.get("y", 0) <= oy_pad + oh_pad)
                     ]
                 del screenshot_img
+                screenshot_img = None
             else:
+                elements, page_text = _enrich_browser_perception(
+                    screenshot_img, elements, app_info, task,
+                )
                 console.print("[dim]Drawing bounding boxes...[/dim]")
                 annotated = _draw_bounding_boxes_on_screenshot(screenshot_img, elements)
 
@@ -928,7 +1116,7 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
 
             save_results(annotated, elements)
 
-            elements_summary = format_elements_summary(elements)
+            elements_summary = format_elements_summary(elements, page_text)
             console.print(f"[green]Found {len(elements)} elements[/green]")
 
             step_context = f"Current step: {step.description}\n"
@@ -950,6 +1138,8 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
                 elements_summary=elements_summary,
                 history=history,
                 app_info=app_info,
+                elements=elements,
+                page_text=page_text,
             )
 
             console.print(Panel(Text(response, style="cyan"), title="Tool Decision (llama3.1)", border_style="blue"))
@@ -959,6 +1149,7 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
             if action_type == "done":
                 console.print(Panel(f"[green]Task complete: {content}[/green]", border_style="green"))
                 overlay.add_action("DONE", content, success=True)
+                overlay.set_answer(content)
                 overlay.mark_done(content)
                 break
 
@@ -982,7 +1173,7 @@ def _run_agent_plan(overlay: Overlay, task: str, max_cycles: int | None, system_
 
                 updated_history = history + [
                     {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": response},
+                    {"role": "assistant", "content": f"{response}\nResult: {result}"},
                 ]
                 history = updated_history
 

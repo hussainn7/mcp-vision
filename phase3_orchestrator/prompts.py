@@ -76,56 +76,165 @@ DONE: brief description of what was accomplished"""
 VISION_DESCRIBE_PROMPT = """Look at this screenshot. What application window is currently active and focused on the screen, and what page, URL, or main content is visible inside it? Describe in one short sentence."""
 
 
-TOOL_EXTRACTION_SYSTEM_PROMPT = """You are a macOS desktop automation assistant. Accomplish tasks by issuing ONE tool call at a time.
+TOOL_EXTRACTION_SYSTEM_PROMPT = """You are a macOS desktop automation assistant. Issue ONE next action.
 
 Available tools:
 - click(N)              -- click element N from the list
 - type_text("text")     -- type text at current focus
-- press("key")          -- key combos: "enter", "tab", "escape", "cmd+space", "cmd+t", "cmd+l", "cmd+c", "cmd+v", "cmd+a", "cmd+w", "cmd+tab", "cmd+shift+n", "cmd+n", "cmd+shift+g", "delete"
+- press("key")          -- "enter", "tab", "escape", "cmd+space", "cmd+t", "cmd+l", "cmd+c", "cmd+v", "cmd+a", "cmd+w", "cmd+tab", "cmd+n", "cmd+shift+n"
 - scroll(N, "down", 3)  -- scroll at element N
 
-YOUR RESPONSE MUST START WITH "TOOL:" OR "DONE:" — NO PREAMBLE, NO EXPLANATION BEFORE IT.
+Response MUST start with TOOL: or DONE:
 
-Format:
 TOOL: tool_name(arguments)
-Reason: one-sentence justification
+Reason: one short sentence
 
-Or when fully complete:
 DONE: what was accomplished
 
-KEY RULES (follow exactly):
-1. APP FOCUS CHECK (do this first every cycle):
-   - If "Currently focused app" IS the app you need → proceed with the task directly. Do NOT open Spotlight.
-   - If the WRONG app is focused → switch: press("cmd+space") → type_text("AppName") → press("enter")
-   - CRITICAL: If Safari or Chrome is already focused, do NOT press cmd+space. Use cmd+l instead.
+RULES:
+1. Read Screen state + Actions completed first. If the task goal is already done, output DONE.
+2. Never output DONE if Actions completed is "(none yet)" — you must take at least one action first.
+3. Information tasks (find, price, search): press("cmd+l") → type_text(query) → press("enter"), then READ results. Autocomplete suggestions are NOT answers. Output DONE only after Enter and Page content has the factual answer (e.g. a $ price).
+4. Never repeat a successful action from Actions completed. Same scroll again = stuck — try a different action.
+5. If focused app is already correct, do NOT open Spotlight / cmd+space.
+6. click(N): N must exist in Available elements. Prefer labeled buttons over generic ones.
+7. Browser shortcuts (cmd+l, cmd+t) ONLY in Safari/Chrome. Never in Notes/TextEdit/Finder/Terminal.
+8. Browser search: press("cmd+l"), type_text query, press("enter"). Do NOT click tab bar elements.
+9. If Page content has no keywords from the task (home/new-tab/unrelated UI), you have NOT searched yet. Do NOT scroll — use rule 8.
+10. Notes/TextEdit: click New Note or a TextArea, then type_text. After typing the requested text successfully, DONE.
+11. Prefer the smallest next step. Do not restart the whole task."""
 
-2. click(N): N must exist in "Available elements on screen". Never invent IDs.
-   - If no element matches, use press() or type_text() shortcuts instead.
 
-3. Browser search/navigation (only when Safari/Chrome is the focused app):
-   - To search or go to a URL: press("cmd+l") then type_text("<your actual search or URL>") then press("enter")
-   - New tab: press("cmd+t") then press("cmd+l") then type_text("<your actual search or URL>") then press("enter")
-   - IMPORTANT: Replace <your actual search or URL> with the real text. Never type placeholder text.
-   - DO NOT use cmd+l in any non-browser app
+_JUNK_LABELS = {
+    "button element", "textfield element", "textarea element", "group element",
+    "statictext element", "unknown", "axbutton", "axtextfield", "axtextarea",
+}
 
-4. Never repeat a successful action. Check "Actions completed so far" before acting.
-5. Copy text: press("cmd+a") then press("cmd+c")
-6. App-specific shortcuts:
-   - Finder: press("cmd+shift+n") creates a new folder. Type the name then press("enter").
-   - Any app: press("cmd+n") creates a new document/window."""
+
+def _clean_label(label: str) -> str:
+    text = " ".join((label or "").split())
+    if len(text) > 80:
+        text = text[:77] + "..."
+    return text
+
+
+def _is_useful_label(label: str) -> bool:
+    text = (label or "").strip().lower()
+    if not text or text in _JUNK_LABELS:
+        return False
+    if text.replace(".", "", 1).isdigit():
+        return False
+    if text.startswith("0.") and len(text) > 4:
+        return False
+    return True
+
+
+def build_screen_state(
+    app_info: dict | None,
+    elements: list[dict],
+    task: str = "",
+    page_text: str = "",
+) -> str:
+    """Build a compact, useful screen description for the planner."""
+    focused_app = (app_info or {}).get("name") or "unknown"
+    buttons = []
+    fields = []
+    content_bits = []
+    other = []
+
+    for elem in elements or []:
+        role = str(elem.get("role") or "").lower()
+        label = _clean_label(elem.get("label") or elem.get("title") or "")
+        useful = _is_useful_label(label)
+        eid = elem.get("id")
+
+        if "button" in role or role in {"menuitem", "link", "tab"}:
+            if useful:
+                buttons.append(f"[{eid}] {label}")
+        elif role in {"textfield", "textarea", "searchfield", "passwordfield"} or "field" in role:
+            if useful:
+                fields.append(f"[{eid}] {role}:{label}")
+            else:
+                fields.append(f"[{eid}] {role or 'field'}")
+            if useful and len(label) > 8:
+                content_bits.append(label)
+        elif useful:
+            other.append(label)
+
+    lines = [f"Focused app: {focused_app}"]
+    if buttons:
+        lines.append("Buttons/actions: " + "; ".join(buttons[:12]))
+    if fields:
+        lines.append("Inputs: " + "; ".join(fields[:8]))
+    if content_bits:
+        unique_content = list(dict.fromkeys(content_bits))[:4]
+        lines.append("Visible content: " + " | ".join(unique_content))
+    elif other:
+        lines.append("Other labels: " + ", ".join(list(dict.fromkeys(other))[:10]))
+
+    if page_text and page_text.strip():
+        body_lines = [ln.strip() for ln in page_text.splitlines() if ln.strip()]
+        if body_lines:
+            lines.append("Page content (readable text on screen):")
+            for ln in body_lines[:30]:
+                lines.append(f"  {ln}")
+            if len(body_lines) > 30:
+                lines.append(f"  ... ({len(body_lines) - 30} more lines)")
+
+    task_l = task.lower()
+    for bit in content_bits:
+        if bit.lower() in task_l or (len(bit) > 12 and bit.lower() in task_l):
+            lines.append("Progress hint: task text already appears on screen.")
+            break
+
+    if page_text and page_text.strip() and _is_research_task(task):
+        from phase1_vision.page_read import page_relevant_to_task
+        if not page_relevant_to_task(page_text, task):
+            lines.append(
+                "Progress hint: Page content does NOT match the task yet. "
+                "Search first: press(\"cmd+l\"), type_text(query), press(\"enter\"). Do not scroll."
+            )
+
+    return "\n".join(lines)
+
+
+def _is_research_task(task: str) -> bool:
+    task_l = task.lower()
+    return any(w in task_l for w in (
+        "find", "search", "price", "cost", "how much", "look up", "lookup",
+        "cheap", "tickets", "flights", "compare", "buy", "shop",
+    ))
+
+
+def task_appears_complete(task: str, elements: list[dict], action_results: list[str]) -> str | None:
+    """Cheap completion check so weak models stop after success."""
+    if _is_research_task(task):
+        return None
+
+    task_l = task.lower()
+    typed = []
+    for result in action_results:
+        if result.lower().startswith("typed:"):
+            start = result.find("'")
+            end = result.rfind("'")
+            if start != -1 and end > start:
+                typed.append(result[start + 1:end].lower())
+
+    if typed:
+        last = typed[-1].rstrip(".")
+        if last and (last in task_l or any(last in (e.get("label") or "").lower() for e in elements)):
+            return f"Typed requested text: {typed[-1]}"
+
+    import re
+    quoted = re.findall(r"['\"]([^'\"]{3,})['\"]", task)
+    for q in quoted:
+        q_l = q.lower()
+        if any(q_l in (e.get("label") or "").lower() for e in elements):
+            return f"Requested text already visible: {q}"
+    return None
 
 
 def build_user_message(task: str, elements_summary: str) -> str:
-    """
-    Build the user turn message that gets sent along with the screenshot.
-
-    Args:
-        task: the current task description
-        elements_summary: a short text summary of what OmniParser found
-
-    Returns:
-        the message string to send as the user turn
-    """
     return f"""Current task: {task}
 
 Detected elements on screen:
@@ -134,18 +243,31 @@ Detected elements on screen:
 Look at the screenshot and decide what to do next."""
 
 
-def format_elements_summary(elements: list[dict]) -> str:
-    """
-    Turn the elements list into a readable summary for the prompt.
-    Keeps it brief so we don't waste too many tokens describing the UI.
-    """
+def format_elements_summary(elements: list[dict], page_text: str = "") -> str:
+    """Readable element list with roles; skip useless generic labels when possible."""
     if not elements:
+        if page_text.strip():
+            return "No clickable UI elements detected — use Page content in Screen state to read answers; scroll via viewport element if listed."
         return "No elements detected."
 
-    lines = []
+    useful = []
+    fallback = []
     for elem in elements:
-        lines.append(
-            f"  [{elem['id']}] {elem.get('label', 'unknown')} "
-            f"at ({elem['x']}, {elem['y']})"
-        )
-    return "\n".join(lines)
+        eid = elem.get("id")
+        role = elem.get("role") or "element"
+        label = _clean_label(elem.get("label") or "unknown")
+        if not _is_useful_label(label) and label.lower().replace(".", "", 1).isdigit():
+            continue
+        if label.lower().startswith("0.") and len(label) > 4:
+            continue
+        line = f"  [{eid}] ({role}) {label} @ ({elem.get('x')}, {elem.get('y')})"
+        if _is_useful_label(label):
+            useful.append(line)
+        elif role.lower() in {"button", "textfield", "textarea", "searchfield", "menubutton"} or "button" in role.lower() or "field" in role.lower():
+            fallback.append(line)
+
+    # Prefer useful labeled controls; keep a few unlabeled inputs/buttons
+    chosen = useful[:40]
+    if len(chosen) < 15:
+        chosen.extend(fallback[: 20 - len(chosen)])
+    return "\n".join(chosen) if chosen else "\n".join(fallback[:20])

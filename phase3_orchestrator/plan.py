@@ -293,7 +293,7 @@ class PlanManager:
         return "\n".join(lines)
 
 
-def decompose_task_with_llm(task: str, model: str = "llama3.1:8b") -> list[dict[str, Any]]:
+def decompose_task_with_llm(task: str, model: str = "qwen3:8b") -> list[dict[str, Any]]:
     """
     Decompose a high-level task into ordered steps using a fast text model.
 
@@ -323,6 +323,7 @@ Only output the JSON array, nothing else."""
         response = ollama.chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
+            think=False,
             options={"temperature": 0.1, "num_predict": 512},
         )
         content = response["message"]["content"].strip()

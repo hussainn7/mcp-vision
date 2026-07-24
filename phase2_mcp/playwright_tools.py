@@ -134,6 +134,16 @@ class PlaywrightManager:
             logger.debug(f"Playwright type failed: {e}")
             return False
 
+    async def type_text(self, text: str, delay: int = 20) -> bool:
+        if not await self.is_running():
+            return False
+        try:
+            await self.page.keyboard.type(text, delay=delay)
+            return True
+        except Exception as e:
+            logger.debug(f"Playwright typing failed: {e}")
+            return False
+
     async def press_key(self, key: str, timeout: int = 5000) -> bool:
         if not await self.is_running():
             return False
@@ -142,6 +152,17 @@ class PlaywrightManager:
             return True
         except Exception as e:
             logger.debug(f"Playwright key press failed: {e}")
+            return False
+
+    async def scroll(self, direction: str, clicks: int) -> bool:
+        if not await self.is_running():
+            return False
+        try:
+            amount = abs(clicks) * 100
+            await self.page.mouse.wheel(0, amount if direction == "down" else -amount)
+            return True
+        except Exception as e:
+            logger.debug(f"Playwright scroll failed: {e}")
             return False
 
     async def get_page_text(self, timeout: int = 5000) -> Optional[str]:
@@ -225,6 +246,20 @@ def type_text_into_input(selector: str, text: str) -> str:
     return f"ERROR: Failed to type into {selector} via Playwright"
 
 
+def type_text(text: str) -> str:
+    if not HAS_PLAYWRIGHT:
+        return "ERROR: Playwright not available"
+
+    async def _type():
+        if not await _ensure_playwright_started():
+            return False
+        return await _get_playwright_manager().type_text(text)
+
+    if _run_async(_type()):
+        return f"Typed {len(text)} characters via Playwright"
+    return "ERROR: Failed to type via Playwright"
+
+
 def press_key(key: str) -> str:
     if not HAS_PLAYWRIGHT:
         return "ERROR: Playwright not available"
@@ -237,6 +272,24 @@ def press_key(key: str) -> str:
     if _run_async(_press()):
         return f"Pressed '{key}' via Playwright"
     return f"ERROR: Failed to press '{key}' via Playwright"
+
+
+def scroll(direction: str = "down", clicks: int = 3) -> str:
+    if direction not in {"up", "down"}:
+        return "ERROR: direction must be 'up' or 'down'"
+    if clicks < 1:
+        return "ERROR: clicks must be at least 1"
+    if not HAS_PLAYWRIGHT:
+        return "ERROR: Playwright not available"
+
+    async def _scroll():
+        if not await _ensure_playwright_started():
+            return False
+        return await _get_playwright_manager().scroll(direction, clicks)
+
+    if _run_async(_scroll()):
+        return f"Scrolled {direction} {clicks} ticks via Playwright"
+    return f"ERROR: Failed to scroll {direction} via Playwright"
 
 
 def get_page_text() -> str:

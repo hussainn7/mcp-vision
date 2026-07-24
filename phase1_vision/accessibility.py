@@ -58,10 +58,6 @@ SUBROLE_BOOST = {
     "zoombutton": 0.1,
 }
 
-# Minimum confidence threshold - elements below this are filtered out
-MIN_CONFIDENCE = 0.5
-
-
 def _check_ax_permission() -> bool:
     if not HAS_PYOBJC_AX:
         return False
@@ -103,6 +99,38 @@ def _copy_ax_attribute(ax_element: Any, attribute: str) -> Any:
     return None
 
 
+def _ax_value_to_point(value: Any) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    if hasattr(value, "x") and hasattr(value, "y"):
+        return float(value.x), float(value.y)
+    try:
+        ok, point = ApplicationServices.AXValueGetValue(
+            value, ApplicationServices.kAXValueCGPointType, None
+        )
+        if ok and point is not None:
+            return float(point.x), float(point.y)
+    except Exception:
+        pass
+    return None
+
+
+def _ax_value_to_size(value: Any) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    if hasattr(value, "width") and hasattr(value, "height"):
+        return float(value.width), float(value.height)
+    try:
+        ok, size = ApplicationServices.AXValueGetValue(
+            value, ApplicationServices.kAXValueCGSizeType, None
+        )
+        if ok and size is not None:
+            return float(size.width), float(size.height)
+    except Exception:
+        pass
+    return None
+
+
 def _extract_position_bounds(ax_element: Any) -> tuple[int, int, int, int] | None:
     if not HAS_PYOBJC_AX or ax_element is None:
         return None
@@ -110,46 +138,26 @@ def _extract_position_bounds(ax_element: Any) -> tuple[int, int, int, int] | Non
     try:
         position_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXPositionAttribute)
         size_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXSizeAttribute)
-        if position_ref is None or size_ref is None:
+        point = _ax_value_to_point(position_ref)
+        size = _ax_value_to_size(size_ref)
+        if point is None or size is None:
             return None
 
-        if hasattr(position_ref, "x"):
-            pos_x, pos_y = float(position_ref.x), float(position_ref.y)
-        else:
-            pos_x = float(position_ref[0]) if len(position_ref) > 0 else 0
-            pos_y = float(position_ref[1]) if len(position_ref) > 1 else 0
+        pos_x, pos_y = point
+        width, height = size
 
-        if hasattr(size_ref, "width"):
-            width, height = float(size_ref.width), float(size_ref.height)
-        else:
-            width = float(size_ref[0]) if len(size_ref) > 0 else 0
-            height = float(size_ref[1]) if len(size_ref) > 1 else 0
-
-        # Convert global physical coordinates to logical coordinates for the captured monitor
         monitor_index = cfg.screenshot_monitor
         displays = get_display_info()
-        if monitor_index < len(displays):
-            display = displays[monitor_index]
-            # Check if the element is within this monitor's bounds (optional, but we can clip)
-            # For simplicity, we assume the element is within the captured monitor.
-            local_x = pos_x - display["origin_x"]
-            local_y = pos_y - display["origin_y"]
-            # Convert to logical coordinates by dividing by the display's scale factor
-            logical_x = int(local_x / display["scale_factor"])
-            logical_y = int(local_y / display["scale_factor"])
-            logical_width = int(width / display["scale_factor"])
-            logical_height = int(height / display["scale_factor"])
-            return (logical_x, logical_y, logical_width, logical_height)
-        else:
-            # Fallback to primary monitor if index out of range
-            display = displays[0]
-            local_x = pos_x - display["origin_x"]
-            local_y = pos_y - display["origin_y"]
-            logical_x = int(local_x / display["scale_factor"])
-            logical_y = int(local_y / display["scale_factor"])
-            logical_width = int(width / display["scale_factor"])
-            logical_height = int(height / display["scale_factor"])
-            return (logical_x, logical_y, logical_width, logical_height)
+        display = displays[monitor_index] if monitor_index < len(displays) else displays[0]
+        local_x = pos_x - display["origin_x"]
+        local_y = pos_y - display["origin_y"]
+        scale = display["scale_factor"] or 1.0
+        return (
+            int(local_x / scale),
+            int(local_y / scale),
+            int(width / scale),
+            int(height / scale),
+        )
     except Exception as e:
         logger.debug(f"Failed to read AX bounds: {e}")
         return None
@@ -176,13 +184,38 @@ def _global_to_screenshot_coords(global_x: int, global_y: int) -> tuple[int, int
 
 
 def _extract_element_title(ax_element: Any) -> str:
-    value = _copy_ax_attribute(ax_element, ApplicationServices.kAXTitleAttribute)
-    return str(value) if value is not None else ""
+    for attr in (
+        ApplicationServices.kAXTitleAttribute,
+        getattr(ApplicationServices, "kAXDescriptionAttribute", "AXDescription"),
+        getattr(ApplicationServices, "kAXValueAttribute", "AXValue"),
+    ):
+        value = _copy_ax_attribute(ax_element, attr)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
 
 def _extract_element_role(ax_element: Any) -> str:
     value = _copy_ax_attribute(ax_element, ApplicationServices.kAXRoleAttribute)
-    return str(value) if value is not None else ""
+    if value is None:
+        return ""
+    role = str(value)
+    if role.startswith("AX"):
+        role = role[2:]
+    return role
+
+
+def _normalize_role(role: str) -> str:
+    role = (role or "").lower().strip()
+    if role.startswith("ax"):
+        role = role[2:]
+    aliases = {
+        "textareatext": "textarea",
+        "text": "statictext",
+        "menuitem": "menuitem",
+        "pop up button": "popupbutton",
+    }
+    return aliases.get(role, role)
 
 
 def _compute_element_confidence(ax_element: Any) -> tuple[bool, float]:
@@ -196,40 +229,41 @@ def _compute_element_confidence(ax_element: Any) -> tuple[bool, float]:
         return False, 0.0
 
     try:
-        # Base: check if enabled
         enabled_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXEnabledAttribute)
         if enabled_ref is False:
             return False, 0.0
 
-        role = _extract_element_role(ax_element).lower()
+        role = _normalize_role(_extract_element_role(ax_element))
         confidence = ROLE_CONFIDENCE.get(role, 0.4)
 
-        # Boost for known subroles
         subrole_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXSubroleAttribute)
         if subrole_ref:
-            subrole = str(subrole_ref).lower()
+            subrole = _normalize_role(str(subrole_ref))
             confidence += SUBROLE_BOOST.get(subrole, 0.0)
-            # Some subroles imply interactability
             if subrole in {"textfield", "securetextfield", "searchfield", "closebutton", "minimizebutton", "zoombutton"}:
                 confidence = max(confidence, 0.9)
                 return True, min(confidence, 1.0)
 
-        # Actions attribute is strong signal
-        actions_ref = _copy_ax_attribute(ax_element, ApplicationServices.kAXActionsAttribute)
+        actions_attr = getattr(ApplicationServices, "kAXActionsAttribute", "AXActions")
+        try:
+            actions_ref = _copy_ax_attribute(ax_element, actions_attr)
+        except Exception:
+            actions_ref = None
         if actions_ref:
             action_names = [str(action).lower() for action in list(actions_ref)]
-            if any(name in {"press", "click", "toggle", "pick", "scroll"} for name in action_names):
+            if any(name in {"press", "click", "toggle", "pick", "scroll", "axpress"} for name in action_names):
                 confidence = max(confidence, 0.95)
                 return True, min(confidence, 1.0)
 
-        # Role-based interactability
         interactable_roles = {
             "button", "textfield", "textarea", "checkbox", "radiobutton",
             "combobox", "list", "table", "outline", "scrollbar", "slider",
             "popupbutton", "menubutton", "tabgroup", "searchfield", "passwordfield",
+            "link", "menuitem", "incrementor",
         }
         is_interactable = role in interactable_roles or "button" in role or "field" in role
-
+        if is_interactable:
+            confidence = max(confidence, 0.8)
         return is_interactable, min(confidence, 1.0)
     except Exception:
         return False, 0.0
@@ -261,7 +295,7 @@ def _extract_ax_elements_internal() -> list[dict[str, Any]]:
         elements: list[dict[str, Any]] = []
         window_ref = _copy_ax_attribute(app_element, ApplicationServices.kAXMainWindowAttribute)
         root = window_ref if window_ref is not None else app_element
-        _extract_children_recursive(root, elements, max_depth=5 if window_ref else 3)
+        _extract_children_recursive(root, elements, max_depth=8 if window_ref else 4)
 
         if not elements:
             title = _extract_element_title(app_element)

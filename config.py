@@ -56,14 +56,14 @@ class Config(BaseSettings):
 
     # minimum number of interactable elements required to use accessibility tree
     # if fewer, fall back to Playwright or OmniParser
-    min_interactable_elements: int = 5
+    min_interactable_elements: int = 3
 
     # minimum confidence threshold for AX-tree elements (0.0-1.0)
     # elements below this are filtered out before reaching the LLM
     ax_confidence_threshold: float = 0.5
 
     # text model for planning/task decomposition (fast, no vision)
-    planning_model: str = "llama3.1:8b"
+    planning_model: str = "qwen3:8b"
 
     # vision model for grounding (when AX tree is ambiguous)
     vision_model: str = "moondream:1.8b"

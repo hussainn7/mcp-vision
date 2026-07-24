@@ -32,8 +32,10 @@ from phase2_mcp.tools import (
 from phase2_mcp.playwright_tools import (
     click_element_by_role,
     click_element_by_text,
-    press_key as playwright_press_key,
+    press_key as playwright_press,
     get_page_text,
+    scroll as _playwright_scroll,
+    type_text as _playwright_type_text,
 )
 
 # initialize the FastMCP server with a descriptive name
@@ -109,7 +111,7 @@ def press(key: str) -> str:
     Args:
         key: pyautogui key name, or a '+'-joined shortcut like 'cmd+z'
     """
-    return press_key(key)
+    return pyautogui_press_key(key)
 
 
 @mcp.tool()
@@ -158,7 +160,7 @@ def playwright_press_key(key: str) -> str:
     """
     Press a keyboard key or shortcut using Playwright.
     """
-    return playwright_press_key(key)
+    return playwright_press(key)
 
 
 @mcp.tool()
@@ -167,6 +169,18 @@ def playwright_get_page_text() -> str:
     Get the text content of the current page using Playwright.
     """
     return get_page_text()
+
+
+@mcp.tool()
+def playwright_type_text(text: str) -> str:
+    """Type text into the currently focused browser control."""
+    return _playwright_type_text(text)
+
+
+@mcp.tool()
+def playwright_scroll(direction: str = "down", clicks: int = 3) -> str:
+    """Scroll the current browser page."""
+    return _playwright_scroll(direction, clicks)
 
 
 if __name__ == "__main__":
