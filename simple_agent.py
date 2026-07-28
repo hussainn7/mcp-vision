@@ -8,6 +8,7 @@ computer-use loop. Needs a grounding-capable VLM:  ollama pull qwen2.5vl:7b
 """
 
 import json
+import subprocess
 import sys
 import time
 
@@ -18,8 +19,8 @@ from PIL import Image
 from config import cfg
 from phase1_vision.capture import capture_screen
 
-MODEL = "qwen2.5vl:7b"
-MAX_W = 1280  # downscale before inference; coords scale back linearly
+MODEL = cfg.model
+MAX_W = cfg.inference_width  # downscale before inference; coords scale back linearly
 
 SYSTEM = """You control a macOS desktop. You see a screenshot. Output ONE action.
 
@@ -29,9 +30,11 @@ Coordinates are pixels in the image you were given, origin top-left.
 - type: set text (types at the current cursor)
 - key: set text to a shortcut like "enter", "cmd+space", "cmd+l"
 - scroll: set x, y and amount (negative scrolls down)
+- open_app: set text to an app name (e.g. "Safari") to launch or focus it
 - done: set text to the answer or a summary of what you accomplished
 
-If the app you need isn't visible, use key "cmd+space" and type its name."""
+To use an app that isn't already visible, open_app it. Do NOT open Spotlight
+or click things you can't see. Only interact with elements visible right now."""
 
 SCHEMA = {
     "type": "object",
@@ -39,7 +42,7 @@ SCHEMA = {
         "reason": {"type": "string"},
         "action": {
             "type": "string",
-            "enum": ["click", "double_click", "right_click", "type", "key", "scroll", "done"],
+            "enum": ["click", "double_click", "right_click", "type", "key", "scroll", "open_app", "done"],
         },
         "x": {"type": "integer"},
         "y": {"type": "integer"},
@@ -50,12 +53,18 @@ SCHEMA = {
 }
 
 
-def shrink(img: Image.Image) -> tuple[Image.Image, float]:
-    """Downscale for inference. Returns (image, factor to multiply coords by)."""
-    if img.width <= MAX_W:
-        return img, 1.0
-    scale = MAX_W / img.width
-    return img.resize((MAX_W, int(img.height * scale)), Image.LANCZOS), 1 / scale
+def shrink(img: Image.Image, screen_w: int) -> tuple[Image.Image, float]:
+    """
+    Downscale for inference and return the factor mapping image pixels back to
+    the logical points pyautogui clicks in.
+
+    Deriving the factor from the real screen width rather than a hardcoded
+    Retina constant means this is correct whether mss hands back physical
+    pixels (3024 wide) or logical ones (1512).
+    """
+    if img.width > MAX_W:
+        img = img.resize((MAX_W, int(img.height * MAX_W / img.width)), Image.LANCZOS)
+    return img, screen_w / img.width
 
 
 def act(a: dict, scale: float) -> str:
@@ -75,17 +84,23 @@ def act(a: dict, scale: float) -> str:
         pyautogui.hotkey(*a.get("text", "").split("+"))
     elif kind == "scroll":
         pyautogui.scroll(a.get("amount", -5), x=x, y=y)
+    elif kind == "open_app":
+        # native launch/focus — deterministic, no Spotlight grounding needed
+        subprocess.run(["open", "-a", a.get("text", "")], check=False)
+        time.sleep(1.5)  # let the window come up before the next screenshot
+        return f"open_app {a.get('text', '')}"
     else:
         return "done"
     return f"{kind}({x},{y}) {a.get('text', '')}".strip()
 
 
-def run(task: str, max_steps: int = 15) -> str:
+def run(task: str, max_steps: int | None = None) -> str:
+    max_steps = max_steps or cfg.max_steps
     history: list[str] = []
 
     for step in range(max_steps):
         img, _ = capture_screen(save=False)
-        img, scale = shrink(img)
+        img, scale = shrink(img, pyautogui.size()[0])
 
         prompt = f"Task: {task}\n\nDone so far:\n" + (
             "\n".join(f"{i + 1}. {h}" for i, h in enumerate(history)) or "  (nothing yet)"
@@ -117,16 +132,34 @@ def run(task: str, max_steps: int = 15) -> str:
 
 def demo():
     # ponytail: only the coordinate math is worth a check; the rest is I/O.
-    img, scale = shrink(Image.new("RGB", (2560, 1440)))
-    assert img.width == 1280 and abs(scale - 2.0) < 1e-9
-    small, s = shrink(Image.new("RGB", (800, 600)))
-    assert small.width == 800 and s == 1.0
+    # Retina: 3024px grab shown at 1512 logical -> click coords must double.
+    img, scale = shrink(Image.new("RGB", (3024, 1964)), screen_w=1512)
+    assert img.width == 1280 and abs(scale - 1512 / 1280) < 1e-9
+    # Non-Retina: grab already matches the screen, no scaling at all.
+    img, scale = shrink(Image.new("RGB", (1280, 800)), screen_w=1280)
+    assert img.width == 1280 and scale == 1.0
+    # mss handing back logical points on a HiDPI Mac (what this machine does).
+    img, scale = shrink(Image.new("RGB", (1512, 982)), screen_w=1512)
+    assert abs(scale - 1512 / 1280) < 1e-9
     assert act({"action": "done", "text": "x"}, 1.0) == "done"
     print("ok")
 
 
+def main():
+    args = sys.argv[1:]
+    if args and args[0] == "--demo":
+        return demo()
+    steps = None
+    if "--steps" in args:
+        i = args.index("--steps")
+        steps = int(args[i + 1])
+        args = args[:i] + args[i + 2 :]
+    if not args:
+        print(__doc__)
+        return
+    print("\n=== RESULT ===")
+    print(run(" ".join(args), steps))
+
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--demo":
-        demo()
-    else:
-        print(run(" ".join(sys.argv[1:]) or "open Safari"))
+    main()

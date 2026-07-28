@@ -31,3 +31,7 @@ outputs/elements_*.json
 .vscode/settings.json
 .idea/
 *.swp
+
+
+# weights
+/weights/*

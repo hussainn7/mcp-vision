@@ -1,8 +1,20 @@
 # mcp-vision
 
-A local, autonomous AI agent that watches your screen, understands the visual layout, and executes native OS commands (clicking, typing) on your behalf. **No cloud APIs, no subscriptions, and zero data leaving your machine.**
+A local screen agent. Give it a task, it looks at your screen, moves the mouse, and gives you back an answer. **No cloud APIs, no subscriptions, zero data leaving your machine.**
 
-The architecture is built on a simple premise: bridge local vision models with standard OS automation. The pipeline captures a screenshot, processes it through Microsoft's OmniParser to generate a structured map of interactive elements, and feeds that layout to Moondream via Ollama. The model then decides the next action, executing it through a clean, composable Model Context Protocol (MCP) server.
+One model, one loop, ~130 lines:
+
+```mermaid
+graph LR
+    A[Task] --> B[Screenshot]
+    B --> C[Qwen2.5-VL]
+    C --> D{JSON action}
+    D -->|click x,y / type / key| E[pyautogui]
+    E --> B
+    D -->|done| F[Answer]
+```
+
+The model returns pixel coordinates directly, the same way Claude's computer-use loop works. There is no element detection, no accessibility tree, no bounding-box overlay — the screenshot goes in, `{"action": "click", "x": 412, "y": 88}` comes out, and Ollama's structured-output mode guarantees it parses.
 
 ## Quick start
 
@@ -10,47 +22,42 @@ The architecture is built on a simple premise: bridge local vision models with s
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-playwright install chromium
-ollama pull moondream:1.8b
-ollama pull llama3.1:8b
-python scripts/download_weights.py
+ollama pull qwen2.5vl:7b
 python scripts/check_setup.py
 ```
 
-Grant the terminal Accessibility and Screen Recording permissions in macOS System Settings before running the agent.
+Grant your terminal **Accessibility** and **Screen Recording** in System Settings → Privacy & Security. Without Screen Recording the screenshot comes back black; `check_setup.py` catches that.
+
+## Usage
 
 ```bash
-screen-agent "Open Safari and search for local weather" --max-cycles 12
-screen-agent "Create a new TextEdit document and write a short note" --plan --max-cycles 20
+python simple_agent.py "open Safari and search for the weather in Dubai"
+```
+
+Every step prints the action and the model's reason. The final line is the result. `--steps N` raises the 15-action ceiling.
+
+## Configuration
+
+Everything lives in `config.py`, overridable with `SCREEN_AGENT_*` env vars or a `.env` file. The one knob that matters:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `inference_width` | 1280 | Screenshot is downscaled to this before inference. Lower is faster, but grounding gets sloppier on dense UIs. This is the accuracy/speed trade. |
+| `model` | `qwen2.5vl:7b` | Must be a *grounding* VLM — one trained to emit pixel coordinates. `qwen2.5vl:3b` is faster and misses more. Most VLMs (moondream, llava) cannot do this at all. |
+| `max_steps` | 15 | Give up after this many actions. |
+
+## MCP server
+
+`phase2_mcp/` exposes the same primitives over the Model Context Protocol, so another agent can drive the machine:
+
+```bash
 python phase2_mcp/server.py
 ```
 
-The agent can click, double-click, right-click, type, press shortcuts, and scroll. With Chrome launched using `--remote-debugging-port=9222`, browser tabs also use Playwright for faster DOM-based clicks, typing, scrolling, and key presses.
+It includes Playwright-backed browser tools that skip the screen entirely — faster and exact, when Chrome is launched with `--remote-debugging-port=9222`. Independent of the agent loop above.
 
-```mermaid
-graph TD
-    A[Start Task] --> B[MSS: Capture Screen]
-    B --> C[OmniParser: YOLO Element Detection]
-    C --> D[Generate Labeled Bounding Box Image]
-    D --> E[Ollama: Moondream Decision]
-    E --> F{Model Response}
-    F -->|TOOL Call| G[PyAutoGUI: Execute Click/Type/Shortcut]
-    G -->|Wait 2s| B
-    F -->|DONE| H[Task Finished]
-```
+## Limitations
 
----
+Grounding accuracy is the whole game, and it degrades on dense interfaces — small toolbar icons and tight menus are where clicks miss. The agent doesn't verify its actions: if a click lands in empty space it will happily continue as though it worked. Comparing screenshots before and after each action is the obvious next upgrade.
 
-## The Execution Process
-
-During the initial execution cycle, the agent captures the current state of your display and runs it through the vision parser. It saves an annotated reference screenshot locally, mapping every detected UI element and interactive bounding box to a specific ID coordinate before passing it to the LLM. 
-
-![OmniParser Annotated Screen Layout](outputs/s1.png)
-*Example: The agent's internal visual map before executing an OS command.*
-
----
-
-## Current State & Roadmap
-
-Currently, `mcp-vision` is highly capable of executing simple, repetitive daily OS tasks and navigating static UI layouts autonomously. However, as a v1 release, there is ongoing optimization needed. Future improvements will focus on handling complex, multi-step workflows, managing heavy dynamic scrolling, and reducing inference latency for faster execution cycles.
-
+Expect 2–4s per step on Apple Silicon, essentially all of it model inference.

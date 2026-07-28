@@ -1,9 +1,5 @@
 """
-Central config for the screen agent.
-
-All the tunable knobs live here so you're not hunting through multiple files
-when you want to change something simple like the output directory or which
-monitor to capture.
+Central config. Override any of these with SCREEN_AGENT_* env vars or a .env file.
 """
 
 from pathlib import Path
@@ -14,66 +10,42 @@ class Config(BaseSettings):
     # where Ollama is listening
     ollama_host: str = "http://localhost:11434"
 
-    # the vision model to use - needs to be a multimodal model that understands images
-    ollama_model: str = "moondream:1.8b"
+    # the one model. must be vision-capable AND able to output pixel coordinates
+    # (a "grounding" VLM). qwen2.5vl is the smallest that reliably lands clicks.
+    model: str = "qwen2.5vl:7b"
 
-    # how long (in seconds) Ollama keeps the model loaded between calls.
-    # set to 0 to unload immediately after each call, which frees up memory
-    # but makes the next call slower. 300 (5 minutes) is a decent middle ground.
-    ollama_keep_alive: int = 300
+    # how long Ollama keeps the model in memory between calls, in seconds.
+    # keep this high — reloading 7B of weights costs several seconds.
+    ollama_keep_alive: int = 600
 
     # which monitor to capture. 1 is your primary display.
-    # if you have multiple screens, try 2 or 3.
     screenshot_monitor: int = 1
 
-    # on Retina/HiDPI displays, mss captures at 2x resolution.
-    # OmniParser expects regular-res images, so we scale down.
-    # set to 1.0 if you're on a non-HiDPI display.
-    display_scale_factor: float = 2.0
+    # Leave at 1.0. The agent derives the pixel->click scale from the real
+    # screen width at runtime, so pre-shrinking here only throws away detail.
+    # This knob stays because mss on some multi-monitor setups reports a
+    # resolution that needs correcting by hand.
+    display_scale_factor: float = 1.0
 
-    # where annotated screenshots and element JSONs get saved
+    # screenshots are downscaled to this width before inference. Lower = faster,
+    # but grounding gets sloppier on dense UIs. This is the accuracy/speed knob.
+    inference_width: int = 1280
+
+    # where screenshots get saved
     output_dir: Path = Path("outputs")
 
-    # where OmniParser weights live
-    weights_dir: Path = Path("weights")
-
-    # OmniParser detection threshold - higher means fewer, more confident boxes.
-    # lower means more boxes but also more false positives.
-    detection_threshold: float = 0.15
-
-    # Florence-2 captioning batch size. Lower values (like 16 or 8) prevent GPU out of memory errors.
-    caption_batch_size: int = 16
-
-    # max elements OmniParser will label before truncating.
-    # 50 is usually plenty for a normal screen.
-    max_elements: int = 50
-
-    # seconds between agent cycles in the main loop
+    # seconds to wait after each action before looking again
     loop_delay: float = 0.5
 
-    # how many cycles to run before stopping. set to None to run forever.
-    max_cycles: int | None = None
-
-    # minimum number of interactable elements required to use accessibility tree
-    # if fewer, fall back to Playwright or OmniParser
-    min_interactable_elements: int = 3
-
-    # minimum confidence threshold for AX-tree elements (0.0-1.0)
-    # elements below this are filtered out before reaching the LLM
-    ax_confidence_threshold: float = 0.5
-
-    # text model for planning/task decomposition (fast, no vision)
-    planning_model: str = "qwen3:8b"
-
-    # vision model for grounding (when AX tree is ambiguous)
-    vision_model: str = "moondream:1.8b"
+    # give up after this many actions
+    max_steps: int = 15
 
     # MCP server settings
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8765
 
-    # Playwright CDP endpoint for attaching to existing Chrome
-    # Set to "http://localhost:9222" to attach to Chrome launched with --remote-debugging-port=9222
+    # Playwright CDP endpoint for attaching to Chrome launched with
+    # --remote-debugging-port=9222. Only used by the MCP server.
     playwright_cdp_endpoint: str = "http://localhost:9222"
 
     class Config:
@@ -81,11 +53,5 @@ class Config(BaseSettings):
         env_file = ".env"
 
 
-# module-level singleton so you just do `from config import cfg`
 cfg = Config()
-
-# make sure output and weights directories exist
 cfg.output_dir.mkdir(exist_ok=True)
-cfg.weights_dir.mkdir(exist_ok=True)
-(cfg.weights_dir / "icon_detect").mkdir(exist_ok=True)
-(cfg.weights_dir / "icon_caption_florence").mkdir(exist_ok=True)

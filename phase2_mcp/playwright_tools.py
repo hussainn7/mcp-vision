@@ -1,10 +1,9 @@
-"""
-Playwright helpers for browser windows.
-Used when the focused app is a browser — perception scrapes the DOM,
-actions can go through Playwright instead of pyautogui.
+r"""
+Playwright helpers for browser windows, exposed through the MCP server.
+Not used by simple_agent.py, which drives the browser through the screen.
 
-Connects to existing Chrome via CDP (remote debugging port) instead of launching new instance.
-Run Chrome with: /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+Connects to existing Chrome via CDP instead of launching a new instance.
+Run Chrome with: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222
 """
 
 import asyncio
