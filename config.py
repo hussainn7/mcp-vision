@@ -10,9 +10,13 @@ class Config(BaseSettings):
     # where Ollama is listening
     ollama_host: str = "http://localhost:11434"
 
-    # the one model. must be vision-capable AND able to output pixel coordinates
-    # (a "grounding" VLM). qwen2.5vl is the smallest that reliably lands clicks.
+    # vision model for simple_agent.py — must be a grounding VLM that outputs
+    # pixel coordinates. qwen2.5vl is the smallest that reliably lands clicks.
     model: str = "qwen2.5vl:7b"
+
+    # text model for mac_agent.py — picks tools and fills arguments. qwen3 is
+    # good at function calling and runs fast on Apple Silicon (Metal).
+    planning_model: str = "qwen3:8b"
 
     # how long Ollama keeps the model in memory between calls, in seconds.
     # keep this high — reloading 7B of weights costs several seconds.

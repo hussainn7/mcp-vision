@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
+mac-agent = "mac_agent:run"
 screen-agent = "simple_agent:main"
 
 [build-system]

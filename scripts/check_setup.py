@@ -27,9 +27,9 @@ def python_version():
 
 
 def imports():
-    for mod in ("mss", "PIL", "pyautogui", "ollama"):
+    for mod in ("ollama", "mss", "PIL", "pyautogui"):
         __import__(mod)
-    return "mss, PIL, pyautogui, ollama"
+    return "ollama, mss, PIL, pyautogui"
 
 
 def model_present():
@@ -37,33 +37,30 @@ def model_present():
 
     listed = ollama.list()
     names = [m.model for m in getattr(listed, "models", [])]
-    assert cfg.model in names, (
-        f"{cfg.model} not pulled. Run: ollama pull {cfg.model}\n"
+    # mac_agent needs the tool-calling model; the vision one is only for simple_agent
+    assert cfg.planning_model in names, (
+        f"{cfg.planning_model} not pulled. Run: ollama pull {cfg.planning_model}\n"
         f"           Have: {', '.join(names) or 'nothing'}"
     )
-    return cfg.model
+    return cfg.planning_model
 
 
-def screen_capture():
-    from phase1_vision.capture import capture_screen
+def applescript():
+    import subprocess
 
-    img, _ = capture_screen(save=False)
-    # An all-black grab means Screen Recording permission was never granted.
-    assert img.convert("L").getextrema() != (0, 0), (
-        "screenshot is all black -- grant Screen Recording in "
-        "System Settings > Privacy & Security"
-    )
-    return f"{img.width}x{img.height} logical points"
+    out = subprocess.run(["osascript", "-e", 'return "ok"'], capture_output=True, text=True)
+    assert out.stdout.strip() == "ok", out.stderr.strip()
+    return "osascript reachable (apps prompt for Automation on first use)"
 
 
 print("\nChecking...")
 check("python >= 3.12", python_version)
 check("imports", imports)
 check("ollama model", model_present)
-check("screen capture", screen_capture)
+check("applescript", applescript)
 
 print()
 if fails:
     print(f"{len(fails)} problem(s): {', '.join(fails)}")
     sys.exit(1)
-print('Good to go.  python simple_agent.py "your task here"')
+print('Good to go.  python mac_agent.py "make a note called Ideas with a haiku"')

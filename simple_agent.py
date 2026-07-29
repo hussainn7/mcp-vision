@@ -8,6 +8,7 @@ computer-use loop. Needs a grounding-capable VLM:  ollama pull qwen2.5vl:7b
 """
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -94,9 +95,26 @@ def act(a: dict, scale: float) -> str:
     return f"{kind}({x},{y}) {a.get('text', '')}".strip()
 
 
+def prelaunch(task: str) -> str | None:
+    """If the task starts with open/launch/start <App>, launch it in code so a
+    weak model never has to route that step. `open -a` no-ops on a bad name."""
+    m = re.match(r"\s*(?:open|launch|start)\s+([\w][\w ]*?)(?:\s+and\b|,|$)", task, re.I)
+    if not m:
+        return None
+    app = m.group(1).strip()
+    subprocess.run(["open", "-a", app], check=False)
+    time.sleep(1.5)
+    return f"open_app {app}"
+
+
 def run(task: str, max_steps: int | None = None) -> str:
     max_steps = max_steps or cfg.max_steps
     history: list[str] = []
+
+    pre = prelaunch(task)
+    if pre:
+        print(f"[0] {pre}")
+        history.append(pre)
 
     for step in range(max_steps):
         img, _ = capture_screen(save=False)
@@ -142,6 +160,15 @@ def demo():
     img, scale = shrink(Image.new("RGB", (1512, 982)), screen_w=1512)
     assert abs(scale - 1512 / 1280) < 1e-9
     assert act({"action": "done", "text": "x"}, 1.0) == "done"
+
+    # prelaunch pulls the app name out of the leading open/launch clause
+    # ponytail: leading verb only; mid-task switches use the open_app action.
+    import unittest.mock as _mock
+    with _mock.patch("subprocess.run"), _mock.patch("time.sleep"):
+        assert prelaunch("open TextEdit and type hello") == "open_app TextEdit"
+        assert prelaunch("launch Safari, search weather") == "open_app Safari"
+        assert prelaunch("open System Settings") == "open_app System Settings"
+        assert prelaunch("scroll down and read the page") is None
     print("ok")
 
 

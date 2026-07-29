@@ -1,20 +1,38 @@
-# mcp-vision
+# mac-agent
 
-A local screen agent. Give it a task, it looks at your screen, moves the mouse, and gives you back an answer. **No cloud APIs, no subscriptions, zero data leaving your machine.**
+A local Mac assistant. You type a task, a small model running on your own
+machine figures out which tools to call, and the tools do the work through
+macOS itself. **No cloud APIs, no subscriptions, zero data leaving your Mac.**
 
-One model, one loop, ~130 lines:
+```bash
+python mac_agent.py "make a note called Ideas with a haiku about the sea"
+python mac_agent.py "add a reminder to buy coffee and open Calendar"
+```
 
 ```mermaid
 graph LR
-    A[Task] --> B[Screenshot]
-    B --> C[Qwen2.5-VL]
-    C --> D{JSON action}
-    D -->|click x,y / type / key| E[pyautogui]
-    E --> B
-    D -->|done| F[Answer]
+    A[Task] --> B[qwen3:8b picks a tool]
+    B --> C{Tool}
+    C -->|create_note, reminder, event| D[AppleScript]
+    C -->|open_app, read files| E[shell]
+    D --> F[Result back to model]
+    E --> F
+    F --> B
+    B -->|nothing left to do| G[Answer]
 ```
 
-The model returns pixel coordinates directly, the same way Claude's computer-use loop works. There is no element detection, no accessibility tree, no bounding-box overlay — the screenshot goes in, `{"action": "click", "x": 412, "y": 88}` comes out, and Ollama's structured-output mode guarantees it parses.
+The model never touches the mouse. It only decides *what* to do; the OS handles
+*where*. That one choice is why an 8B model running locally is reliable here —
+see the note at the bottom.
+
+## Two agents in here
+
+- **`mac_agent.py`** — the real thing. Tool-calling over AppleScript + shell.
+  Reliable, fast (~8s a step warm), works every time on native apps.
+- **`simple_agent.py`** — the pure-vision version, kept as a foil. It takes a
+  screenshot and has the model guess pixel coordinates to click, the way
+  Claude's computer-use loop works. It's slow and it misses a lot. It's here to
+  show *why* the tool-calling approach exists.
 
 ## Quick start
 
@@ -22,42 +40,47 @@ The model returns pixel coordinates directly, the same way Claude's computer-use
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-ollama pull qwen2.5vl:7b
+ollama pull qwen3:8b
 python scripts/check_setup.py
 ```
 
-Grant your terminal **Accessibility** and **Screen Recording** in System Settings → Privacy & Security. Without Screen Recording the screenshot comes back black; `check_setup.py` catches that.
+First run of a tool asks for **Automation** permission (System Settings →
+Privacy & Security → Automation) — that's macOS gating AppleScript. Allow it
+once per app. `simple_agent.py` additionally needs Screen Recording.
 
-## Usage
+## Tools
 
-```bash
-python simple_agent.py "open Safari and search for the weather in Dubai"
-```
-
-Every step prints the action and the model's reason. The final line is the result. `--steps N` raises the 15-action ceiling.
-
-## Configuration
-
-Everything lives in `config.py`, overridable with `SCREEN_AGENT_*` env vars or a `.env` file. The one knob that matters:
-
-| Setting | Default | Effect |
+| Tool | Does | How |
 |---|---|---|
-| `inference_width` | 1280 | Screenshot is downscaled to this before inference. Lower is faster, but grounding gets sloppier on dense UIs. This is the accuracy/speed trade. |
-| `model` | `qwen2.5vl:7b` | Must be a *grounding* VLM — one trained to emit pixel coordinates. `qwen2.5vl:3b` is faster and misses more. Most VLMs (moondream, llava) cannot do this at all. |
-| `max_steps` | 15 | Give up after this many actions. |
+| `create_note` | new Apple Note | AppleScript |
+| `add_reminder` | new reminder, optional due date | AppleScript |
+| `create_event` | new Calendar event | AppleScript |
+| `open_app` | launch/focus an app | `open -a` |
+| `list_dir` / `read_file` | look around the filesystem | shell |
 
-## MCP server
+Adding a tool is a Python function plus a schema entry — no framework.
 
-`phase2_mcp/` exposes the same primitives over the Model Context Protocol, so another agent can drive the machine:
+## The 7B dilemma (what went wrong, and why it ended up like this)
 
-```bash
-python phase2_mcp/server.py
-```
+The first plan was the obvious one: screenshot the screen, let the model see it,
+have it point the mouse and click — a fully general "AI uses my computer" agent.
+It technically ran. It was also slow (~55 seconds a step) and got things wrong
+constantly: it would invent a button that wasn't there, misjudge a coordinate by
+a hundred pixels, or read the text on screen and start typing it back like an
+instruction.
 
-It includes Playwright-backed browser tools that skip the screen entirely — faster and exact, when Chrome is launched with `--remote-debugging-port=9222`. Independent of the agent loop above.
+The reason isn't a bug, it's the model size. A 7–8B model that fits on a laptop
+is genuinely weak at the two hardest parts of freestyling a UI: planning a
+multi-step task, and pointing at an exact pixel from an image. Cloud agents get
+away with it because there's a far bigger model behind them.
 
-## Limitations
+So the fix was to stop asking the model to do the parts it's bad at. With
+AppleScript, the coordinates come from the OS, not from a guess — the model just
+picks `create_note` and fills in the title. Same model, night-and-day
+reliability, because the hard part moved out of the model and into the system.
 
-Grounding accuracy is the whole game, and it degrades on dense interfaces — small toolbar icons and tight menus are where clicks miss. The agent doesn't verify its actions: if a click lands in empty space it will happily continue as though it worked. Comparing screenshots before and after each action is the obvious next upgrade.
-
-Expect 2–4s per step on Apple Silicon, essentially all of it model inference.
+The tradeoff is honest: this only works where a clean interface exists —
+scriptable Mac apps, the shell, filtered browser DOM. Point it at a random
+bloated website and it hits the same wall the vision version did. That wall is
+the size of the model, and locally it doesn't move. So the reliable core is
+native macOS, and the messy web is where you'd reach for a cloud model instead.
