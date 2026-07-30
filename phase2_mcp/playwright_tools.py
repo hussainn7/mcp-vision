@@ -118,7 +118,7 @@ class PlaywrightManager:
             return False
         try:
             locator = self.page.get_by_role(role, name=name) if name else self.page.get_by_role(role)
-            await locator.click(timeout=timeout)
+            await locator.first.click(timeout=timeout)
             return True
         except Exception as e:
             logger.debug(f"Playwright click by role failed: {e}")
@@ -128,7 +128,8 @@ class PlaywrightManager:
         if not await self.is_running():
             return False
         try:
-            await self.page.get_by_text(text, exact=False).click(timeout=timeout)
+            # .first: a page often has several matches; strict mode would raise
+            await self.page.get_by_text(text, exact=False).first.click(timeout=timeout)
             return True
         except Exception as e:
             logger.debug(f"Playwright click by text failed: {e}")
@@ -180,7 +181,9 @@ class PlaywrightManager:
         if not await self.is_running():
             return None
         try:
-            text = await self.page.text_content("body", timeout=timeout)
+            # inner_text = rendered visible text only; text_content would drag
+            # in <style>/<script> bodies and hand the model CSS instead of page
+            text = await self.page.inner_text("body", timeout=timeout)
             return text.strip() if text else None
         except Exception as e:
             logger.debug(f"Playwright get text failed: {e}")
