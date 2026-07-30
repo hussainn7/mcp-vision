@@ -24,6 +24,10 @@ outputs/elements_*.json
 .env
 *.env.local
 
+# Learned failure memory (per-machine, regenerated at runtime)
+failures.json
+failures.demo.json
+
 # macOS
 .DS_Store
 

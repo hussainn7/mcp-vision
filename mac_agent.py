@@ -14,10 +14,14 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import ollama
 
 from config import cfg
+
+# where learned failures persist between runs
+FAIL_LOG = Path(__file__).with_name("failures.json")
 
 # a freshly-launched app often refuses the first AppleEvent; retry once
 COLD_ERRORS = ("-609", "-1712", "-1708", "Connection is invalid")
@@ -129,6 +133,61 @@ SCHEMAS = [
         "parameters": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}}},
 ]
 
+# Eval gates: read the state back and confirm the action actually landed.
+# A tool that "succeeded" can still have done nothing (blank note, wrong
+# calendar), so we don't trust the return string — we check reality.
+# verify(**args) returns "" when good, else a short problem description.
+
+def verify_note(title, body):
+    r = osa('tell application "Notes" to return (count of notes whose name is (item 1 of argv))', title)
+    return "" if r.isdigit() and int(r) > 0 else f"note '{title}' not found after create"
+
+
+def verify_reminder(text, due=""):
+    r = osa('tell application "Reminders" to return (count of reminders whose name is (item 1 of argv))', text)
+    return "" if r.isdigit() and int(r) > 0 else f"reminder '{text}' not found after add"
+
+
+def verify_event(title, when, calendar="Home"):
+    r = osa('tell application "Calendar" to tell calendar (item 2 of argv) to '
+            'return (count of (events whose summary is (item 1 of argv)))', title, calendar)
+    return "" if r.isdigit() and int(r) > 0 else f"event '{title}' not found in calendar '{calendar}'"
+
+
+VERIFY = {
+    "create_note": verify_note,
+    "add_reminder": verify_reminder,
+    "create_event": verify_event,
+}
+
+
+# Failure memory: every error or failed eval gate is appended here and fed
+# back into the next run's prompt, so the agent stops repeating the same
+# mistake across sessions. ponytail: flat JSON list, last 50 kept — swap for
+# a real store only if this file ever gets big enough to matter.
+def load_failures():
+    try:
+        return json.loads(FAIL_LOG.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def record_failure(tool, args, error):
+    fails = load_failures()
+    entry = {"tool": tool, "args": args, "error": str(error)[:200]}
+    if entry not in fails:
+        fails.append(entry)
+        FAIL_LOG.write_text(json.dumps(fails[-50:], indent=2))
+
+
+def past_mistakes():
+    fails = load_failures()
+    if not fails:
+        return ""
+    lines = "\n".join(f"- {f['tool']}({json.dumps(f['args'])}) failed: {f['error']}" for f in fails[-10:])
+    return f"\n\nLearn from these past failures and do not repeat them:\n{lines}"
+
+
 SYSTEM = """You control a Mac by calling tools. Break the task into tool calls and
 make them one at a time. When the task is fully done, reply in plain words with a
 short confirmation and no more tool calls.
@@ -137,7 +196,7 @@ The home folder is {home}. Use ~ or that path for files; don't invent paths."""
 
 
 def run(task, max_steps=8):
-    messages = [{"role": "system", "content": SYSTEM.format(home=os.path.expanduser("~"))},
+    messages = [{"role": "system", "content": SYSTEM.format(home=os.path.expanduser("~")) + past_mistakes()},
                 {"role": "user", "content": task}]
 
     for _ in range(max_steps):
@@ -159,6 +218,17 @@ def run(task, max_steps=8):
             args = call["function"]["arguments"]
             print(f"  -> {name}({json.dumps(args)})")
             result = TOOLS[name](**args) if name in TOOLS else f"unknown tool {name}"
+
+            # eval gate: confirm the action actually landed, else turn it into
+            # an error the model has to react to
+            if isinstance(result, str) and result.startswith("error:"):
+                record_failure(name, args, result)
+            elif name in VERIFY:
+                problem = VERIFY[name](**args)
+                if problem:
+                    result = f"error: action ran but verification failed: {problem}"
+                    record_failure(name, args, problem)
+
             print(f"     {result[:120]}")
             messages.append({"role": "tool", "tool_name": name, "content": result})
 
@@ -170,6 +240,21 @@ def demo():
     assert osa('return ((item 1 of argv) & (item 2 of argv))', "a", "b") == "ab"
     assert "error:" in osa("this is not applescript")
     assert set(t["function"]["name"] for t in SCHEMAS) == set(TOOLS)
+    assert set(VERIFY) <= set(TOOLS)  # every gate maps to a real tool
+
+    # failure memory round-trips to disk and surfaces in the prompt
+    global FAIL_LOG
+    saved, FAIL_LOG = FAIL_LOG, Path(__file__).with_name("failures.demo.json")
+    try:
+        FAIL_LOG.unlink(missing_ok=True)
+        assert past_mistakes() == ""
+        record_failure("create_event", {"calendar": "Home"}, "calendar not found")
+        assert "calendar not found" in past_mistakes()
+        record_failure("create_event", {"calendar": "Home"}, "calendar not found")
+        assert len(load_failures()) == 1  # deduped
+    finally:
+        FAIL_LOG.unlink(missing_ok=True)
+        FAIL_LOG = saved
     print("ok")
 
 

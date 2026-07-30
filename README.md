@@ -15,8 +15,11 @@ graph LR
     B --> C{Tool}
     C -->|create_note, reminder, event| D[AppleScript]
     C -->|open_app, read files| E[shell]
-    D --> F[Result back to model]
-    E --> F
+    D --> V{Eval gate: read state back}
+    E --> V
+    V -->|verified| F[Result back to model]
+    V -->|failed| L[(failures.json)]
+    L --> F
     F --> B
     B -->|nothing left to do| G[Answer]
 ```
@@ -59,6 +62,29 @@ once per app. `simple_agent.py` additionally needs Screen Recording.
 | `list_dir` / `read_file` | look around the filesystem | shell |
 
 Adding a tool is a Python function plus a schema entry — no framework.
+
+## Closed-loop reliability
+
+A tool call that *returns* is not a tool call that *worked*. Notes will happily
+make a blank note; Calendar will accept an event on a calendar that doesn't
+exist. So the agent doesn't trust return strings — it runs a **closed loop**:
+act, then read the world back and confirm.
+
+- **Eval gates.** Each state-changing tool has a `verify()` that queries the OS
+  for ground truth — does a note with that title actually exist now? A gate
+  that fails is rewritten into an `error:` and handed back to the model, which
+  has to react instead of declaring victory. Verification lives in the system,
+  not in the model's self-assessment, for the same reason the coordinates do.
+- **Failure-pattern memory.** Every error and every failed gate is persisted to
+  `failures.json` as a typed `(tool, args, error)` signature. On the next run,
+  the recent signatures are folded back into the system prompt as negative
+  examples — so a mistake made once ("calendar 'Home' doesn't exist") becomes a
+  constraint the agent carries forward. The loop gets more reliable the more it
+  runs, without retraining and without leaving your Mac.
+
+Same principle as everything else here: keep the small model out of the parts
+it's weak at. It doesn't have to *judge* whether it succeeded, and it doesn't
+have to *remember* what went wrong — the system does both and feeds it back.
 
 ## The 7B dilemma (what went wrong, and why it ended up like this)
 
