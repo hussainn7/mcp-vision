@@ -27,6 +27,8 @@ outputs/elements_*.json
 # Learned failure memory (per-machine, regenerated at runtime)
 failures.json
 failures.demo.json
+memory/
+memory_demo/
 
 # macOS
 .DS_Store

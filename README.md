@@ -4,9 +4,18 @@ A local Mac assistant. You type a task, a small model running on your own
 machine figures out which tools to call, and the tools do the work through
 macOS itself. **No cloud APIs, no subscriptions, zero data leaving your Mac.**
 
+You point it at a domain by choosing a **specialist** — a system prompt plus a
+small tool allowlist — so the same runtime can be a web researcher, a Google
+Ads analyst, or an Instagram analyzer. It **acts** where a reliable tool exists
+(Notes, Calendar, shell, the browser DOM) and **guides** you (looks at the
+screen, tells you the next click) where none does.
+
 ```bash
-python mac_agent.py "make a note called Ideas with a haiku about the sea"
-python mac_agent.py "add a reminder to buy coffee and open Calendar"
+python agent.py --as general "make a note called Ideas with a haiku about the sea"
+python agent.py --as web-researcher "summarize the top story on news.ycombinator.com"
+python agent.py                    # list specialists
+
+python mac_agent.py "add a reminder to buy coffee and open Calendar"   # the minimal core, standalone
 ```
 
 ```mermaid
@@ -28,14 +37,53 @@ The model never touches the mouse. It only decides *what* to do; the OS handles
 *where*. That one choice is why an 8B model running locally is reliable here —
 see the note at the bottom.
 
-## Two agents in here
+## What's in here
 
-- **`mac_agent.py`** — the real thing. Tool-calling over AppleScript + shell.
-  Reliable, fast (~8s a step warm), works every time on native apps.
-- **`simple_agent.py`** — the pure-vision version, kept as a foil. It takes a
-  screenshot and has the model guess pixel coordinates to click, the way
-  Claude's computer-use loop works. It's slow and it misses a lot. It's here to
-  show *why* the tool-calling approach exists.
+- **`agent.py`** — the orchestrator. Loads a specialist, runs one
+  **Plan → Act → Reflect** loop, and only ever shows the worker its own 2–6
+  tools. This is what you run.
+- **`mac_agent.py`** — the minimal tool-calling core over AppleScript + shell.
+  Reliable, fast (~8s a step warm), still runs standalone. `agent.py` reuses its
+  tools and eval gates.
+- **`simple_agent.py`** — the pure-vision foil. Screenshot in, guessed pixel
+  coordinates out, the way a cloud computer-use loop works. Slow and it misses a
+  lot — kept to show *why* the tool-calling approach exists. Its screenshot loop
+  also powers the `guide_user` tool.
+- `state_agent.py` — an earlier JSON micro-agent loop, superseded by `agent.py`.
+
+## Specialists
+
+A specialist lives in [`specialists.toml`](specialists.toml) — nothing but a
+prompt and a tool allowlist:
+
+```toml
+[web-researcher]
+plan = true
+tools = ["web_navigate", "web_read", "web_click_text", "web_scroll", "guide_user"]
+prompt = """You research topics using the attached Chrome browser..."""
+```
+
+Add a top-level `[name]` and it's instantly `python agent.py --as name "..."`.
+No code. The tool allowlist is the guardrail: a worker that can't see a tool
+can't misuse it, which is most of what keeps a small model on the rails.
+
+Ships with `general`, `web-researcher`, `google-ads`, `insta-analyzer`.
+
+### How the loop works
+
+- **Plan** (specialists with `plan = true`): one call turns the goal into a
+  short numbered list — guidance, not a rigid graph. An 8B model can't build a
+  reliable DAG, so we don't ask it to.
+- **Act**: the worker calls one tool at a time, seeing only its allowlist.
+- **Reflect**: eval gates confirm each action actually landed; failures persist
+  and feed back; and when the worker says "done" it gets one goal-check before
+  the loop really ends.
+- **Human-in-the-loop**: irreversible/outbound actions (submitting or clicking
+  through the browser) print the exact call and wait for a `y/n` in the
+  terminal before running.
+- **Memory**: `memory/<specialist>.json` keeps that specialist's past failures,
+  successes, and prefs, folded into its next prompt. Plain JSON — it learns
+  across runs without a database and without leaving your Mac.
 
 ## Quick start
 
@@ -49,7 +97,19 @@ python scripts/check_setup.py
 
 First run of a tool asks for **Automation** permission (System Settings →
 Privacy & Security → Automation) — that's macOS gating AppleScript. Allow it
-once per app. `simple_agent.py` additionally needs Screen Recording.
+once per app. `simple_agent.py` and the `guide_user` tool additionally need
+Screen Recording.
+
+**For the browser specialists**, start Chrome with remote debugging so the web
+tools can attach to your real, logged-in session — they never launch their own
+browser:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222
+```
+
+If Chrome isn't running this way, the web tools return an error and the
+specialist falls back to `guide_user`.
 
 ## Tools
 
@@ -60,8 +120,14 @@ once per app. `simple_agent.py` additionally needs Screen Recording.
 | `create_event` | new Calendar event | AppleScript |
 | `open_app` | launch/focus an app | `open -a` |
 | `list_dir` / `read_file` | look around the filesystem | shell |
+| `web_navigate` / `web_read` | open a URL, read the page text | Playwright (CDP) |
+| `web_click_text` / `web_click_role` | click by visible text or ARIA role — **gated** | Playwright (CDP) |
+| `web_type` / `web_press` / `web_scroll` | type, press a key, scroll the page | Playwright (CDP) |
+| `guide_user` | when no tool fits, describe the next click from a screenshot | qwen2.5vl |
 
-Adding a tool is a Python function plus a schema entry — no framework.
+Tools live in [`tools.py`](tools.py) — a function plus a schema entry, with
+optional `verify` (eval gate) and `dangerous` (needs approval) flags. No
+framework. **gated** tools pause for your `y/n` before running.
 
 ## Closed-loop reliability
 
