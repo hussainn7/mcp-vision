@@ -101,6 +101,18 @@ class PlaywrightManager:
     async def is_running(self) -> bool:
         return self.browser is not None and self.page is not None
 
+    async def navigate(self, url: str, timeout: int = 15000) -> bool:
+        if not await self.is_running():
+            return False
+        try:
+            if "://" not in url:
+                url = "https://" + url
+            await self.page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+            return True
+        except Exception as e:
+            logger.debug(f"Playwright navigate failed: {e}")
+            return False
+
     async def click_element_by_role(self, role: str, name: Optional[str] = None, timeout: int = 5000) -> bool:
         if not await self.is_running():
             return False
@@ -200,6 +212,20 @@ def _run_async(coro):
         return loop.run_until_complete(coro)
     except RuntimeError:
         return asyncio.run(coro)
+
+
+def navigate(url: str) -> str:
+    if not HAS_PLAYWRIGHT:
+        return "ERROR: Playwright not available"
+
+    async def _nav():
+        if not await _ensure_playwright_started():
+            return False
+        return await _get_playwright_manager().navigate(url)
+
+    if _run_async(_nav()):
+        return f"Navigated to {url}"
+    return f"ERROR: Failed to navigate to {url} (is Chrome running with --remote-debugging-port=9222?)"
 
 
 def click_element_by_role(role: str, name: Optional[str] = None) -> str:
@@ -302,7 +328,7 @@ def get_page_text() -> str:
 
     text = _run_async(_get())
     if text:
-        preview = text[:200] + ("..." if len(text) > 200 else "")
+        preview = text[:4000] + ("..." if len(text) > 4000 else "")
         return f"Page text: {preview}"
     return "ERROR: Failed to get page text via Playwright"
 
