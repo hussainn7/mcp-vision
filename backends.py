@@ -77,17 +77,24 @@ def _to_openai_messages(messages):
     for m in messages:
         role = m.get("role", "user")
         if role == "assistant" and m.get("tool_calls"):
-            out.append({
-                "role": "assistant",
-                "content": m.get("content") or None,
-                "tool_calls": [{
+            tc_list = []
+            for i, tc in enumerate(m["tool_calls"]):
+                entry = {
                     "id": tc.get("id", f"call_{i}"),
                     "type": "function",
                     "function": {
                         "name": tc["function"]["name"],
                         "arguments": json.dumps(tc["function"].get("arguments", {})),
                     },
-                } for i, tc in enumerate(m["tool_calls"])],
+                }
+                # Gemini 3.x: echo thought_signature back or tool calls fail
+                if tc.get("thought_signature"):
+                    entry["thought_signature"] = tc["thought_signature"]
+                tc_list.append(entry)
+            out.append({
+                "role": "assistant",
+                "content": m.get("content") or None,
+                "tool_calls": tc_list,
             })
         elif role == "tool":
             out.append({
@@ -112,8 +119,12 @@ def _parse_openai_response(data):
             args = json.loads(tc["function"].get("arguments") or "{}")
         except json.JSONDecodeError:
             args = {}
-        tool_calls.append({"id": tc.get("id", ""),
-                           "function": {"name": tc["function"]["name"], "arguments": args}})
+        entry = {"id": tc.get("id", ""),
+                 "function": {"name": tc["function"]["name"], "arguments": args}}
+        # Gemini 3.x: preserve thought_signature for round-trip
+        if tc.get("thought_signature"):
+            entry["thought_signature"] = tc["thought_signature"]
+        tool_calls.append(entry)
 
     msg = {"role": "assistant", "content": (choice.get("content") or "").strip()}
     if tool_calls:
@@ -235,6 +246,132 @@ def make_local_chat(host, model, keep_alive):
     return chat
 
 
+# --- native Gemini API (generateContent) ----------------------------------
+# The OpenAI-compat endpoint is broken for Gemini 3.x tool calling because it
+# requires thought_signature round-tripping that the compat layer doesn't
+# expose. This backend uses the native REST API directly.
+
+def _to_gemini_contents(messages):
+    """Convert canonical messages to Gemini's contents format."""
+    system_parts = []
+    contents = []
+    # Track thought signatures per tool call for round-tripping
+    pending_thought_sigs = {}
+
+    for m in messages:
+        role = m.get("role", "user")
+        if role == "system":
+            system_parts.append({"text": m.get("content", "")})
+            continue
+        if role == "assistant":
+            parts = []
+            if m.get("content"):
+                parts.append({"text": m["content"]})
+            for tc in m.get("tool_calls") or []:
+                fc_part = {
+                    "functionCall": {
+                        "name": tc["function"]["name"],
+                        "args": tc["function"].get("arguments", {}),
+                    }
+                }
+                # Gemini 3.x: thoughtSignature is a sibling of functionCall
+                if tc.get("thought_signature"):
+                    fc_part["thoughtSignature"] = tc["thought_signature"]
+                parts.append(fc_part)
+            if parts:
+                contents.append({"role": "model", "parts": parts})
+        elif role == "tool":
+            # Tool results are "user" role with functionResponse parts
+            contents.append({
+                "role": "user",
+                "parts": [{
+                    "functionResponse": {
+                        "name": m.get("tool_name", "unknown"),
+                        "response": {"result": str(m.get("content", ""))},
+                    }
+                }]
+            })
+        else:
+            contents.append({"role": "user", "parts": [{"text": m.get("content", "")}]})
+
+    return system_parts, contents
+
+
+def _gemini_tools_from_schemas(schemas):
+    """Convert OpenAI-style tool schemas to Gemini function declarations."""
+    if not schemas:
+        return None
+    decls = []
+    for s in schemas:
+        fn = s.get("function", s)
+        params = fn.get("parameters", {"type": "object", "properties": {}})
+        # Gemini doesn't accept "required" inside parameters the same way;
+        # keep it if present, strip empty lists
+        decl = {
+            "name": fn["name"],
+            "description": fn.get("description", ""),
+            "parameters": params,
+        }
+        decls.append(decl)
+    return [{"functionDeclarations": decls}]
+
+
+def _parse_gemini_response(data):
+    """Parse Gemini generateContent response into canonical format."""
+    try:
+        candidate = data["candidates"][0]
+        parts = candidate["content"]["parts"]
+    except (KeyError, IndexError, TypeError):
+        raise BackendError(f"unexpected Gemini response: {str(data)[:500]}")
+
+    content_text = ""
+    tool_calls = []
+
+    for part in parts:
+        if "text" in part:
+            content_text += part["text"]
+        elif "functionCall" in part:
+            fc = part["functionCall"]
+            entry = {
+                "id": fc.get("id", f"call_{len(tool_calls)}"),
+                "function": {
+                    "name": fc["name"],
+                    "arguments": dict(fc.get("args", {})),
+                },
+            }
+            # Gemini 3.x: thoughtSignature is a sibling of functionCall in the part
+            if "thoughtSignature" in part:
+                entry["thought_signature"] = part["thoughtSignature"]
+            tool_calls.append(entry)
+
+    msg = {"role": "assistant", "content": content_text.strip()}
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+    return msg
+
+
+def make_gemini_native_chat(api_key, model, _post=None):
+    """Native Gemini API backend — handles thought_signature properly."""
+    def chat(messages, tools=None):
+        if not api_key:
+            raise BackendError("missing API key: set GEMINI_API_KEY in .env")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        system_parts, contents = _to_gemini_contents(messages)
+
+        body = {"contents": contents}
+        if system_parts:
+            body["systemInstruction"] = {"parts": system_parts}
+        gemini_tools = _gemini_tools_from_schemas(tools) if tools else None
+        if gemini_tools:
+            body["tools"] = gemini_tools
+        body["generationConfig"] = {"temperature": 0.2}
+
+        data = _post_json(url, {}, body, _post=_post)
+        return _parse_gemini_response(data)
+    return chat
+
+
 # --- resolver ------------------------------------------------------------
 
 BACKENDS = ("local", "anthropic", "openai", "gemini", "nvidia")
@@ -251,8 +388,7 @@ def get_chat(backend=None):
         return make_openai_compat_chat("https://api.openai.com/v1", cfg.openai_api_key,
                                        cfg.openai_model, "OPENAI_API_KEY")
     if backend == "gemini":
-        return make_openai_compat_chat("https://generativelanguage.googleapis.com/v1beta/openai",
-                                       cfg.gemini_api_key, cfg.gemini_model, "GEMINI_API_KEY")
+        return make_gemini_native_chat(cfg.gemini_api_key, cfg.gemini_model)
     if backend == "nvidia":
         return make_openai_compat_chat("https://integrate.api.nvidia.com/v1", cfg.nvidia_api_key,
                                        cfg.nvidia_model, "NVIDIA_API_KEY")
