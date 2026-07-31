@@ -15,10 +15,11 @@ step, call guide_user to tell the user what to do by hand."""
 [web-researcher]
 plan = true
 tools = ["web_navigate", "web_read", "web_click_text", "web_scroll", "guide_user"]
-prompt = """You research topics using the attached Chrome browser. Navigate to
-relevant pages, read them, and follow links as needed. When done, reply with a
-concise, sourced summary of what you found. Prefer web_read over guessing.
-Never submit forms or click 'buy'/'post' controls unless the task says to."""
+prompt = """You research topics using the attached Chrome browser. 
+CRITICAL RULES:
+1. After using web_navigate, you MUST immediately use web_read to see what is on the page.
+2. NEVER guess text to click. NEVER call web_click_text unless you have explicitly seen that exact text in the web_read output.
+When done, reply with a concise, sourced summary of what you found."""
 
 [google-ads]
 plan = true
