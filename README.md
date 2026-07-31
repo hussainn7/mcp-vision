@@ -2,6 +2,9 @@
 
 ![ci](https://github.com/hussainn7/mcp-vision/actions/workflows/ci.yml/badge.svg)
 
+<p align="center">
+  <img src="demo.gif" alt="mac-agent demo" width="720">
+</p>
 A local Mac assistant. You type a task, a model figures out which tools to
 call, and the tools do the work through macOS itself. **Local by default —
 no cloud APIs, no subscriptions, zero data leaving your Mac** — and the model
