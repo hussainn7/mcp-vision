@@ -1,8 +1,12 @@
 # mac-agent
 
-A local Mac assistant. You type a task, a small model running on your own
-machine figures out which tools to call, and the tools do the work through
-macOS itself. **No cloud APIs, no subscriptions, zero data leaving your Mac.**
+![ci](https://github.com/hussainn7/mcp-vision/actions/workflows/ci.yml/badge.svg)
+
+A local Mac assistant. You type a task, a model figures out which tools to
+call, and the tools do the work through macOS itself. **Local by default —
+no cloud APIs, no subscriptions, zero data leaving your Mac** — and the model
+is swappable if you want a bigger brain: point the same agent at Claude, GPT,
+Gemini, or NVIDIA NIM with one flag when a task calls for it.
 
 You point it at a domain by choosing a **specialist** — a system prompt plus a
 small tool allowlist — so the same runtime can be a web researcher, a Google
@@ -10,9 +14,15 @@ Ads analyst, or an Instagram analyzer. It **acts** where a reliable tool exists
 (Notes, Calendar, shell, the browser DOM) and **guides** you (looks at the
 screen, tells you the next click) where none does.
 
+And every run is **fully observable and self-improving**: each run writes a
+trajectory you can render as an HTML waterfall, a judge scores it, failures
+become a regression dataset, and successes become reusable skills the agent
+retrieves on the next similar task.
+
 ```bash
 python agent.py --as general "make a note called Ideas with a haiku about the sea"
 python agent.py --as web-researcher "summarize the top story on news.ycombinator.com"
+python agent.py --as general --model claude "..."   # swap in a cloud model for one run
 python agent.py                    # list specialists
 
 python mac_agent.py "add a reminder to buy coffee and open Calendar"   # the minimal core, standalone
@@ -45,6 +55,18 @@ see the note at the bottom.
 - **`mac_agent.py`** — the minimal tool-calling core over AppleScript + shell.
   Reliable, fast (~8s a step warm), still runs standalone. `agent.py` reuses its
   tools and eval gates.
+- **`trace.py` / `trace_viewer.py`** — the observability layer. Every run
+  writes a JSONL trajectory (every LLM call, tool call, gate, approval, with
+  timings); the viewer renders it as a self-contained HTML waterfall.
+- **`judge.py`** — scores every finished run (goal / efficiency / discipline /
+  safety) from the trajectory alone; optional LLM second opinion. Failing runs
+  are appended to a golden regression set.
+- **`skills.py`** — passing runs are distilled into skills (task + the exact
+  tool sequence that worked) and injected into future prompts for similar
+  tasks.
+- **`bench/`** — the eval harness. Task suites run the *real* loop with a
+  scripted model + stubbed tools (deterministic, CI-safe) or `--live` on your
+  Mac for a true end-to-end success rate.
 - **`simple_agent.py`** — the pure-vision foil. Screenshot in, guessed pixel
   coordinates out, the way a cloud computer-use loop works. Slow and it misses a
   lot — kept to show *why* the tool-calling approach exists. Its screenshot loop
@@ -84,6 +106,35 @@ Ships with `general`, `web-researcher`, `google-ads`, `insta-analyzer`.
 - **Memory**: `memory/<specialist>.json` keeps that specialist's past failures,
   successes, and prefs, folded into its next prompt. Plain JSON — it learns
   across runs without a database and without leaving your Mac.
+
+## Model backends: bring your own model
+
+Local (Ollama, qwen3:8b) is the default and needs nothing else — that's the
+whole "zero data leaves your Mac" pitch. But the model is one injectable
+callable (`backends.py`), not baked into the loop, so swapping it is a flag,
+not a rewrite:
+
+```bash
+python agent.py --as general "..."                    # local, default
+python agent.py --as general --model claude "..."      # Anthropic
+python agent.py --as general --model gpt "..."         # OpenAI
+python agent.py --as general --model gemini "..."      # Google, OpenAI-compatible endpoint
+python agent.py --as general --model nvidia "..."       # NIM, OpenAI-compatible endpoint
+```
+
+Drop the matching key in `.env` (copy `.env.example`) — `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, or `NVIDIA_API_KEY`. Nothing else changes:
+same tools, same eval gates, same tracing and judging. Every `llm_call` span
+in the trace records which backend/model handled it, so a trajectory makes it
+obvious exactly which calls stayed local and which left the machine.
+
+Each provider disagrees on wire format — Anthropic has no "tool" role and
+wants system prompt as a top-level field; OpenAI-style APIs want tool
+arguments JSON-encoded as a string, not a dict — so `backends.py` normalizes
+all of them to one shape (`chat(messages, tools) -> message`) and transcodes
+both directions. A bad/missing key or a network blip raises `BackendError`,
+which `agent.run()` catches at the top level: the trace still closes out, the
+judge still scores it, cleanly, instead of crashing the process.
 
 ## Quick start
 
@@ -129,6 +180,13 @@ Tools live in [`tools.py`](tools.py) — a function plus a schema entry, with
 optional `verify` (eval gate) and `dangerous` (needs approval) flags. No
 framework. **gated** tools pause for your `y/n` before running.
 
+`web_read` waits and retries once if the first read looks like only nav
+chrome — a fresh SPA (React/Vue sites) often serves "Skip to content /
+Menu / Try Gemini" before the body hydrates, and the difference between
+"page genuinely has nothing" and "page hasn't finished loading" matters: the
+old behavior handed the model garbage and it would give up into `guide_user`
+even though the article was one beat away from being readable.
+
 ## Closed-loop reliability
 
 A tool call that *returns* is not a tool call that *worked*. Notes will happily
@@ -151,6 +209,69 @@ act, then read the world back and confirm.
 Same principle as everything else here: keep the small model out of the parts
 it's weak at. It doesn't have to *judge* whether it succeeded, and it doesn't
 have to *remember* what went wrong — the system does both and feeds it back.
+
+## The flywheel: every run makes the next one better
+
+```mermaid
+graph LR
+    R[Run] --> T[trace.py<br/>JSONL trajectory]
+    T --> J[judge.py<br/>4-dim score]
+    J -->|fail| G[(golden.jsonl<br/>regression set)]
+    J -->|pass| S[(skills JSON<br/>proven playbooks)]
+    S -->|injected as worked examples| R
+    G -->|replayed by bench --golden| B[bench/runner.py]
+    B -->|success rate| R
+```
+
+- **Trace.** Every run — CLI, bench, anything — appends events to
+  `traces/run_<id>.jsonl`: each LLM call, tool call, eval gate, reflection and
+  approval, with arguments, results and millisecond timings. The trace *is*
+  the export format: it's greppable, diffable, and usable as fine-tuning data.
+
+  ```bash
+  python trace_viewer.py traces/run_20260731_things.jsonl   # -> HTML waterfall
+  ```
+
+  The viewer output is one dependency-free HTML file
+  ([example](docs/example_trace.html)) — a timeline of the run with expandable
+  payloads and errors outlined in red.
+
+- **Judge.** After every run, `judge.py` scores the trajectory on **goal,
+  efficiency, discipline, safety** — from recorded ground truth (how the run
+  ended, errors, repeats, declined approvals), not model vibes. An optional
+  LLM-as-judge pass catches what heuristics can't: invented arguments, intent
+  drift, ungrounded answers. Runs that fail land in
+  `bench/golden/golden.jsonl` — a growing set of real failures.
+
+- **Skills.** Runs that pass are distilled into a skill: the task, the plan,
+  and the exact tool sequence that worked. On the next similar task (token
+  overlap retrieval — deliberately not embeddings at this scale) the skill is
+  injected as a worked example, so the model starts from a proven path.
+  Failure memory teaches it what *not* to do; skills teach it what *to* do.
+
+## Bench: measure it, don't vibe it
+
+```bash
+python bench/runner.py            # dry: scripted model + stubbed tools, CI-safe
+python bench/runner.py --live     # real model + real tools, on your Mac
+python bench/runner.py --golden   # replay recorded failures: are they fixed?
+```
+
+Suites are TOML ([bench/suites/core.toml](bench/suites/core.toml)): a prompt,
+a scripted model, stubbed tool results, and declarative checks against the
+trajectory (`tool_called`, `answer_contains`, `judge_pass`,
+`reflect_rejected`, `approval_requested`, `max_tool_calls`, ...).
+
+The dry mode runs the **real loop** — allowlists, eval gates, reflection,
+approval routing, tracing, judging — with only the model and the OS stubbed
+out. That's what CI runs on every push (no Mac, no Ollama needed). `--live`
+is the number you quote: end-to-end success rate on your machine. Every bench
+run writes trajectories plus `report.json` under `bench/results/`.
+
+The model backend is one injectable callable
+(`run(..., chat=fn)` where `fn(messages, tools=None) -> message`), which is
+how the bench scripts the model — and how you'd swap in a cloud model in five
+lines if you ever wanted to.
 
 ## The 7B dilemma (what went wrong, and why it ended up like this)
 

@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  demos-and-bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # only the light deps: the demos and the dry bench are designed to run
+      # without Ollama, macOS, Chrome or Playwright
+      - run: pip install ollama pydantic-settings loguru
+      - name: module self-checks
+        run: |
+          python trace.py
+          python trace_viewer.py --demo
+          python judge.py
+          python skills.py
+          python backends.py
+          python phase2_mcp/playwright_tools.py
+          python tools.py
+          python agent.py --demo
+      - name: bench (dry, deterministic)
+        run: python bench/runner.py

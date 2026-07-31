@@ -3,6 +3,9 @@ Central config. Override any of these with SCREEN_AGENT_* env vars or a .env fil
 """
 
 from pathlib import Path
+from typing import Optional
+
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -38,6 +41,9 @@ class Config(BaseSettings):
     # where screenshots get saved
     output_dir: Path = Path("outputs")
 
+    # where run trajectories (JSONL) get saved; view with trace_viewer.py
+    trace_dir: Path = Path("traces")
+
     # seconds to wait after each action before looking again
     loop_delay: float = 0.5
 
@@ -51,6 +57,24 @@ class Config(BaseSettings):
     # Playwright CDP endpoint for attaching to Chrome launched with
     # --remote-debugging-port=9222. Only used by the MCP server.
     playwright_cdp_endpoint: str = "http://localhost:9222"
+
+    # --- model backend (see backends.py) ------------------------------------
+    # "local" (default) never leaves the machine. Cloud backends need the
+    # matching API key below (in .env, never committed) and cost money per
+    # call. Override per-run with `python agent.py --model <name> ...`.
+    model_backend: str = "local"  # local | anthropic | openai | gemini | nvidia
+
+    anthropic_model: str = "claude-sonnet-4-5"
+    openai_model: str = "gpt-4.1-mini"
+    gemini_model: str = "gemini-2.0-flash"
+    nvidia_model: str = "meta/llama-3.1-70b-instruct"
+
+    # Read from the provider's own conventional env var name, not the
+    # SCREEN_AGENT_ prefix, so an existing OPENAI_API_KEY etc. just works.
+    anthropic_api_key: Optional[str] = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
+    openai_api_key: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
+    gemini_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")
+    nvidia_api_key: Optional[str] = Field(default=None, validation_alias="NVIDIA_API_KEY")
 
     class Config:
         env_prefix = "SCREEN_AGENT_"
