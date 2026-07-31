@@ -53,6 +53,18 @@ def web_read():
     return pt.get_page_text()
 
 
+def web_snapshot():
+    return pt.snapshot()
+
+
+def web_click(index):
+    return pt.click_index(index)
+
+
+def web_type_into(index, text):
+    return pt.type_into_index(index, text)
+
+
 def web_click_text(text):
     return pt.click_element_by_text(text)
 
@@ -113,25 +125,33 @@ def _fn(name, description, required, props):
 
 _STR = {"type": "string"}
 
+_INT = {"type": "integer"}
+
 WEB_SCHEMAS = {
     "web_navigate": _fn("web_navigate", "Open a URL in the attached Chrome.", ["url"], {"url": _STR}),
-    "web_read": _fn("web_read", "Read the visible text of the current page.", [], {}),
-    "web_click_text": _fn("web_click_text", "Click the element containing this visible text.", ["text"], {"text": _STR}),
-    "web_click_role": _fn("web_click_role", "Click by ARIA role, e.g. role='button' name='Submit'.", ["role"], {"role": _STR, "name": _STR}),
-    "web_type": _fn("web_type", "Type text into the focused field.", ["text"], {"text": _STR}),
+    "web_read": _fn("web_read", "Read the main text content of the current page.", [], {}),
+    "web_snapshot": _fn("web_snapshot", "List the elements on the page that can actually be clicked or typed into, each with an [index], role and label. Anything hidden behind an overlay is left out. Call this before web_click/web_type_into, and again after the page changes.", [], {}),
+    "web_click": _fn("web_click", "Click the element with this index from the latest web_snapshot.", ["index"], {"index": _INT}),
+    "web_type_into": _fn("web_type_into", "Type text into the input element with this index from the latest web_snapshot.", ["index", "text"], {"index": _INT, "text": _STR}),
+    "web_click_text": _fn("web_click_text", "(fallback) Click the element containing this visible text.", ["text"], {"text": _STR}),
+    "web_click_role": _fn("web_click_role", "(fallback) Click by ARIA role, e.g. role='button' name='Submit'.", ["role"], {"role": _STR, "name": _STR}),
+    "web_type": _fn("web_type", "Type text into the currently focused field.", ["text"], {"text": _STR}),
     "web_press": _fn("web_press", "Press a key like 'Enter' or 'Tab'.", ["key"], {"key": _STR}),
-    "web_scroll": _fn("web_scroll", "Scroll the page.", [], {"direction": _STR, "clicks": {"type": "integer"}}),
+    "web_scroll": _fn("web_scroll", "Scroll the page.", [], {"direction": _STR, "clicks": _INT}),
     "guide_user": _fn("guide_user", "When no tool can act, look at the screen and tell the user the next step.", ["goal"], {"goal": _STR}),
 }
 
 WEB_FNS = {
     "web_navigate": web_navigate, "web_read": web_read,
+    "web_snapshot": web_snapshot, "web_click": web_click, "web_type_into": web_type_into,
     "web_click_text": web_click_text, "web_click_role": web_click_role,
     "web_type": web_type, "web_press": web_press, "web_scroll": web_scroll,
     "guide_user": guide_user,
 }
 
-# irreversible / outbound actions only — these pause for approval
+# Legacy text/role clicks pause for approval. web_click doesn't need to: it
+# can't reach a purchase/submit control — playwright_tools._looks_risky refuses
+# those in code — so plain navigation clicks flow without prompt spam.
 DANGEROUS = {"web_click_text", "web_click_role"}
 
 
@@ -157,6 +177,9 @@ def demo():
     assert REGISTRY["web_click_text"]["dangerous"]
     assert REGISTRY["create_note"]["verify"] is not None       # gate carried over
     assert REGISTRY["web_read"]["verify"] is None
+    # index-based web tools exist and don't spam approval (guarded in code)
+    for t in ("web_snapshot", "web_click", "web_type_into"):
+        assert t in REGISTRY and not REGISTRY[t]["dangerous"]
     got = [s["function"]["name"] for s in SCHEMAS_FOR(["create_note", "web_read", "nope"])]
     assert got == ["create_note", "web_read"]                  # unknown dropped
     print("ok")

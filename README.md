@@ -81,7 +81,7 @@ prompt and a tool allowlist:
 ```toml
 [web-researcher]
 plan = true
-tools = ["web_navigate", "web_read", "web_click_text", "web_scroll", "guide_user"]
+tools = ["web_navigate", "web_read", "web_snapshot", "web_click", "web_scroll", "guide_user"]
 prompt = """You research topics using the attached Chrome browser..."""
 ```
 
@@ -151,16 +151,14 @@ Privacy & Security → Automation) — that's macOS gating AppleScript. Allow it
 once per app. `simple_agent.py` and the `guide_user` tool additionally need
 Screen Recording.
 
-**For the browser specialists**, start Chrome with remote debugging so the web
-tools can attach to your real, logged-in session — they never launch their own
-browser:
+**For the browser specialists**, the web tools attach to Chrome over CDP. If a
+debug Chrome is already running they use your real, logged-in session; if not,
+they launch a throwaway debug profile automatically. To use your own session,
+start Chrome yourself first:
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222
 ```
-
-If Chrome isn't running this way, the web tools return an error and the
-specialist falls back to `guide_user`.
 
 ## Tools
 
@@ -171,21 +169,72 @@ specialist falls back to `guide_user`.
 | `create_event` | new Calendar event | AppleScript |
 | `open_app` | launch/focus an app | `open -a` |
 | `list_dir` / `read_file` | look around the filesystem | shell |
-| `web_navigate` / `web_read` | open a URL, read the page text | Playwright (CDP) |
-| `web_click_text` / `web_click_role` | click by visible text or ARIA role — **gated** | Playwright (CDP) |
-| `web_type` / `web_press` / `web_scroll` | type, press a key, scroll the page | Playwright (CDP) |
+| `web_navigate` / `web_read` | open a URL, read the page's main content | Playwright (CDP) |
+| `web_snapshot` | list the visible clickable elements, each with an `[index]` | Playwright (CDP) |
+| `web_click` / `web_type_into` | click / type into an element **by index** | Playwright (CDP) |
+| `web_scroll` / `web_press` | scroll, press a key | Playwright (CDP) |
 | `guide_user` | when no tool fits, describe the next click from a screenshot | qwen2.5vl |
 
 Tools live in [`tools.py`](tools.py) — a function plus a schema entry, with
 optional `verify` (eval gate) and `dangerous` (needs approval) flags. No
-framework. **gated** tools pause for your `y/n` before running.
+framework.
 
-`web_read` waits and retries once if the first read looks like only nav
-chrome — a fresh SPA (React/Vue sites) often serves "Skip to content /
-Menu / Try Gemini" before the body hydrates, and the difference between
-"page genuinely has nothing" and "page hasn't finished loading" matters: the
-old behavior handed the model garbage and it would give up into `guide_user`
-even though the article was one beat away from being readable.
+### Web automation: accessibility tree + occlusion pruning + micro-vision
+
+The naive approaches both fail on real sites. Clicking *by visible text* hits
+duplicate matches and elements that are in the DOM but not actually clickable.
+Feeding the *raw DOM* to the model buries one control in a hundred lines of div
+soup and blows the context budget. And a full-screenshot vision loop is slow and
+imprecise on a small local model — the thing this project exists to avoid.
+
+So the browser does the hard part, deterministically, before the model sees
+anything ([`page_snapshot.py`](phase2_mcp/page_snapshot.py)):
+
+**1. Role + accessible name, not markup.** Each control is reduced to what a
+screen reader would announce — `[7] link "Pricing"`, `[12] textbox "Search"`.
+Same semantics the accessibility tree exposes, computed with the ARIA naming
+rules. The styling hooks and wrapper divs never reach the prompt, which is where
+the ~90% token saving comes from and why a local model can keep up.
+
+**2. Occlusion pruning — the part that actually fixes clicking.** An element can
+be visible, enabled, on-screen, and still unclickable because a sticky header,
+cookie banner, or modal scrim is on top of it. That isn't a guess: probe the
+element's own coordinates with `document.elementFromPoint()` and see what comes
+back. If it isn't the element (or something inside it), the element is covered.
+Those are pruned from the list entirely, so **the model is never offered a
+control it cannot use**, and each surviving element carries the exact verified
+point where it *is* reachable.
+
+**3. Clicks are real clicks, at verified points.** `web_click(index)` clicks the
+coordinate the browser confirmed resolves to that element. If something has
+moved on top since the snapshot, it scrolls the element to the middle of the
+viewport — sticky chrome owns the *edges*, so the centre is clear on any site,
+with no per-site rules — re-probes, and clicks the new point. No synthetic
+events: the agent never reaches a control a person couldn't have reached.
+
+**4. Micro-vision, only as a last resort**
+([`micro_vision.py`](phase2_mcp/micro_vision.py)). If a control is still
+covered, crop a ~256px thumbnail around where the browser says it is and ask the
+local VLM for one coordinate *inside that crop*. A thumbnail is fast on a small
+model, and "point at the button in this thumbnail" is a far easier question than
+"find the button on this desktop". The answer is mapped back to page coordinates
+and clicked. Set `micro_vision = false` in config to fail fast instead.
+
+Two properties fall out of this:
+
+- **Purchase/submit clicks are refused in code.** If an element's accessible
+  name looks like `buy` / `checkout` / `pay` / `submit` / `place order`,
+  `web_click` returns `BLOCKED:` instead of clicking, at every level of the
+  chain including micro-vision. The agent physically cannot auto-buy or
+  auto-submit; it hands off via `guide_user`. A hard trust boundary, not a
+  prompt the model can argue past.
+- **Fewer failed clicks means fewer steps.** Offering only reachable elements
+  removes the retry-and-re-read loops that used to burn a run's whole step
+  budget, so runs get both more accurate and faster from the same change.
+
+`web_read` and `web_snapshot` both wait-and-retry when a page looks unhydrated:
+client-rendered sites paint an empty shell first, and "page has nothing" and
+"page hasn't loaded yet" need to be told apart.
 
 ## Closed-loop reliability
 

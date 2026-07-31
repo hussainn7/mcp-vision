@@ -54,9 +54,18 @@ class Config(BaseSettings):
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8765
 
-    # Playwright CDP endpoint for attaching to Chrome launched with
-    # --remote-debugging-port=9222. Only used by the MCP server.
+    # Playwright CDP endpoint for attaching to a Chromium-family browser
+    # launched with --remote-debugging-port=9222.
     playwright_cdp_endpoint: str = "http://localhost:9222"
+
+    # Browser executable to launch when nothing is listening on the CDP
+    # endpoint. Empty = auto-detect per platform (see playwright_tools.find_chrome).
+    chrome_path: Optional[str] = None
+
+    # When a structured click is blocked by an overlay, crop a thumbnail around
+    # the element and let the vision model point at it. Set False to fail fast
+    # instead (a failed click then reports "occluded" and the agent moves on).
+    micro_vision: bool = True
 
     # --- model backend (see backends.py) ------------------------------------
     # "local" (default) never leaves the machine. Cloud backends need the
