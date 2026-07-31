@@ -50,10 +50,21 @@ class PlaywrightManager:
                     self.browser = await self.playwright.chromium.connect_over_cdp(self.cdp_endpoint)
                     logger.info("Successfully attached to existing Chrome instance")
                 except Exception as e:
-                    logger.info("Chrome remote debugging is not active on port 9222. Falling back to visual/accessibility GUI control (pyautogui + OmniParser). This is normal and expected.")
-                    # Do NOT launch a new un-profiled Chrome session.
-                    # This ensures the agent uses visual/AX perception on the user's real browser instead.
-                    return False
+                    logger.info("Chrome remote debugging is not active. Launching a new debug session...")
+                    import subprocess
+                    subprocess.Popen([
+                        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                        "--remote-debugging-port=9222",
+                        "--user-data-dir=/tmp/chrome_debug"
+                    ])
+                    await asyncio.sleep(2.0)
+                    try:
+                        self.browser = await self.playwright.chromium.connect_over_cdp(self.cdp_endpoint)
+                        self._owns_browser = True
+                        logger.info("Successfully launched and attached to debug Chrome instance")
+                    except Exception as launch_err:
+                        logger.error(f"Failed to connect even after launching Chrome: {launch_err}")
+                        return False
 
                 # Get or create a page
                 contexts = self.browser.contexts
@@ -257,7 +268,7 @@ def click_element_by_text(text: str) -> str:
 
     if _run_async(_click()):
         return f"Clicked '{text}' via Playwright"
-    return f"ERROR: Failed to click text via Playwright"
+    return f"ERROR: Failed to click text '{text}'. Text not found on page. Read the page to find exact text."
 
 
 def type_text_into_input(selector: str, text: str) -> str:
