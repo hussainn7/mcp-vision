@@ -21,6 +21,8 @@ jobs:
           python trace_viewer.py --demo
           python judge.py
           python skills.py
+          python backends.py
+          python phase2_mcp/playwright_tools.py
           python tools.py
           python agent.py --demo
       - name: bench (dry, deterministic)

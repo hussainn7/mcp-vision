@@ -2,9 +2,11 @@
 
 ![ci](https://github.com/hussainn7/mcp-vision/actions/workflows/ci.yml/badge.svg)
 
-A local Mac assistant. You type a task, a small model running on your own
-machine figures out which tools to call, and the tools do the work through
-macOS itself. **No cloud APIs, no subscriptions, zero data leaving your Mac.**
+A local Mac assistant. You type a task, a model figures out which tools to
+call, and the tools do the work through macOS itself. **Local by default —
+no cloud APIs, no subscriptions, zero data leaving your Mac** — and the model
+is swappable if you want a bigger brain: point the same agent at Claude, GPT,
+Gemini, or NVIDIA NIM with one flag when a task calls for it.
 
 You point it at a domain by choosing a **specialist** — a system prompt plus a
 small tool allowlist — so the same runtime can be a web researcher, a Google
@@ -20,6 +22,7 @@ retrieves on the next similar task.
 ```bash
 python agent.py --as general "make a note called Ideas with a haiku about the sea"
 python agent.py --as web-researcher "summarize the top story on news.ycombinator.com"
+python agent.py --as general --model claude "..."   # swap in a cloud model for one run
 python agent.py                    # list specialists
 
 python mac_agent.py "add a reminder to buy coffee and open Calendar"   # the minimal core, standalone
@@ -104,6 +107,35 @@ Ships with `general`, `web-researcher`, `google-ads`, `insta-analyzer`.
   successes, and prefs, folded into its next prompt. Plain JSON — it learns
   across runs without a database and without leaving your Mac.
 
+## Model backends: bring your own model
+
+Local (Ollama, qwen3:8b) is the default and needs nothing else — that's the
+whole "zero data leaves your Mac" pitch. But the model is one injectable
+callable (`backends.py`), not baked into the loop, so swapping it is a flag,
+not a rewrite:
+
+```bash
+python agent.py --as general "..."                    # local, default
+python agent.py --as general --model claude "..."      # Anthropic
+python agent.py --as general --model gpt "..."         # OpenAI
+python agent.py --as general --model gemini "..."      # Google, OpenAI-compatible endpoint
+python agent.py --as general --model nvidia "..."       # NIM, OpenAI-compatible endpoint
+```
+
+Drop the matching key in `.env` (copy `.env.example`) — `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, or `NVIDIA_API_KEY`. Nothing else changes:
+same tools, same eval gates, same tracing and judging. Every `llm_call` span
+in the trace records which backend/model handled it, so a trajectory makes it
+obvious exactly which calls stayed local and which left the machine.
+
+Each provider disagrees on wire format — Anthropic has no "tool" role and
+wants system prompt as a top-level field; OpenAI-style APIs want tool
+arguments JSON-encoded as a string, not a dict — so `backends.py` normalizes
+all of them to one shape (`chat(messages, tools) -> message`) and transcodes
+both directions. A bad/missing key or a network blip raises `BackendError`,
+which `agent.run()` catches at the top level: the trace still closes out, the
+judge still scores it, cleanly, instead of crashing the process.
+
 ## Quick start
 
 ```bash
@@ -147,6 +179,13 @@ specialist falls back to `guide_user`.
 Tools live in [`tools.py`](tools.py) — a function plus a schema entry, with
 optional `verify` (eval gate) and `dangerous` (needs approval) flags. No
 framework. **gated** tools pause for your `y/n` before running.
+
+`web_read` waits and retries once if the first read looks like only nav
+chrome — a fresh SPA (React/Vue sites) often serves "Skip to content /
+Menu / Try Gemini" before the body hydrates, and the difference between
+"page genuinely has nothing" and "page hasn't finished loading" matters: the
+old behavior handed the model garbage and it would give up into `guide_user`
+even though the article was one beat away from being readable.
 
 ## Closed-loop reliability
 
