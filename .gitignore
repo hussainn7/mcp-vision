@@ -29,6 +29,7 @@ failures.json
 failures.demo.json
 memory/
 memory_demo/
+bench/
 
 # Run trajectories + bench artifacts (regenerated every run)
 traces/

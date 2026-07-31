@@ -66,7 +66,7 @@ class Config(BaseSettings):
 
     anthropic_model: str = "claude-sonnet-4-5"
     openai_model: str = "gpt-4.1-mini"
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-3.1-flash-lite"
     nvidia_model: str = "meta/llama-3.1-70b-instruct"
 
     # Read from the provider's own conventional env var name, not the
@@ -79,6 +79,7 @@ class Config(BaseSettings):
     class Config:
         env_prefix = "SCREEN_AGENT_"
         env_file = ".env"
+        extra = "ignore"
 
 
 cfg = Config()
