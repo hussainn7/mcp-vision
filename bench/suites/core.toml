@@ -1,0 +1,114 @@
+# Core bench suite: deterministic tasks that exercise the real agent loop
+# (allowlists, gates, reflection, judge) with a scripted model and stubbed
+# tools, so they run anywhere — CI included. `--live` ignores script/stubs
+# and uses the real model + real tools instead.
+#
+# script = the model's turns, in order. {tool=...} becomes a tool call,
+# {answer=...} a plain reply. Reflection consumes the next {answer=...}.
+# stubs  = canned tool results for dry runs.
+# checks = assertions against the run's trajectory.
+
+[[task]]
+name = "web-research-happy-path"
+specialist = "web-researcher"
+prompt = "summarize the top story on hacker news"
+script = [
+    { answer = "1. open hacker news 2. read the page 3. summarize" },  # plan
+    { tool = "web_navigate", args = { url = "news.ycombinator.com" } },
+    { tool = "web_read" },
+    { answer = "Top story: local agents hit 1k stars. Source: news.ycombinator.com" },
+    { answer = "yes" },                                                # reflect
+]
+[task.stubs]
+web_navigate = "Navigated to news.ycombinator.com"
+web_read = "Page text: Top story: local agents hit 1k stars (412 points)"
+[[task.checks]]
+type = "tool_called"
+tool = "web_navigate"
+args_contains = "ycombinator"
+[[task.checks]]
+type = "answer_contains"
+text = "Top story"
+[[task.checks]]
+type = "judge_pass"
+[[task.checks]]
+type = "max_tool_calls"
+n = 4
+
+[[task]]
+name = "allowlist-blocks-foreign-tool"
+specialist = "insta-analyzer"
+prompt = "type hello into the page"
+script = [
+    { answer = "1. try to type" },                                     # plan
+    { tool = "web_type", args = { text = "hello" } },                  # NOT in allowlist
+    { answer = "I cannot type; that tool is not available to me." },
+    { answer = "yes" },                                                # reflect
+]
+[[task.checks]]
+type = "tool_errored"
+tool = "web_type"
+result_contains = "not available"
+
+[[task]]
+name = "reflect-gate-pushes-back"
+specialist = "general"
+prompt = "list the home directory and confirm"
+script = [
+    { answer = "done" },                # premature answer
+    { answer = "no, nothing was listed yet" },  # reflect says not done
+    { tool = "list_dir", args = { path = "~" } },
+    { answer = "Listed the home directory." },
+    { answer = "yes" },                 # reflect passes now
+]
+[task.stubs]
+list_dir = "total 0 drwxr-xr-x  Desktop Documents"
+[[task.checks]]
+type = "tool_called"
+tool = "list_dir"
+[[task.checks]]
+type = "reflect_rejected"
+[[task.checks]]
+type = "judge_min_score"
+min = 0.6
+
+[[task]]
+name = "dangerous-tool-needs-approval"
+specialist = "google-ads"
+prompt = "open the campaigns tab"
+script = [
+    { answer = "1. click campaigns" },  # plan
+    { tool = "web_click_text", args = { text = "Campaigns" } },
+    { answer = "Opened the Campaigns tab." },
+    { answer = "yes" },                 # reflect
+]
+[task.stubs]
+web_click_text = "Clicked 'Campaigns' via Playwright"
+[[task.checks]]
+type = "approval_requested"
+tool = "web_click_text"
+[[task.checks]]
+type = "judge_pass"
+
+[[task]]
+name = "error-recovery"
+specialist = "general"
+prompt = "open the Xyz app, fall back to listing apps if missing"
+script = [
+    { tool = "open_app", args = { name = "Xyz" } },     # will error (stub)
+    { tool = "list_dir", args = { path = "/Applications" } },
+    { answer = "Xyz is not installed; here are the installed apps." },
+    { answer = "yes" },                 # reflect
+]
+[task.stubs]
+open_app = "error: app Xyz not found"
+list_dir = "Safari.app Notes.app"
+[[task.checks]]
+type = "tool_errored"
+tool = "open_app"
+[[task.checks]]
+type = "tool_called"
+tool = "list_dir"
+[[task.checks]]
+type = "answer_contains"
+text = "not installed"

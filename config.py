@@ -38,6 +38,9 @@ class Config(BaseSettings):
     # where screenshots get saved
     output_dir: Path = Path("outputs")
 
+    # where run trajectories (JSONL) get saved; view with trace_viewer.py
+    trace_dir: Path = Path("traces")
+
     # seconds to wait after each action before looking again
     loop_delay: float = 0.5
 

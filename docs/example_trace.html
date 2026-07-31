@@ -1,0 +1,117 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>trace 20260731_000223_46581f</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0d1117; color:#e6edf3; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; padding:24px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  .meta { color:#8b949e; margin-bottom:16px; }
+  .meta b { color:#e6edf3; }
+  .status-ok { color:#34d399; } .status-error { color:#f87171; }
+  .legend { margin:0 0 12px; }
+  .legend span { display:inline-block; margin-right:14px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; }
+  .row { display:flex; align-items:center; height:26px; cursor:pointer; border-radius:4px; }
+  .row:hover { background:#161b22; }
+  .lbl { width:260px; flex:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:10px; }
+  .lane { position:relative; flex:1; height:14px; background:#161b22; border-radius:3px; }
+  .bar { position:absolute; top:0; height:14px; border-radius:3px; min-width:3px; }
+  .bar.err { outline:2px solid #f87171; }
+  .dur { width:80px; flex:none; text-align:right; color:#8b949e; padding-left:10px; }
+  .detail { display:none; background:#161b22; border-left:3px solid #30363d; margin:2px 0 8px 12px; padding:10px 14px; white-space:pre-wrap; word-break:break-word; color:#c9d1d9; border-radius:0 6px 6px 0; }
+  .detail.open { display:block; }
+</style></head><body>
+<h1>agent run 20260731_000223_46581f</h1>
+<div class="meta">task <b>summarize the top story on hacker news</b> · specialist <b>web-researcher</b> · status <b class="status-ok">ok</b> · 0.0s · 3 llm calls · 2 tool calls · 0 errors</div>
+<div class="legend"><span><i style="background:#c084fc"></i>plan</span><span><i style="background:#60a5fa"></i>llm_call</span><span><i style="background:#34d399"></i>tool_call</span><span><i style="background:#fbbf24"></i>verify</span><span><i style="background:#f472b6"></i>reflect</span><span><i style="background:#a3e635"></i>judge</span><span><i style="background:#fb923c"></i>approval</span></div>
+<div id="rows"><div class="row" data-i="0"><div class="lbl">run_start</div><div class="lane"><div class="bar" style="left:0.00%;width:0.40%;background:#8b8b8b"></div></div><div class="dur"></div></div><div class="detail" id="d0">{
+  &quot;ts&quot;: 1785456143.0923,
+  &quot;type&quot;: &quot;run_start&quot;,
+  &quot;task&quot;: &quot;summarize the top story on hacker news&quot;,
+  &quot;specialist&quot;: &quot;web-researcher&quot;
+}</div>
+<div class="row" data-i="1"><div class="lbl">plan</div><div class="lane"><div class="bar" style="left:38.46%;width:0.40%;background:#c084fc"></div></div><div class="dur"></div></div><div class="detail" id="d1">{
+  &quot;ts&quot;: 1785456143.0928,
+  &quot;type&quot;: &quot;plan&quot;,
+  &quot;plan&quot;: &quot;1. open hacker news 2. read the page 3. summarize&quot;,
+  &quot;status&quot;: &quot;ok&quot;,
+  &quot;dur_ms&quot;: 0.0
+}</div>
+<div class="row" data-i="2"><div class="lbl">llm · qwen3:8b</div><div class="lane"><div class="bar" style="left:46.16%;width:0.40%;background:#60a5fa"></div></div><div class="dur"></div></div><div class="detail" id="d2">{
+  &quot;ts&quot;: 1785456143.0929,
+  &quot;type&quot;: &quot;llm_call&quot;,
+  &quot;model&quot;: &quot;qwen3:8b&quot;,
+  &quot;n_tool_calls&quot;: 1,
+  &quot;status&quot;: &quot;ok&quot;,
+  &quot;dur_ms&quot;: 0.0
+}</div>
+<div class="row" data-i="3"><div class="lbl">tool · web_navigate</div><div class="lane"><div class="bar" style="left:46.16%;width:0.40%;background:#34d399"></div></div><div class="dur"></div></div><div class="detail" id="d3">{
+  &quot;ts&quot;: 1785456143.0929,
+  &quot;type&quot;: &quot;tool_call&quot;,
+  &quot;tool&quot;: &quot;web_navigate&quot;,
+  &quot;args&quot;: {
+    &quot;url&quot;: &quot;news.ycombinator.com&quot;
+  },
+  &quot;result&quot;: &quot;Navigated to news.ycombinator.com&quot;,
+  &quot;status&quot;: &quot;ok&quot;,
+  &quot;dur_ms&quot;: 0.0
+}</div>
+<div class="row" data-i="4"><div class="lbl">llm · qwen3:8b</div><div class="lane"><div class="bar" style="left:53.84%;width:0.40%;background:#60a5fa"></div></div><div class="dur"></div></div><div class="detail" id="d4">{
+  &quot;ts&quot;: 1785456143.093,
+  &quot;type&quot;: &quot;llm_call&quot;,
+  &quot;model&quot;: &quot;qwen3:8b&quot;,
+  &quot;n_tool_calls&quot;: 1,
+  &quot;status&quot;: &quot;ok&quot;,
+  &quot;dur_ms&quot;: 0.0
+}</div>
+<div class="row" data-i="5"><div class="lbl">tool · web_read</div><div class="lane"><div class="bar" style="left:53.84%;width:0.40%;background:#34d399"></div></div><div class="dur"></div></div><div class="detail" id="d5">{
+  &quot;ts&quot;: 1785456143.093,
+  &quot;type&quot;: &quot;tool_call&quot;,
+  &quot;tool&quot;: &quot;web_read&quot;,
+  &quot;args&quot;: {},
+  &quot;result&quot;: &quot;Page text: Top story: local agents hit 1k stars (412 points)&quot;,
+  &quot;status&quot;: &quot;ok&quot;,
+  &quot;dur_ms&quot;: 0.0
+}</div>
+<div class="row" data-i="6"><div class="lbl">llm · qwen3:8b</div><div class="lane"><div class="bar" style="left:61.54%;width:0.40%;background:#60a5fa"></div></div><div class="dur"></div></div><div class="detail" id="d6">{
+  &quot;ts&quot;: 1785456143.0931,
+  &quot;type&quot;: &quot;llm_call&quot;,
+  &quot;model&quot;: &quot;qwen3:8b&quot;,
+  &quot;n_tool_calls&quot;: 0,
+  &quot;status&quot;: &quot;ok&quot;,
+  &quot;dur_ms&quot;: 0.0
+}</div>
+<div class="row" data-i="7"><div class="lbl">reflect</div><div class="lane"><div class="bar" style="left:61.54%;width:0.40%;background:#f472b6"></div></div><div class="dur"></div></div><div class="detail" id="d7">{
+  &quot;ts&quot;: 1785456143.0931,
+  &quot;type&quot;: &quot;reflect&quot;,
+  &quot;verdict&quot;: &quot;yes&quot;,
+  &quot;ok&quot;: true
+}</div>
+<div class="row" data-i="8"><div class="lbl">run_end</div><div class="lane"><div class="bar" style="left:92.30%;width:0.40%;background:#8b8b8b"></div></div><div class="dur"></div></div><div class="detail" id="d8">{
+  &quot;ts&quot;: 1785456143.0935,
+  &quot;type&quot;: &quot;run_end&quot;,
+  &quot;status&quot;: &quot;ok&quot;,
+  &quot;answer&quot;: &quot;Top story: local agents hit 1k stars. Source: news.ycombinator.com&quot;,
+  &quot;total_ms&quot;: 1.2
+}</div>
+<div class="row" data-i="9"><div class="lbl">judge</div><div class="lane"><div class="bar" style="left:100.00%;width:0.40%;background:#a3e635"></div></div><div class="dur"></div></div><div class="detail" id="d9">{
+  &quot;ts&quot;: 1785456143.0936,
+  &quot;type&quot;: &quot;judge&quot;,
+  &quot;verdict&quot;: &quot;pass&quot;,
+  &quot;score&quot;: 1.0,
+  &quot;scores&quot;: {
+    &quot;goal&quot;: 1.0,
+    &quot;efficiency&quot;: 1.0,
+    &quot;discipline&quot;: 1.0,
+    &quot;safety&quot;: 1.0
+  },
+  &quot;issues&quot;: []
+}</div></div>
+<script>
+document.querySelectorAll('.row').forEach(function(r){
+  r.addEventListener('click', function(){
+    var d = document.getElementById('d' + r.dataset.i);
+    if (d) d.classList.toggle('open');
+  });
+});
+</script>
+</body></html>

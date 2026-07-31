@@ -30,6 +30,14 @@ failures.demo.json
 memory/
 memory_demo/
 
+# Run trajectories + bench artifacts (regenerated every run)
+traces/
+traces_demo/
+bench/results/
+bench/results_demo/
+bench/golden/
+._example_gen/
+
 # macOS
 .DS_Store
 
