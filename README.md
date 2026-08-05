@@ -1,5 +1,7 @@
 # mac-agent
 
+**📖 [Overview (README)](README.md) | 🎯 [Quick Guide](QUICK_GUIDE.md) | 🤖 [Agent Instructions](AGENT_INSTRUCTIONS.md)**
+
 ![ci](https://github.com/hussainn7/mcp-vision/actions/workflows/ci.yml/badge.svg)
 
 <p align="center">
