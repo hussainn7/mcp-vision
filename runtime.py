@@ -49,7 +49,7 @@ def is_ui_tool(name: str) -> bool:
     return name in UI_TOOLS
 
 
-def did_state_change(before, after, min_text_delta: int = 8) -> bool:
+def did_state_change(before, after, min_text_delta: int = 3) -> bool:
     """True when a fingerprint shows the UI actually moved.
 
     Fingerprints are dicts with optional url/title/scroll/n/text. A missing
@@ -146,7 +146,8 @@ def demo():
     assert did_state_change(a, {**a, "url": "https://b.com"})
     assert did_state_change(a, {**a, "n": 12})
     assert did_state_change(None, a)  # unknown -> don't block
-    assert not did_state_change(a, {**a, "text": "hello world!"})  # tiny delta
+    assert not did_state_change(a, {**a, "text": "hello world!"})  # 1-char delta
+    assert did_state_change(a, {**a, "text": "hello saved"})  # several chars moved
     assert did_state_change(a, {**a, "text": "a completely different page body here"})
 
     assert next_strategy(0) == "retry"
