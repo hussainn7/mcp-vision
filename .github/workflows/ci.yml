@@ -18,6 +18,17 @@ jobs:
       - name: bench (dry, deterministic)
         run: python bench/runner.py
 
+  unit-mcp-vision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pydantic pillow mss
+      - name: hermetic unit tests
+        run: PYTHONPATH=src pytest tests/test_capture.py tests/test_parser.py tests/test_governor.py tests/test_mcp_tools.py tests/test_config_sync.py
+
   e2e-playwright:
     runs-on: ubuntu-latest
     steps:

@@ -28,7 +28,7 @@ class Frame:
 
 def _monitors() -> list[dict[str, int]]:
     import mss
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         return [dict(m) for m in sct.monitors]
 
 
@@ -44,7 +44,7 @@ def list_displays() -> list[dict[str, int]]:
 
 def _grab_mss(display_id: int) -> Image.Image:
     import mss
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         mons = sct.monitors
         # display_id is 0-based over physical screens; mss[0] is all-in-one
         idx = display_id + 1

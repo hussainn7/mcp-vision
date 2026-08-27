@@ -27,7 +27,7 @@ def _python() -> Check:
 def _mss() -> Check:
     try:
         import mss
-        with mss.mss() as sct:
+        with mss.MSS() as sct:
             n = max(0, len(sct.monitors) - 1)
         return Check("display", True, f"{n} monitor(s) via mss")
     except Exception as e:
