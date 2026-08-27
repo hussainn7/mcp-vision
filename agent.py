@@ -35,6 +35,7 @@ from config import cfg
 from judge import judge_run, record_golden
 from phase1_vision.compress import compress_messages
 from phase2_mcp.playwright_tools import cleanup_playwright
+from dashboard import Dashboard
 from runtime import coerce_args, parse_subgoals, remaining_subgoals, stale_snapshot
 from tools import REGISTRY, SCHEMAS_FOR
 from trace import Tracer
@@ -117,7 +118,7 @@ def approve(name, args):
 # --- the loop ----------------------------------------------------------------
 
 def run(task, specialist="general", max_steps=None, approver=approve,
-        chat=None, backend=None, trace_dir=None, learn=True):
+        chat=None, backend=None, trace_dir=None, learn=True, dashboard=None):
     specs = load_specialists()
     if specialist not in specs:
         return f"unknown specialist '{specialist}'. choose from: {', '.join(specs)}"
@@ -129,6 +130,7 @@ def run(task, specialist="general", max_steps=None, approver=approve,
 
     tr = Tracer(task=task, specialist=specialist, out_dir=trace_dir or cfg.trace_dir)
     tr.event("backend", name=backend_name)
+    dash = dashboard if dashboard is not None else Dashboard(task=task, enabled=False)
 
     system = spec["prompt"] + memory_block(specialist) + skill_lib.skills_block(specialist, task)
     messages = [{"role": "system", "content": system}]
@@ -161,6 +163,7 @@ def run(task, specialist="general", max_steps=None, approver=approve,
             with tr.span("llm_call", model=cfg.planning_model, backend=backend_name) as s:
                 msg = chat(messages, tools=schemas)
                 s["n_tool_calls"] = len(msg.get("tool_calls") or [])
+            dash.llm(dur_ms=s.get("dur_ms", 0), n_tool_calls=s["n_tool_calls"], backend=backend_name)
             messages.append(msg)
 
             if not msg.get("tool_calls"):
@@ -224,6 +227,9 @@ def run(task, specialist="general", max_steps=None, approver=approve,
                             record(specialist, "failures", f"{name}: {problem}")
                     s["result"] = result
 
+                dash.tool(name, args, result, dur_ms=s.get("dur_ms", 0),
+                          confidence=0.9 if not str(result).lower().startswith("error") else 0.25,
+                          status=s.get("status", "ok"))
                 print(f"     {result[:120]}")
                 messages.append({"role": "tool", "tool_name": name, "tool_call_id": call_id, "content": result})
     except backends.BackendError as e:
@@ -241,6 +247,7 @@ def run(task, specialist="general", max_steps=None, approver=approve,
         elif learn and status == "ok":
             skill_lib.learn(specialist, tr.events)
         print(f"  [judge] {verdict['verdict']} score={verdict['score']} · trace: {tr.path}")
+        dash.summary()
 
     return final
 
@@ -254,7 +261,7 @@ MODEL_ALIASES = {"claude": "anthropic", "gpt": "openai", "chatgpt": "openai",
 
 
 def _parse_argv(argv):
-    specialist, backend = "general", None
+    specialist, backend, tui = "general", None, False
     if "--as" in argv:
         i = argv.index("--as")
         specialist = argv[i + 1]
@@ -264,7 +271,10 @@ def _parse_argv(argv):
         name = argv[i + 1].lower()
         backend = MODEL_ALIASES.get(name, name)
         argv = argv[:i] + argv[i + 2:]
-    return specialist, backend, " ".join(argv)
+    if "--tui" in argv:
+        tui = True
+        argv = [a for a in argv if a != "--tui"]
+    return specialist, backend, tui, " ".join(argv)
 
 
 def scripted_chat(responses):
@@ -287,10 +297,11 @@ def demo():
             assert t in REGISTRY, f"{name}: unknown tool {t}"
         assert len(SCHEMAS_FOR(spec["tools"])) == len(spec["tools"])
 
-    assert _parse_argv(["--as", "google-ads", "hello", "world"]) == ("google-ads", None, "hello world")
-    assert _parse_argv(["just", "a", "task"]) == ("general", None, "just a task")
-    assert _parse_argv(["--model", "claude", "--as", "general", "hi"]) == ("general", "anthropic", "hi")
-    assert _parse_argv(["--model", "gpt", "hi"]) == ("general", "openai", "hi")
+    assert _parse_argv(["--as", "google-ads", "hello", "world"]) == ("google-ads", None, False, "hello world")
+    assert _parse_argv(["just", "a", "task"]) == ("general", None, False, "just a task")
+    assert _parse_argv(["--model", "claude", "--as", "general", "hi"]) == ("general", "anthropic", False, "hi")
+    assert _parse_argv(["--model", "gpt", "hi"]) == ("general", "openai", False, "hi")
+    assert _parse_argv(["--tui", "--as", "general", "hi"]) == ("general", None, True, "hi")
 
     import judge as judge_mod
     global MEM_DIR
@@ -398,11 +409,12 @@ if __name__ == "__main__":
     if argv and argv[0] == "--demo":
         demo()
     elif argv:
-        spec, model, task = _parse_argv(argv)
+        spec, model, tui, task = _parse_argv(argv)
         if not task:
             print("give a task, e.g. python agent.py --as web-researcher \"...\"")
         else:
-            print(run(task, spec, backend=model))
+            dash = Dashboard(task=task, enabled=tui)
+            print(run(task, spec, backend=model, dashboard=dash))
     else:
         print(f"Usage: python agent.py --as <specialist> [--model local|claude|gpt|gemini|nvidia] \"<task>\"")
         print(f"Specialists: {', '.join(load_specialists())}")
