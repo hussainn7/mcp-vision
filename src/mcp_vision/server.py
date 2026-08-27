@@ -6,6 +6,7 @@ from typing import Any
 
 from mcp_vision.core.actuate import Actuator, get_actuator, set_actuator
 from mcp_vision.core.capture import Frame, Grabber, capture_display
+from mcp_vision.core.governor import Governor, classify
 from mcp_vision.core.models import ActionResult, Policy, ScreenInspectionResult
 from mcp_vision.core.parser import inspect_image
 from mcp_vision.log import configure, get_logger
@@ -16,14 +17,21 @@ log = get_logger("mcp_vision.server")
 _last: ScreenInspectionResult | None = None
 _last_frame: Frame | None = None
 _grabber: Grabber | None = None
+_governor = Governor()
 
 
 def reset_session() -> None:
-    global _last, _last_frame, _grabber
+    global _last, _last_frame, _grabber, _governor
     _last = None
     _last_frame = None
     _grabber = None
+    _governor = Governor()
     set_actuator(None)
+
+
+def set_governor(governor: Governor) -> None:
+    global _governor
+    _governor = governor
 
 
 def set_grabber(grabber: Grabber | None) -> None:
@@ -66,10 +74,15 @@ def click_element(element_id: int, click_type: str = "single") -> ActionResult:
         x, y, eid = _screen_xy(element_id)
     except (RuntimeError, KeyError) as e:
         return ActionResult(ok=False, message=str(e), element_id=element_id, policy=Policy.ROUTINE_WRITE)
+    el = _last.element(element_id) if _last else None
+    policy = classify("click_element", element=el)
+    if not _governor.allow(policy, f"click {element_id} ({el.label if el else ''})"):
+        return ActionResult(ok=False, message="blocked by safety governor", element_id=eid,
+                            confirmed=False, policy=policy)
     get_actuator().click(x, y, click_type)
     return ActionResult(
         ok=True, message=f"clicked {element_id} ({click_type}) at ({x},{y})",
-        element_id=eid, policy=Policy.ROUTINE_WRITE,
+        element_id=eid, policy=policy,
     )
 
 
@@ -79,12 +92,17 @@ def type_text(element_id: int, text: str, press_enter: bool = False) -> ActionRe
         x, y, eid = _screen_xy(element_id)
     except (RuntimeError, KeyError) as e:
         return ActionResult(ok=False, message=str(e), element_id=element_id, policy=Policy.ROUTINE_WRITE)
+    el = _last.element(element_id) if _last else None
+    policy = classify("type_text", element=el, text=text)
+    if not _governor.allow(policy, f"type into {element_id}"):
+        return ActionResult(ok=False, message="blocked by safety governor", element_id=eid,
+                            confirmed=False, policy=policy)
     act = get_actuator()
     act.click(x, y, "single")
     act.type_text(text, press_enter=press_enter)
     return ActionResult(
         ok=True, message=f"typed {len(text)} chars into {element_id}",
-        element_id=eid, policy=Policy.ROUTINE_WRITE,
+        element_id=eid, policy=policy,
     )
 
 
@@ -92,8 +110,11 @@ def press_key_combination(keys: list[str]) -> ActionResult:
     """Press a key or chord, e.g. ['cmd', 's'] or ['enter']."""
     if not keys:
         return ActionResult(ok=False, message="keys must be a non-empty list", policy=Policy.ROUTINE_WRITE)
+    policy = classify("press_key_combination", keys=list(keys))
+    if not _governor.allow(policy, f"press {'+'.join(keys)}"):
+        return ActionResult(ok=False, message="blocked by safety governor", confirmed=False, policy=policy)
     get_actuator().press(list(keys))
-    return ActionResult(ok=True, message=f"pressed {'+'.join(keys)}", policy=Policy.ROUTINE_WRITE)
+    return ActionResult(ok=True, message=f"pressed {'+'.join(keys)}", policy=policy)
 
 
 def _mcp() -> Any:
