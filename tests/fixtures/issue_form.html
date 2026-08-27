@@ -1,0 +1,15 @@
+<!doctype html>
+<html><body>
+<h1>Issues</h1>
+<label>Title <input id="title" placeholder="Title"></label>
+<label>Body <textarea id="body" placeholder="Details"></textarea></label>
+<button id="create">Create issue</button>
+<p id="status">none</p>
+<script>
+document.getElementById('create').onclick = () => {
+  const t = document.getElementById('title').value;
+  const b = document.getElementById('body').value;
+  document.getElementById('status').textContent = 'opened: ' + t + ' / ' + b;
+};
+</script>
+</body></html>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html><body>
+<button id="behind">Save draft</button>
+<div id="scrim" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;">
+  <div style="background:#fff;padding:24px;">
+    <p>Cookie banner</p>
+    <button id="accept">Accept cookies</button>
+  </div>
+</div>
+<p id="status">blocked</p>
+<script>
+document.getElementById('accept').onclick = () => {
+  document.getElementById('scrim').remove();
+  document.getElementById('status').textContent = 'cleared';
+};
+document.getElementById('behind').onclick = () => {
+  document.getElementById('status').textContent = 'saved';
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const s = document.getElementById('scrim');
+    if (s) s.remove();
+  }
+});
+</script>
+</body></html>

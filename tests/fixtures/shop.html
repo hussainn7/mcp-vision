@@ -1,0 +1,17 @@
+<!doctype html>
+<html><body>
+<h1>Shop</h1>
+<p>Widget — $12</p>
+<button id="cart">Add to cart</button>
+<button id="buy">Buy</button>
+<a href="#details">Details</a>
+<p id="status">empty</p>
+<script>
+document.getElementById('cart').onclick = () => {
+  document.getElementById('status').textContent = 'in cart';
+};
+document.getElementById('buy').onclick = () => {
+  document.getElementById('status').textContent = 'PURCHASED';
+};
+</script>
+</body></html>
