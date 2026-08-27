@@ -26,7 +26,7 @@ When done, reply with a concise, sourced summary."""
 
 [google-ads]
 plan = false
-tools = ["web_navigate", "web_read", "web_snapshot", "web_click", "web_type_into", "web_scroll", "guide_user"]
+tools = ["web_navigate", "web_read", "web_snapshot", "web_click", "web_type_into", "web_click_text", "web_scroll", "guide_user"]
 prompt = """You are a Google Ads specialist. Navigate Google Ads (accounts.google.com/ads)
 and read campaign metrics (CTR, CPC, conversions, spend). Explain what's
 underperforming and recommend changes. Work the page with: web_read to see

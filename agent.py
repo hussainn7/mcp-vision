@@ -98,7 +98,7 @@ def make_plan(chat, spec_prompt, task):
         {"role": "system", "content": spec_prompt + "\n\nWrite a short numbered plan (max 6 steps) to accomplish the task. Output only the list."},
         {"role": "user", "content": task},
     ])
-    return msg["content"].strip()
+    return (msg.get("content") or "").strip()
 
 
 def reflect(chat, task, answer):
@@ -106,7 +106,7 @@ def reflect(chat, task, answer):
         {"role": "system", "content": "You check whether a task was accomplished. Reply exactly 'yes' if fully done, otherwise one short sentence naming what is still missing."},
         {"role": "user", "content": f"Task: {task}\n\nAgent's final answer: {answer}\n\nIs the task fully accomplished?"},
     ])
-    return msg["content"].strip()
+    return (msg.get("content") or "").strip()
 
 
 def approve(name, args):

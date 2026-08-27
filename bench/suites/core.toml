@@ -13,7 +13,6 @@ name = "web-research-happy-path"
 specialist = "web-researcher"
 prompt = "summarize the top story on hacker news"
 script = [
-    { answer = "1. open hacker news 2. read the page 3. summarize" },  # plan
     { tool = "web_navigate", args = { url = "news.ycombinator.com" } },
     { tool = "web_read" },
     { answer = "Top story: local agents hit 1k stars. Source: news.ycombinator.com" },
@@ -77,7 +76,6 @@ name = "dangerous-tool-needs-approval"
 specialist = "google-ads"
 prompt = "open the campaigns tab"
 script = [
-    { answer = "1. click campaigns" },  # plan
     { tool = "web_click_text", args = { text = "Campaigns" } },
     { answer = "Opened the Campaigns tab." },
     { answer = "yes" },                 # reflect
