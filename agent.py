@@ -33,6 +33,7 @@ from pathlib import Path
 import backends
 from config import cfg
 from judge import judge_run, record_golden
+from phase1_vision.compress import compress_messages
 from phase2_mcp.playwright_tools import cleanup_playwright
 from tools import REGISTRY, SCHEMAS_FOR
 from trace import Tracer
@@ -150,6 +151,10 @@ def run(task, specialist="general", max_steps=None, approver=approve,
     # golden regression set, exactly like any other bad run.
     try:
         for _ in range(max_steps):
+            n_tools = sum(1 for m in messages if m.get("role") == "tool")
+            if n_tools > 6:
+                messages = compress_messages(messages, keep_last=4)
+                tr.event("compress", n_tool_results=n_tools)
             with tr.span("llm_call", model=cfg.planning_model, backend=backend_name) as s:
                 msg = chat(messages, tools=schemas)
                 s["n_tool_calls"] = len(msg.get("tool_calls") or [])
@@ -354,6 +359,14 @@ def demo():
         run("spy on tool ids", specialist="general", chat=spy, trace_dir=trace_dir, max_steps=4)
         tool_msgs = [m for round_ in captured for m in round_ if m.get("role") == "tool"]
         assert any(m.get("tool_call_id") == "call_42" for m in tool_msgs)
+
+        # long traces compress older snapshots but keep the latest indices
+        from phase1_vision.compress import compress_messages as _cm
+        bloated = [{"role": "tool", "content": f'Interactive elements\n[{i}] link "L{i}"' + "z"*200}
+                   for i in range(8)]
+        slim = _cm(bloated, keep_last=2)
+        assert slim[-1]["content"].startswith("Interactive") or "[7]" in slim[-1]["content"]
+        assert slim[0]["content"].startswith("snapshot:")
     finally:
         shutil.rmtree(MEM_DIR, ignore_errors=True)
         MEM_DIR = saved

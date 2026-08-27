@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 from loguru import logger
 
+from phase1_vision.coords import VIEWPORT_METRICS_JS, from_browser
 from phase2_mcp import micro_vision
 from phase2_mcp.page_snapshot import (
     REACHABLE_JS,
@@ -194,6 +195,8 @@ class PlaywrightManager:
         self._proc = None           # the browser process, when we launched it
         self.index_labels = {}      # index -> accessible name, latest snapshot
         self.elements = {}          # index -> full element record, latest snapshot
+        self.viewport = None        # Viewport from the last snapshot
+        self.snapshot_source = "dom"
 
     async def start(self) -> bool:
         if not HAS_PLAYWRIGHT:
@@ -366,9 +369,52 @@ class PlaywrightManager:
             if attempt < 2:
                 await asyncio.sleep(1.0)
         els = (snap or {}).get("elements") or []
-        self.index_labels = {e["index"]: e["name"] for e in els}
+        self.snapshot_source = "dom"
+        try:
+            metrics = await self.page.evaluate(VIEWPORT_METRICS_JS)
+            size = self.page.viewport_size or {}
+            shot = (size.get("width"), size.get("height")) if size.get("width") else None
+            self.viewport = from_browser(metrics, shot)
+            if snap is not None:
+                snap["viewport"] = metrics
+        except Exception as e:
+            logger.debug(f"viewport metrics failed: {e}")
+
+        if not els:
+            vis = await self._visual_fallback()
+            if vis:
+                els = vis
+                snap = {**(snap or {}), "elements": els, "source": "visual"}
+                self.snapshot_source = "visual"
+
+        self.index_labels = {e["index"]: e.get("name", "") for e in els}
         self.elements = {e["index"]: e for e in els}
         return snap
+
+    async def _visual_fallback(self):
+        """Canvas / empty-DOM path: SoM boxes from the screenshot, in CSS px."""
+        try:
+            import io
+            from PIL import Image
+            from phase1_vision.grounding import from_visual
+            png = await self.page.screenshot()
+            img = Image.open(io.BytesIO(png))
+            vp = self.viewport or from_browser(
+                {"innerWidth": img.width, "innerHeight": img.height, "devicePixelRatio": 1})
+            vp.screenshot_w, vp.screenshot_h = float(img.width), float(img.height)
+            boxes = from_visual(img, vp)
+        except Exception as e:
+            logger.debug(f"visual SoM fallback failed: {e}")
+            return []
+        out = []
+        for i, b in enumerate(boxes):
+            out.append({
+                "index": i, "role": b.get("role") or "visual",
+                "name": b.get("label") or f"region {i}",
+                "cx": b["cx"], "cy": b["cy"],
+                "x": b["x"], "y": b["y"], "w": b["w"], "h": b["h"],
+            })
+        return out
 
     async def _reachable(self, sel):
         """Where this element can actually be hit right now, or None."""

@@ -19,6 +19,7 @@ from PIL import Image
 
 from config import cfg
 from phase1_vision.capture import capture_screen
+from phase1_vision.diff import FrameBudget
 
 MODEL = cfg.model
 MAX_W = cfg.inference_width  # downscale before inference; coords scale back linearly
@@ -110,6 +111,8 @@ def prelaunch(task: str) -> str | None:
 def run(task: str, max_steps: int | None = None) -> str:
     max_steps = max_steps or cfg.max_steps
     history: list[str] = []
+    budget = FrameBudget()
+    idle = 0
 
     pre = prelaunch(task)
     if pre:
@@ -119,6 +122,13 @@ def run(task: str, max_steps: int | None = None) -> str:
     for step in range(max_steps):
         img, _ = capture_screen(save=False)
         img, scale = shrink(img, pyautogui.size()[0])
+        # skip-only: a crop would shift the coordinate origin the VLM clicks in
+        _, kind = budget.next(img)
+        if kind == "skip" and idle < 3:
+            idle += 1
+            time.sleep(cfg.loop_delay)
+            continue
+        idle = 0
 
         prompt = f"Task: {task}\n\nDone so far:\n" + (
             "\n".join(f"{i + 1}. {h}" for i, h in enumerate(history)) or "  (nothing yet)"
@@ -169,6 +179,13 @@ def demo():
         assert prelaunch("launch Safari, search weather") == "open_app Safari"
         assert prelaunch("open System Settings") == "open_app System Settings"
         assert prelaunch("scroll down and read the page") is None
+
+    from phase1_vision.diff import FrameBudget
+    from PIL import Image as _I
+    bud = FrameBudget()
+    frame = _I.new("RGB", (32, 32), (0, 0, 0))
+    assert bud.next(frame)[1] == "full"
+    assert bud.next(frame.copy())[1] == "skip"
     print("ok")
 
 
