@@ -27,6 +27,7 @@ ocr = ["pytesseract>=0.3.10"]
 dev = ["pytest>=8.0.0"]
 
 [project.scripts]
+mcp-vision = "mcp_vision.cli:cli"
 mac-agent = "mac_agent:run"
 screen-agent = "simple_agent:main"
 
