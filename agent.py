@@ -35,6 +35,7 @@ from config import cfg
 from judge import judge_run, record_golden
 from phase1_vision.compress import compress_messages
 from phase2_mcp.playwright_tools import cleanup_playwright
+from runtime import coerce_args, parse_subgoals, remaining_subgoals, stale_snapshot
 from tools import REGISTRY, SCHEMAS_FOR
 from trace import Tracer
 import skills as skill_lib
@@ -136,6 +137,7 @@ def run(task, specialist="general", max_steps=None, approver=approve,
         with tr.span("plan") as s:
             plan = make_plan(chat, spec["prompt"], task)
             s["plan"] = plan
+        subgoals = parse_subgoals(plan)
         print(f"Plan:\n{plan}\n")
         messages.append({"role": "user", "content": f"Task: {task}\n\nPlan:\n{plan}\n\nExecute it, one tool call at a time."})
     else:
@@ -144,6 +146,7 @@ def run(task, specialist="general", max_steps=None, approver=approve,
     schemas = SCHEMAS_FOR(allowed)
     reflected = False
     final, status = "hit max steps", "error"
+    subgoals = []
 
     # A cloud backend can fail mid-run (bad key, network blip, rate limit).
     # This must never lose the trace: whatever happened up to that point still
@@ -169,7 +172,11 @@ def run(task, specialist="general", max_steps=None, approver=approve,
                     tr.event("reflect", verdict=verdict, ok=ok)
                     if not ok:
                         print(f"  reflect: {verdict}")
-                        messages.append({"role": "user", "content": f"Not fully done: {verdict} Keep going."})
+                        used = [e.get("tool") for e in tr.events
+                                if e["type"] == "tool_call" and e.get("status") != "error"]
+                        left = remaining_subgoals(subgoals, used) if subgoals else []
+                        extra = f" Remaining: {'; '.join(left)}." if left else ""
+                        messages.append({"role": "user", "content": f"Not fully done: {verdict}{extra} Keep going."})
                         continue
                 record(specialist, "successes", f"{task} -> {answer[:120]}")
                 final, status = answer, "ok"
@@ -177,7 +184,7 @@ def run(task, specialist="general", max_steps=None, approver=approve,
 
             for call in msg["tool_calls"]:
                 name = call["function"]["name"]
-                args = call["function"].get("arguments", {})
+                args = coerce_args(call["function"].get("arguments", {}))
                 call_id = call.get("id", name)
 
                 if name not in allowed or name not in REGISTRY:
@@ -204,6 +211,8 @@ def run(task, specialist="general", max_steps=None, approver=approve,
                     except Exception as e:
                         result = f"error: {e}"
                     result = str(result)
+                    if stale_snapshot(result):
+                        result = result.rstrip(".") + ". Take a fresh web_snapshot before retrying."
 
                     if result.startswith("error:") or result.startswith("ERROR"):
                         record(specialist, "failures", f"{name}: {result[:120]}")
@@ -359,6 +368,10 @@ def demo():
         run("spy on tool ids", specialist="general", chat=spy, trace_dir=trace_dir, max_steps=4)
         tool_msgs = [m for round_ in captured for m in round_ if m.get("role") == "tool"]
         assert any(m.get("tool_call_id") == "call_42" for m in tool_msgs)
+
+        # fast-loop coercer turns string indices into ints before the tool runs
+        from runtime import coerce_args
+        assert coerce_args({"index": "7", "text": "hi"}) == {"index": 7, "text": "hi"}
 
         # long traces compress older snapshots but keep the latest indices
         from phase1_vision.compress import compress_messages as _cm

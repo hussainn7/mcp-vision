@@ -19,10 +19,12 @@ import re
 import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from loguru import logger
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from phase1_vision.coords import VIEWPORT_METRICS_JS, from_browser
 from phase2_mcp import micro_vision
 from phase2_mcp.page_snapshot import (
@@ -32,6 +34,7 @@ from phase2_mcp.page_snapshot import (
     crop_box,
     format_elements,
 )
+from runtime import PAGE_FINGERPRINT_JS, did_state_change
 
 try:
     from playwright.async_api import async_playwright, Browser, Page, Playwright
@@ -424,49 +427,75 @@ class PlaywrightManager:
             logger.debug(f"reachability probe failed: {e}")
             return None
 
+    async def fingerprint(self):
+        if not await self.is_running():
+            return None
+        try:
+            return await self.page.evaluate(PAGE_FINGERPRINT_JS)
+        except Exception as e:
+            logger.debug(f"fingerprint failed: {e}")
+            return None
+
+    async def _click_and_verify(self, x, y, before, how):
+        try:
+            await self.page.mouse.click(x, y)
+        except Exception as e:
+            logger.debug(f"{how} click failed: {e}")
+            return False, how
+        await asyncio.sleep(0.15)
+        after = await self.fingerprint()
+        if did_state_change(before, after):
+            return True, how
+        return False, how + "-noop"
+
     async def click_index(self, index: int, timeout: int = 8000):
         """Click an element from the last snapshot. Returns (ok, how).
 
-        Every step is a real mouse click at a point the browser confirmed
-        resolves to this element — never a synthetic event that reaches a
-        control a person could not have reached.
-
-          1. click the verified point from the snapshot;
-          2. if something now covers it, scroll it to the middle of the
-             viewport — the general cure for sticky headers and footers, which
-             own the edges — re-probe, and click the new point;
-          3. if it is still covered, crop a thumbnail and let a small vision
-             model point at it (micro_vision).
+        After every click, fingerprint the page. A mouse event that hits a
+        modal scrim and changes nothing is a failed action, not a success —
+        we then try scroll-into-center, Escape (dismiss overlay), and
+        micro-vision, in that order.
         """
         if not await self.is_running():
             return False, "no browser"
         sel = f'[data-agent-index="{index}"]'
+        before = await self.fingerprint()
 
         hit = await self._reachable(sel)
         if hit:
-            try:
-                await self.page.mouse.click(hit["cx"], hit["cy"])
-                return True, "click"
-            except Exception as e:
-                logger.debug(f"click at verified point failed: {e}")
+            ok, how = await self._click_and_verify(hit["cx"], hit["cy"], before, "click")
+            if ok:
+                return True, how
 
-        # covered where it sits: move it out from under whatever is on top
         try:
             await self.page.evaluate(SCROLL_INTO_CENTER_JS, sel)
-            await asyncio.sleep(0.35)  # let sticky/animated chrome settle
+            await asyncio.sleep(0.35)
         except Exception as e:
             logger.debug(f"scroll into centre failed: {e}")
 
         hit = await self._reachable(sel)
         if hit:
-            try:
-                await self.page.mouse.click(hit["cx"], hit["cy"])
-                return True, "scroll+click"
-            except Exception as e:
-                logger.debug(f"click after scroll failed: {e}")
+            ok, how = await self._click_and_verify(hit["cx"], hit["cy"], before, "scroll+click")
+            if ok:
+                return True, how
+
+        try:
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.2)
+        except Exception as e:
+            logger.debug(f"dismiss overlay failed: {e}")
+
+        hit = await self._reachable(sel)
+        if hit:
+            ok, how = await self._click_and_verify(hit["cx"], hit["cy"], before, "dismiss+click")
+            if ok:
+                return True, how
 
         if await self._micro_vision_click(sel, index):
-            return True, "micro-vision"
+            after = await self.fingerprint()
+            if did_state_change(before, after):
+                return True, "micro-vision"
+            return False, "micro-vision-noop"
         return False, "occluded"
 
     async def _micro_vision_click(self, sel, index):
@@ -681,6 +710,9 @@ def click_index(index) -> str:
     if how == "occluded":
         return (f"ERROR: [{index}] '{label}' is covered by an overlay and cannot be clicked. "
                 f"Close any cookie/consent banner or modal first, or use guide_user.")
+    if how.endswith("-noop"):
+        return (f"ERROR: [{index}] '{label}' click landed but the page did not change ({how}). "
+                f"A modal may be intercepting it — close it, then web_snapshot and retry.")
     return (f"ERROR: could not click [{index}] '{label}' ({how}). The page may have changed — "
             f"call web_snapshot again for fresh indices, then retry.")
 
@@ -891,6 +923,12 @@ def demo():
     # nothing installed -> None, so the caller can report it instead of crashing
     assert find_chrome(None, platform="linux", exists=lambda p: False, which=lambda n: None) is None
     assert find_chrome(None, platform="plan9", exists=lambda p: True) is None
+
+    from runtime import did_state_change, coerce_args
+    assert coerce_args({"index": "4"})["index"] == 4
+    fp = {"url": "x", "title": "t", "n": 1, "scroll": 0, "text": "aaaa"}
+    assert not did_state_change(fp, dict(fp))
+    assert did_state_change(fp, {**fp, "n": 9})
 
     print("ok")
 
