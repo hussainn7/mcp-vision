@@ -1,0 +1,1 @@
+"""Confirmation HUD overlay."""
