@@ -183,6 +183,53 @@ def playwright_scroll(direction: str = "down", clicks: int = 3) -> str:
     return _playwright_scroll(direction, clicks)
 
 
+@mcp.tool()
+def som_parse() -> list[dict]:
+    """Capture the screen and return Set-of-Marks UI elements (id, label, bbox)."""
+    from phase1_vision.capture import capture_screen
+    from phase1_vision.som import detect_ui_boxes, to_elements
+    img, _ = capture_screen(save=False)
+    return to_elements(detect_ui_boxes(img))
+
+
+@mcp.tool()
+def ground_mark(target: str) -> str:
+    """Resolve a SoM id or '[n] label' string to a clickable point from the last scan."""
+    from phase1_vision.coords import Viewport
+    from phase1_vision.grounding import resolve
+    from phase2_mcp.tools import _get_latest_elements
+    try:
+        els = _get_latest_elements()
+    except FileNotFoundError:
+        return "no scan yet — call som_parse or get_elements first"
+    boxes = []
+    for e in els:
+        bbox = e.get("bbox") or [e.get("x", 0), e.get("y", 0), e.get("x", 0), e.get("y", 0)]
+        boxes.append({
+            "id": e.get("id", 0), "x": bbox[0], "y": bbox[1],
+            "w": bbox[2] - bbox[0], "h": bbox[3] - bbox[1],
+            "label": e.get("label", ""), "cx": e.get("x", 0), "cy": e.get("y", 0),
+        })
+    g = resolve(target, boxes, vp=Viewport(css_w=1920, css_h=1080, screenshot_w=1920, screenshot_h=1080))
+    if not g:
+        return f"unresolved: {target!r}"
+    return f"{g.source} id={g.index} @ ({g.x},{g.y}) conf={g.confidence:.2f} {g.label}"
+
+
+@mcp.tool()
+def web_snapshot() -> str:
+    """Occlusion-pruned accessibility snapshot of the attached browser page."""
+    from phase2_mcp.playwright_tools import snapshot
+    return snapshot()
+
+
+@mcp.tool()
+def web_click(index: int) -> str:
+    """Click a web_snapshot index in the attached browser."""
+    from phase2_mcp.playwright_tools import click_index
+    return click_index(index)
+
+
 if __name__ == "__main__":
     logger.info("Starting screen-agent MCP server on stdio transport...")
     mcp.run(transport="stdio")
