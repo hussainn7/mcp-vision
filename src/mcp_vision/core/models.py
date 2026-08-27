@@ -43,7 +43,7 @@ class ScreenInspectionResult(BaseModel):
     height: int
     scale: float = 1.0
     elements: list[ScreenElement] = Field(default_factory=list)
-    png: bytes = b""
+    png: bytes = Field(default=b"", exclude=True)
     source: str = "visual"
 
     def element(self, element_id: int) -> ScreenElement | None:
