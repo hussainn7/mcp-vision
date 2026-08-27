@@ -78,6 +78,23 @@ class Tracer:
     def end(self, status="ok", answer=""):
         self.event("run_end", status=status, answer=answer,
                    total_ms=round((time.time() - self._t0) * 1000, 1))
+        self.export_otel()
+
+    def export_otel(self):
+        """Write OTLP JSON + a replay index under runs/<run_id>/."""
+        run_dir = self.out_dir / "runs" / self.run_id
+        try:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "trace.json").write_text(
+                json.dumps(to_otel(self.events), indent=2, default=str))
+            (run_dir / "replay.json").write_text(json.dumps({
+                "run_id": self.run_id,
+                "events": self.events,
+                "trace_jsonl": str(self.path),
+            }, indent=2, default=str))
+            self.run_dir = run_dir
+        except OSError:
+            self.run_dir = None
 
     # -- summary helpers (used by judge.py and the bench report) --------------
 
@@ -100,6 +117,44 @@ def load_trace(path):
         if line:
             events.append(json.loads(line))
     return events
+
+
+def to_otel(events):
+    """OTLP JSON (resourceSpans) for a trajectory. No SDK, just the wire shape."""
+    import hashlib
+    run_id = (events[0].get("run_id") if events else "") or "unknown"
+    tid = hashlib.md5(str(run_id).encode()).hexdigest()  # 32 hex = 16 bytes
+    spans = []
+    for i, e in enumerate(events):
+        ts = float(e.get("ts") or 0)
+        dur_s = float(e.get("dur_ms") or 0) / 1000.0
+        if e.get("type") == "run_end":
+            dur_s = float(e.get("total_ms") or 0) / 1000.0
+        status_code = 2 if e.get("status") == "error" else 1
+        attrs = []
+        for k, v in e.items():
+            if k in ("ts",):
+                continue
+            attrs.append({"key": str(k), "value": {"stringValue": str(v)[:500]}})
+        spans.append({
+            "traceId": tid,
+            "spanId": f"{i+1:016x}",
+            "name": str(e.get("type") or "event"),
+            "kind": 1,
+            "startTimeUnixNano": str(int(ts * 1e9)),
+            "endTimeUnixNano": str(int((ts + dur_s) * 1e9)),
+            "attributes": attrs,
+            "status": {"code": status_code},
+        })
+    return {
+        "resourceSpans": [{
+            "resource": {"attributes": [
+                {"key": "service.name", "value": {"stringValue": "mcp-vision"}},
+                {"key": "service.instance.id", "value": {"stringValue": str(run_id)}},
+            ]},
+            "scopeSpans": [{"scope": {"name": "mcp-vision"}, "spans": spans}],
+        }]
+    }
 
 
 def demo():
@@ -127,6 +182,11 @@ def demo():
         assert events[4]["status"] == "error" and "kaput" in events[4]["error"]
         assert len(tr.errors()) == 1
         assert tr.counts()["tool_call"] == 2
+        otel = to_otel(events)
+        spans = otel["resourceSpans"][0]["scopeSpans"][0]["spans"]
+        assert len(spans) == len(events)
+        assert all(len(s["traceId"]) == 32 and len(s["spanId"]) == 16 for s in spans)
+        assert (out / "runs" / tr.run_id / "trace.json").exists()
         # long values get clipped, never dropped
         tr2 = Tracer(out_dir=out)
         e = tr2.event("x", big="a" * 5000)

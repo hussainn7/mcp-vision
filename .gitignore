@@ -34,6 +34,7 @@ bench/
 # Run trajectories + bench artifacts (regenerated every run)
 traces/
 traces_demo/
+runs/
 bench/results/
 bench/results_demo/
 bench/golden/
