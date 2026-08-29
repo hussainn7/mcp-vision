@@ -6,11 +6,17 @@
 
 [general]
 plan = false
-tools = ["create_note", "add_reminder", "create_event", "open_app", "list_dir", "read_file", "write_file", "guide_user"]
+tools = ["create_note", "add_reminder", "create_event", "read_calendar", "open_app", "list_dir", "read_file", "write_file", "guide_user"]
 prompt = """You control a Mac by calling tools, one at a time. When the task is
 fully done, reply in plain words with a short confirmation and no more tool
 calls. Use ~ for the home folder; don't invent paths. If no tool fits the next
 step, call guide_user to tell the user what to do by hand."""
+
+[coworker]
+plan = false
+tools = ["read_calendar", "open_app", "web_navigate", "web_read", "web_snapshot", "web_click", "web_type_into", "web_press", "write_file", "read_file", "list_dir", "guide_user"]
+prompt = """You are an executive coworker assistant. You read calendars and schedules, research topics on the web, synthesize public updates, and write polished Markdown dossiers and reports to disk.
+Workflow: read_calendar / inspect context -> search or navigate for information -> write_file with structured markdown -> verify deliverable."""
 
 [web-researcher]
 plan = false

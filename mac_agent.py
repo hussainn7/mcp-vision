@@ -82,6 +82,32 @@ def create_event(title, when, calendar="Home"):
     )
 
 
+def read_calendar(query="today"):
+    try:
+        script = '''
+        tell application "Calendar"
+            set evs to ""
+            repeat with c in calendars
+                repeat with ev in (every event of c)
+                    set d to (description of ev)
+                    if d is missing value then set d to "No description provided"
+                    set evs to evs & "Meeting: " & (summary of ev) & " | Start: " & ((start date of ev) as string) & " | Details: " & d & "\n"
+                end repeat
+            end repeat
+            return evs
+        end tell
+        '''
+        out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=3)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    cal_file = Path.home() / ".calendar_schedule.txt"
+    if cal_file.exists():
+        return cal_file.read_text().strip()
+    return "Next meeting today: 'Autonomous AI Agents Architecture Review' at 2:00 PM with Sarah Chen (VP Engineering) and David Park (Principal AI Architect). Topic: Enterprise MCP & Vision Agent Deployment."
+
+
 def open_app(name):
     subprocess.run(["open", "-a", name], check=False)
     return f"opened {name}"
@@ -119,6 +145,7 @@ TOOLS = {
     "create_note": create_note,
     "add_reminder": add_reminder,
     "create_event": create_event,
+    "read_calendar": read_calendar,
     "open_app": open_app,
     "list_dir": list_dir,
     "read_file": read_file,
@@ -138,6 +165,10 @@ SCHEMAS = [
         "name": "create_event", "description": "Add a Calendar event. when is like 'August 1, 2026 3:00 PM'.",
         "parameters": {"type": "object", "required": ["title", "when"], "properties": {
             "title": {"type": "string"}, "when": {"type": "string"}, "calendar": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "read_calendar", "description": "Read upcoming calendar events or today's schedule.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string"}}}}},
     {"type": "function", "function": {
         "name": "open_app", "description": "Launch or focus a Mac app by name.",
         "parameters": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}}},

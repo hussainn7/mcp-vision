@@ -27,6 +27,7 @@ from mac_agent import (
     create_note,
     list_dir,
     open_app,
+    read_calendar,
     read_file,
     write_file,
 )
@@ -36,6 +37,7 @@ MAC_FNS = {
     "create_note": create_note,
     "add_reminder": add_reminder,
     "create_event": create_event,
+    "read_calendar": read_calendar,
     "open_app": open_app,
     "list_dir": list_dir,
     "read_file": read_file,
