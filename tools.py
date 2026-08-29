@@ -91,7 +91,7 @@ def web_scroll(direction="down", clicks=3):
     return pt.scroll(direction, clicks)
 
 
-def take_screenshot(path="~/Desktop/bug_screenshot.png"):
+def take_screenshot(path="~/Desktop/screenshot.png"):
     import os
     from pathlib import Path
     from phase1_vision.capture import capture_screen

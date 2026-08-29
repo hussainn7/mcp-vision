@@ -48,7 +48,7 @@ class Config(BaseSettings):
     loop_delay: float = 0.5
 
     # give up after this many actions
-    max_steps: int = 15
+    max_steps: int = 25
 
     # MCP server settings
     mcp_host: str = "127.0.0.1"
