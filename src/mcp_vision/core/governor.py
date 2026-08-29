@@ -13,7 +13,7 @@ SAFE_READ_ACTIONS = frozenset({"inspect_screen"})
 ROUTINE_ACTIONS = frozenset({"click_element", "type_text", "press_key_combination"})
 
 _RESTRICTED_LABEL = re.compile(
-    r"\b(password|passwd|pin|ssn|delete|trash|remove|uninstall|format|"
+    r"\b(password|passwd|pin|ssn|delete|trash|remove|rm|wipe|destroy|uninstall|format|"
     r"buy|purchase|checkout|pay|terminal|iterm|sudo|root)\b",
     re.I,
 )
