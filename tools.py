@@ -91,6 +91,17 @@ def web_scroll(direction="down", clicks=3):
     return pt.scroll(direction, clicks)
 
 
+def take_screenshot(path="~/Desktop/bug_screenshot.png"):
+    import os
+    from pathlib import Path
+    from phase1_vision.capture import capture_screen
+    p = Path(os.path.expanduser(path))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    img, _ = capture_screen(save=False)
+    img.save(p)
+    return f"screenshot saved to {path} ({img.width}x{img.height})"
+
+
 # --- guide mode: no tool exists, so tell the human the next move -------------
 
 GUIDE_SYSTEM = """You look at a macOS screenshot and tell the user the single
@@ -158,6 +169,7 @@ WEB_SCHEMAS = {
     "web_type": _fn("web_type", "Type text into the currently focused field.", ["text"], {"text": _STR}),
     "web_press": _fn("web_press", "Press a key like 'Enter' or 'Tab'.", ["key"], {"key": _STR}),
     "web_scroll": _fn("web_scroll", "Scroll the page.", [], {"direction": _STR, "clicks": _INT}),
+    "take_screenshot": _fn("take_screenshot", "Capture a full screen or window screenshot and save to a file path.", [], {"path": _STR}),
     "guide_user": _fn("guide_user", "When no tool can act, look at the screen and tell the user the next step.", ["goal"], {"goal": _STR}),
 }
 
@@ -166,6 +178,7 @@ WEB_FNS = {
     "web_snapshot": web_snapshot, "web_click": web_click, "web_type_into": web_type_into,
     "web_click_text": web_click_text, "web_click_role": web_click_role,
     "web_type": web_type, "web_press": web_press, "web_scroll": web_scroll,
+    "take_screenshot": take_screenshot,
     "guide_user": guide_user,
 }
 
