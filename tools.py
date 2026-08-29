@@ -17,6 +17,7 @@ picks tools per specialist and runs the loop.
 
 import ollama
 
+import backends
 from config import cfg
 from mac_agent import (
     SCHEMAS as MAC_SCHEMAS,
@@ -27,6 +28,7 @@ from mac_agent import (
     list_dir,
     open_app,
     read_file,
+    write_file,
 )
 from phase2_mcp import playwright_tools as pt
 
@@ -37,6 +39,7 @@ MAC_FNS = {
     "open_app": open_app,
     "list_dir": list_dir,
     "read_file": read_file,
+    "write_file": write_file,
 }
 _MAC_SCHEMA_BY_NAME = {s["function"]["name"]: s for s in MAC_SCHEMAS}
 
@@ -103,18 +106,33 @@ def guide_user(goal):
         img = img.resize((w, int(img.height * w / img.width)))
     buf = cfg.output_dir / "_guide.png"
     img.save(buf)
-    reply = ollama.chat(
-        model=cfg.model,
-        messages=[
-            {"role": "system", "content": GUIDE_SYSTEM},
-            {"role": "user",
-             "content": f"Goal: {goal}\nWhat is the single next thing I should do?",
-             "images": [str(buf)]},
-        ],
-        keep_alive=cfg.ollama_keep_alive,
-        options={"temperature": 0, "num_predict": 150},
-    )
-    return "GUIDE: " + reply["message"]["content"].strip()
+
+    if cfg.model_backend != "local":
+        try:
+            chat = backends.get_chat(cfg.model_backend)
+            reply = chat([
+                {"role": "system", "content": GUIDE_SYSTEM},
+                {"role": "user", "content": f"Goal: {goal}\nWhat is the single next thing I should do?"},
+            ])
+            return "GUIDE: " + (reply.get("content") or "").strip()
+        except Exception as e:
+            return f"GUIDE error: {e}"
+
+    try:
+        reply = ollama.chat(
+            model=cfg.model,
+            messages=[
+                {"role": "system", "content": GUIDE_SYSTEM},
+                {"role": "user",
+                 "content": f"Goal: {goal}\nWhat is the single next thing I should do?",
+                 "images": [str(buf)]},
+            ],
+            keep_alive=cfg.ollama_keep_alive,
+            options={"temperature": 0, "num_predict": 150},
+        )
+        return "GUIDE: " + reply["message"]["content"].strip()
+    except Exception as e:
+        return f"GUIDE (local model unavailable): {e}"
 
 
 def _fn(name, description, required, props):

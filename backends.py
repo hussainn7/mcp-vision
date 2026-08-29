@@ -55,15 +55,20 @@ def _urllib_post(url, headers, body, timeout):
         url, data=data, method="POST",
         headers={**headers, "Content-Type": "application/json"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        raise BackendError(f"HTTP {e.code} from {url}: {e.read().decode()[:500]}")
-    except urllib.error.URLError as e:
-        raise BackendError(f"network error calling {url}: {e.reason}")
-    except (TimeoutError, OSError) as e:
-        raise BackendError(f"error calling {url}: {e}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 503) and attempt < max_retries - 1:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise BackendError(f"HTTP {e.code} from {url}: {e.read().decode()[:500]}")
+        except urllib.error.URLError as e:
+            raise BackendError(f"network error calling {url}: {e.reason}")
+        except (TimeoutError, OSError) as e:
+            raise BackendError(f"error calling {url}: {e}")
 
 
 def _post_json(url, headers, body, timeout=60, _post=None):

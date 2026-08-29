@@ -112,6 +112,8 @@ def _looks_risky(label):
     low = " ".join((label or "").lower().split())
     if not low:
         return False
+    if "search" in low or "query" in low or "filter" in low:
+        return False
     if len(low.split()) <= _LABEL_WORDS:
         return bool(_RISKY_RE.search(low))
     return any(low.startswith(k) for k in _RISKY_CLICK)
@@ -595,7 +597,7 @@ class PlaywrightManager:
         if not await self.is_running():
             return False
         try:
-            await self.page.keyboard.press(key, timeout=timeout)
+            await self.page.keyboard.press(key)
             return True
         except Exception as e:
             logger.debug(f"Playwright key press failed: {e}")

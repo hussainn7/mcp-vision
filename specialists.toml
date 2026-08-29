@@ -6,7 +6,7 @@
 
 [general]
 plan = false
-tools = ["create_note", "add_reminder", "create_event", "open_app", "list_dir", "read_file", "guide_user"]
+tools = ["create_note", "add_reminder", "create_event", "open_app", "list_dir", "read_file", "write_file", "guide_user"]
 prompt = """You control a Mac by calling tools, one at a time. When the task is
 fully done, reply in plain words with a short confirmation and no more tool
 calls. Use ~ for the home folder; don't invent paths. If no tool fits the next
@@ -14,15 +14,12 @@ step, call guide_user to tell the user what to do by hand."""
 
 [web-researcher]
 plan = false
-tools = ["web_navigate", "web_read", "web_snapshot", "web_click", "web_scroll", "guide_user"]
-prompt = """You research topics using the attached Chrome browser. Navigate directly
-to relevant sites, then: web_read to understand the page -> web_snapshot to list
-clickable elements with [index] numbers -> web_click the index you want.
-ALWAYS call web_snapshot AFTER navigating or scrolling, BEFORE clicking — the
-indices are only valid for the current page state. Never click an index that
-doesn't appear in the latest web_snapshot. If a complex form or config page
-won't respond to clicks, use guide_user to ask the user to click it manually.
-When done, reply with a concise, sourced summary."""
+tools = ["web_navigate", "web_read", "web_snapshot", "web_click", "web_type_into", "web_type", "web_press", "web_click_text", "web_scroll", "write_file", "read_file", "guide_user"]
+prompt = """You interact with web pages using the attached Chrome browser. Navigate directly
+to sites, handle cookie/modal popups by clicking dismiss/accept/close buttons, search, filter, and click items.
+Workflow: web_navigate -> web_snapshot to see interactive elements -> web_click or web_type_into/web_press.
+ALWAYS call web_snapshot AFTER navigating, scrolling, or clicking to refresh indices before the next interaction.
+When done, summarize what was clicked and the final page state."""
 
 [google-ads]
 plan = false

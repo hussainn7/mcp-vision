@@ -100,6 +100,21 @@ def read_file(path):
         return f"error: {e}"
 
 
+def write_file(path, content):
+    try:
+        p = Path(os.path.expanduser(path))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        return f"wrote {len(content)} chars to {path}"
+    except OSError as e:
+        return f"error: {e}"
+
+
+def verify_file(path, content=""):
+    p = Path(os.path.expanduser(path))
+    return "" if p.exists() else f"file '{path}' not found after write"
+
+
 TOOLS = {
     "create_note": create_note,
     "add_reminder": add_reminder,
@@ -107,6 +122,7 @@ TOOLS = {
     "open_app": open_app,
     "list_dir": list_dir,
     "read_file": read_file,
+    "write_file": write_file,
 }
 
 SCHEMAS = [
@@ -131,6 +147,10 @@ SCHEMAS = [
     {"type": "function", "function": {
         "name": "read_file", "description": "Read a text file's contents.",
         "parameters": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "write_file", "description": "Write or save text to a file path (e.g. ~/Desktop/file.md).",
+        "parameters": {"type": "object", "required": ["path", "content"], "properties": {
+            "path": {"type": "string"}, "content": {"type": "string"}}}}},
 ]
 
 # Eval gates: read the state back and confirm the action actually landed.
@@ -158,6 +178,7 @@ VERIFY = {
     "create_note": verify_note,
     "add_reminder": verify_reminder,
     "create_event": verify_event,
+    "write_file": verify_file,
 }
 
 
