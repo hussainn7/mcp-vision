@@ -55,8 +55,6 @@ def crop_delta(prev: Image.Image | None, curr: Image.Image, pad: int = 16):
     """
     if prev is None:
         return curr, "full"
-    if not changed(prev, curr):
-        return None, "skip"
     box = delta_bbox(prev, curr, pad=pad)
     if box is None:
         return None, "skip"
