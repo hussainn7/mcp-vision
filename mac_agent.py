@@ -141,6 +141,25 @@ def verify_file(path, content=""):
     return "" if p.exists() else f"file '{path}' not found after write"
 
 
+def delete_file(path):
+    try:
+        p = Path(os.path.expanduser(path))
+        if not p.exists():
+            return f"error: {path} does not exist"
+        if p.is_dir():
+            shutil.rmtree(p)
+            return f"removed directory {path}"
+        p.unlink()
+        return f"deleted {path}"
+    except OSError as e:
+        return f"error: {e}"
+
+
+def verify_delete(path):
+    p = Path(os.path.expanduser(path))
+    return "" if not p.exists() else f"file '{path}' still exists after delete"
+
+
 TOOLS = {
     "create_note": create_note,
     "add_reminder": add_reminder,
@@ -150,6 +169,7 @@ TOOLS = {
     "list_dir": list_dir,
     "read_file": read_file,
     "write_file": write_file,
+    "delete_file": delete_file,
 }
 
 SCHEMAS = [
@@ -182,6 +202,10 @@ SCHEMAS = [
         "name": "write_file", "description": "Write or save text to a file path (e.g. ~/Desktop/file.md).",
         "parameters": {"type": "object", "required": ["path", "content"], "properties": {
             "path": {"type": "string"}, "content": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "delete_file", "description": "Delete a file or trash artifact by path.",
+        "parameters": {"type": "object", "required": ["path"], "properties": {
+            "path": {"type": "string"}}}}},
 ]
 
 # Eval gates: read the state back and confirm the action actually landed.
@@ -210,6 +234,7 @@ VERIFY = {
     "add_reminder": verify_reminder,
     "create_event": verify_event,
     "write_file": verify_file,
+    "delete_file": verify_delete,
 }
 
 

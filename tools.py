@@ -25,6 +25,7 @@ from mac_agent import (
     add_reminder,
     create_event,
     create_note,
+    delete_file,
     list_dir,
     open_app,
     read_calendar,
@@ -42,6 +43,7 @@ MAC_FNS = {
     "list_dir": list_dir,
     "read_file": read_file,
     "write_file": write_file,
+    "delete_file": delete_file,
 }
 _MAC_SCHEMA_BY_NAME = {s["function"]["name"]: s for s in MAC_SCHEMAS}
 
