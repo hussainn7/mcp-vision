@@ -62,6 +62,13 @@ class Config(BaseSettings):
     # endpoint. Empty = auto-detect per platform (see playwright_tools.find_chrome).
     chrome_path: Optional[str] = None
 
+    # Browser user data directory. Default is ~/.mcp-vision/browser_profile (persistent).
+    # Can point to a custom path or your main browser dir (e.g. ~/Library/Application Support/Google/Chrome).
+    chrome_user_data_dir: Optional[str] = None
+
+    # Profile directory name inside user-data-dir (e.g. "Default", "Profile 1", "Profile 2").
+    chrome_profile_directory: Optional[str] = None
+
     # When a structured click is blocked by an overlay, crop a thumbnail around
     # the element and let the vision model point at it. Set False to fail fast
     # instead (a failed click then reports "occluded" and the agent moves on).

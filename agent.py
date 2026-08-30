@@ -271,6 +271,18 @@ def _parse_argv(argv):
         name = argv[i + 1].lower()
         backend = MODEL_ALIASES.get(name, name)
         argv = argv[:i] + argv[i + 2:]
+    if "--profile" in argv:
+        i = argv.index("--profile")
+        cfg.chrome_profile_directory = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
+    elif "--profile-directory" in argv:
+        i = argv.index("--profile-directory")
+        cfg.chrome_profile_directory = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
+    if "--user-data-dir" in argv:
+        i = argv.index("--user-data-dir")
+        cfg.chrome_user_data_dir = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
     if "--tui" in argv:
         tui = True
         argv = [a for a in argv if a != "--tui"]
@@ -301,6 +313,8 @@ def demo():
     assert _parse_argv(["just", "a", "task"]) == ("general", None, False, "just a task")
     assert _parse_argv(["--model", "claude", "--as", "general", "hi"]) == ("general", "anthropic", False, "hi")
     assert _parse_argv(["--model", "gpt", "hi"]) == ("general", "openai", False, "hi")
+    assert _parse_argv(["--profile", "Profile 1", "hi"]) == ("general", None, False, "hi")
+    assert cfg.chrome_profile_directory == "Profile 1"
     assert _parse_argv(["--tui", "--as", "general", "hi"]) == ("general", None, True, "hi")
 
     import judge as judge_mod

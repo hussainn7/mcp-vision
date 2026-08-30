@@ -230,13 +230,30 @@ class PlaywrightManager:
                         return False
 
                     import subprocess
-                    import tempfile
                     _, port = split_endpoint(self.cdp_endpoint)
-                    profile = os.path.join(tempfile.gettempdir(), "agent_browser_profile")
-                    logger.info(f"Nothing on {self.cdp_endpoint}; launching {browser_path}")
+                    
+                    user_data_dir = getattr(cfg, "chrome_user_data_dir", None)
+                    if user_data_dir:
+                        profile_dir = os.path.expanduser(user_data_dir)
+                    else:
+                        profile_dir = os.path.expanduser("~/.mcp-vision/browser_profile")
+                    os.makedirs(profile_dir, exist_ok=True)
+
+                    launch_args = [
+                        browser_path,
+                        f"--remote-debugging-port={port}",
+                        f"--user-data-dir={profile_dir}",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                    ]
+                    profile_name = getattr(cfg, "chrome_profile_directory", None)
+                    if profile_name:
+                        launch_args.append(f"--profile-directory={profile_name}")
+
+                    prof_info = f" (profile: {profile_name})" if profile_name else ""
+                    logger.info(f"Nothing on {self.cdp_endpoint}; launching {browser_path} with user-data-dir={profile_dir}{prof_info}")
                     self._proc = subprocess.Popen(
-                        [browser_path, f"--remote-debugging-port={port}",
-                         f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check"],
+                        launch_args,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     )
 
