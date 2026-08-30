@@ -193,6 +193,12 @@ def run_suite(suite_path=SUITE_DEFAULT, live=False, out_root=None):
         note = "; ".join(r["failures"])[:60]
         print(f"{r['name']:<36} {mark:<4} {r['dur_s']:<7} {note}")
     print(f"\n{n_pass}/{len(results)} passed · report: {out_dir / 'report.json'}")
+    try:
+        from bench.html_report import generate_html
+        html_path = generate_html()
+        print(f"HTML dashboard generated · {html_path}")
+    except Exception:
+        pass
     return report
 
 

@@ -56,14 +56,14 @@ def _urllib_post(url, headers, body, timeout):
         url, data=data, method="POST",
         headers={**headers, "Content-Type": "application/json"},
     )
-    max_retries = 3
+    max_retries = 5
     for attempt in range(max_retries):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
             if e.code in (429, 503) and attempt < max_retries - 1:
-                time.sleep(1.5 * (attempt + 1))
+                time.sleep(2.0 * (attempt + 1))
                 continue
             raise BackendError(f"HTTP {e.code} from {url}: {e.read().decode()[:500]}")
         except urllib.error.URLError as e:
