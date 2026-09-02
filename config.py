@@ -69,6 +69,10 @@ class Config(BaseSettings):
     # Profile directory name inside user-data-dir (e.g. "Default", "Profile 1", "Profile 2").
     chrome_profile_directory: Optional[str] = None
 
+    # native = AppleScript/extension (no automation banner). cdp = DevTools attach.
+    chrome_backend: str = "native"
+    chrome_isolated: bool = False
+
     # When a structured click is blocked by an overlay, crop a thumbnail around
     # the element and let the vision model point at it. Set False to fail fast
     # instead (a failed click then reports "occluded" and the agent moves on).

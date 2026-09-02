@@ -33,6 +33,21 @@ def install(command: str | None) -> None:
 
 
 @cli.command()
+def connect() -> None:
+    """Use your real Chrome without the automation banner (no CDP)."""
+    from phase2_mcp import chrome_native as cn
+
+    cn.ensure_chrome()
+    if sys.platform == "darwin":
+        click.echo("Using your installed Chrome via AppleScript.")
+        click.echo("No DevTools attach — Google will not see webdriver / the automation infobar.")
+        return
+    cn.get_relay()
+    click.echo(cn.install_hint())
+    click.echo("Leave this terminal open, then run the agent.")
+
+
+@cli.command()
 def doctor() -> None:
     """Check display permissions, accessibility, and local backends."""
     from mcp_vision.utils.doctor import run_doctor

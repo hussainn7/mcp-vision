@@ -48,28 +48,42 @@ MAC_FNS = {
 _MAC_SCHEMA_BY_NAME = {s["function"]["name"]: s for s in MAC_SCHEMAS}
 
 
-# --- browser tools (thin wrappers over phase2_mcp, DOM/role based) -----------
-# All require Chrome started with --remote-debugging-port=9222; if it's not up
-# the wrappers return an "ERROR: ..." string the model can react to.
+# Browser tools: native Chrome (AppleScript / extension) first so Google
+# does not see CDP/webdriver. CDP is opt-in via SCREEN_AGENT_CHROME_BACKEND=cdp.
+
+def _web(name, *args, **kwargs):
+    from phase2_mcp import chrome_native as cn
+    if cn.prefer() and hasattr(cn, name):
+        return getattr(cn, name)(*args, **kwargs)
+    return getattr(pt, name)(*args, **kwargs)
+
 
 def web_navigate(url):
-    return pt.navigate(url)
+    return _web("navigate", url)
+
+
+def web_list_tabs():
+    return _web("list_tabs")
+
+
+def web_switch_tab(target):
+    return _web("switch_tab", str(target))
 
 
 def web_read():
-    return pt.get_page_text()
+    return _web("get_page_text")
 
 
 def web_snapshot():
-    return pt.snapshot()
+    return _web("snapshot")
 
 
 def web_click(index):
-    return pt.click_index(index)
+    return _web("click_index", index)
 
 
 def web_type_into(index, text):
-    return pt.type_into_index(index, text)
+    return _web("type_into_index", index, text)
 
 
 def web_click_text(text):
@@ -85,12 +99,11 @@ def web_type(text):
 
 
 def web_press(key):
-    # ponytail: Enter here can submit a form; gate as dangerous if that bites.
-    return pt.press_key(key)
+    return _web("press_key", key)
 
 
 def web_scroll(direction="down", clicks=3):
-    return pt.scroll(direction, clicks)
+    return _web("scroll", direction, clicks)
 
 
 def take_screenshot(path="~/Desktop/screenshot.png"):
@@ -161,7 +174,9 @@ _STR = {"type": "string"}
 _INT = {"type": "integer"}
 
 WEB_SCHEMAS = {
-    "web_navigate": _fn("web_navigate", "Open a URL in the attached Chrome.", ["url"], {"url": _STR}),
+    "web_navigate": _fn("web_navigate", "Open a URL or switch to an existing tab in the attached Chrome.", ["url"], {"url": _STR}),
+    "web_list_tabs": _fn("web_list_tabs", "List all currently open tabs in Chrome.", [], {}),
+    "web_switch_tab": _fn("web_switch_tab", "Switch active tab by title, URL keyword, or index.", ["target"], {"target": _STR}),
     "web_read": _fn("web_read", "Read the main text content of the current page.", [], {}),
     "web_snapshot": _fn("web_snapshot", "List the elements on the page that can actually be clicked or typed into, each with an [index], role and label. Anything hidden behind an overlay is left out. Call this before web_click/web_type_into, and again after the page changes.", [], {}),
     "web_click": _fn("web_click", "Click the element with this index from the latest web_snapshot.", ["index"], {"index": _INT}),
@@ -176,7 +191,8 @@ WEB_SCHEMAS = {
 }
 
 WEB_FNS = {
-    "web_navigate": web_navigate, "web_read": web_read,
+    "web_navigate": web_navigate, "web_list_tabs": web_list_tabs, "web_switch_tab": web_switch_tab,
+    "web_read": web_read,
     "web_snapshot": web_snapshot, "web_click": web_click, "web_type_into": web_type_into,
     "web_click_text": web_click_text, "web_click_role": web_click_role,
     "web_type": web_type, "web_press": web_press, "web_scroll": web_scroll,

@@ -260,11 +260,46 @@ MODEL_ALIASES = {"claude": "anthropic", "gpt": "openai", "chatgpt": "openai",
                  "nim": "nvidia", "ollama": "local"}
 
 
+def _is_browser_task(prompt: str) -> bool:
+    """Detect if a user prompt is inherently a web/browser task."""
+    p = (prompt or "").lower()
+    browser_keywords = (
+        "gmail", "google.com", "github", "linkedin", "slack", "amazon",
+        "browse", "browser", "website", "web page", "webpage", "url",
+        "http://", "https://", "search online", "look online", "find online",
+        "navigate to", "open tab", "chrome tab", "read the page",
+        "youtube", "twitter", "reddit", "facebook", "instagram"
+    )
+    return any(k in p for k in browser_keywords)
+
+
 def _parse_argv(argv):
-    specialist, backend, tui = "general", None, False
+    from phase2_mcp.chrome_profiles import (
+        extract_profile_from_prompt,
+        get_default_chrome_user_data_dir,
+        list_profiles,
+        resolve_profile,
+    )
+    specialist, backend, tui = None, None, False
+    explicit_specialist = False
+
+    if "--list-profiles" in argv:
+        base = Path(cfg.chrome_user_data_dir) if cfg.chrome_user_data_dir else get_default_chrome_user_data_dir()
+        profiles = list_profiles(base)
+        print("\nChrome profiles (identity for live attach, not a launch directory):")
+        print("=" * 60)
+        for dir_name, p in profiles.items():
+            email_info = f" ({p['email']})" if p["email"] else ""
+            print(f"  • {p['name']}{email_info}  [{dir_name}]")
+        print("=" * 60)
+        print("Default: attach to running Chrome via chrome://inspect/#remote-debugging")
+        print("Isolated fallback: SCREEN_AGENT_CHROME_ISOLATED=true\n")
+        sys.exit(0)
+
     if "--as" in argv:
         i = argv.index("--as")
         specialist = argv[i + 1]
+        explicit_specialist = True
         argv = argv[:i] + argv[i + 2:]
     if "--model" in argv:
         i = argv.index("--model")
@@ -286,7 +321,25 @@ def _parse_argv(argv):
     if "--tui" in argv:
         tui = True
         argv = [a for a in argv if a != "--tui"]
-    return specialist, backend, tui, " ".join(argv)
+
+    task_str = " ".join(argv)
+    if not cfg.chrome_profile_directory and task_str:
+        extracted = extract_profile_from_prompt(task_str)
+        if extracted:
+            cfg.chrome_profile_directory = extracted
+
+    if cfg.chrome_profile_directory:
+        base = Path(cfg.chrome_user_data_dir) if cfg.chrome_user_data_dir else get_default_chrome_user_data_dir()
+        resolved_dir, _ = resolve_profile(cfg.chrome_profile_directory, base)
+        cfg.chrome_profile_directory = resolved_dir
+
+    if not explicit_specialist:
+        if _is_browser_task(task_str) or cfg.chrome_profile_directory:
+            specialist = "coworker"
+        else:
+            specialist = "general"
+
+    return specialist, backend, tui, task_str
 
 
 def scripted_chat(responses):
@@ -313,7 +366,7 @@ def demo():
     assert _parse_argv(["just", "a", "task"]) == ("general", None, False, "just a task")
     assert _parse_argv(["--model", "claude", "--as", "general", "hi"]) == ("general", "anthropic", False, "hi")
     assert _parse_argv(["--model", "gpt", "hi"]) == ("general", "openai", False, "hi")
-    assert _parse_argv(["--profile", "Profile 1", "hi"]) == ("general", None, False, "hi")
+    assert _parse_argv(["--profile", "Profile 1", "--as", "general", "hi"]) == ("general", None, False, "hi")
     assert cfg.chrome_profile_directory == "Profile 1"
     assert _parse_argv(["--tui", "--as", "general", "hi"]) == ("general", None, True, "hi")
 
@@ -354,11 +407,11 @@ def demo():
 
         # allowlist enforcement: a tool outside the specialist errors cleanly
         chat2 = scripted_chat([
-            {"tool_calls": [{"function": {"name": "web_navigate", "arguments": {"url": "x.com"}}}]},
+            {"tool_calls": [{"function": {"name": "non_existent_or_unallowed_tool", "arguments": {"foo": "bar"}}}]},
             {"content": "gave up"},
             {"content": "yes"},
         ])
-        run("navigate somewhere", specialist="general", chat=chat2,
+        run("do unallowed action", specialist="general", chat=chat2,
             trace_dir=trace_dir, max_steps=4)
         newest = max(trace_dir.glob("run_*.jsonl"), key=lambda p: p.stat().st_mtime)
         events2 = load_trace(newest)

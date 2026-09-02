@@ -8,6 +8,7 @@ actually changed the world, and pick the next compensatory strategy.
 from __future__ import annotations
 
 import re
+from phase2_mcp.auth_detector import AuthChallenge, detect_auth_challenge
 
 UI_TOOLS = {
     "web_click", "web_type_into", "web_navigate", "web_press", "web_scroll",

@@ -11,6 +11,7 @@ reliable here: it only has to decide *what*, the OS handles *where*.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time

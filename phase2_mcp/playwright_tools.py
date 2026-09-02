@@ -1,22 +1,17 @@
 r"""
 Browser control for the agent: attach over CDP, read, and act.
 
-Attaches to a browser already running with --remote-debugging-port=9222 (so it
-uses your real, logged-in session); if nothing is listening it launches a
-Chromium-family browser with a throwaway profile. See find_chrome() for the
-per-platform lookup, or set SCREEN_AGENT_CHROME_PATH.
-
-What the model sees and does is decided by the browser, not guessed:
-  - page_snapshot.py turns the page into role + accessible name, drops anything
-    an overlay is covering, and records a verified click point per element;
-  - clicks are real mouse clicks at those verified points;
-  - micro_vision.py is the last resort, pointing at a small cropped thumbnail.
+Default: attach to the user's real Chrome (Chrome 144+ live session).
+Open Chrome natively, enable chrome://inspect/#remote-debugging, then connect
+to the WebSocket in DevToolsActivePort. Isolated --user-data-dir launch is
+opt-in (SCREEN_AGENT_CHROME_ISOLATED=true).
 """
 
 import asyncio
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -188,6 +183,58 @@ def find_chrome(configured=None, platform=None, exists=os.path.exists, which=shu
     return None
 
 
+def chrome_is_running() -> bool:
+    """True if a Chromium-family browser main process appears to be running."""
+    if sys.platform == "darwin":
+        for name in ("Google Chrome", "Chromium", "Microsoft Edge", "Brave Browser"):
+            if subprocess.run(["pgrep", "-x", name], capture_output=True).returncode == 0:
+                return True
+        return False
+    return subprocess.run(["pgrep", "-f", "chrome"], capture_output=True).returncode == 0
+
+
+def quit_chrome(timeout_s: float = 12.0) -> bool:
+    """Quit Chrome gracefully; force-kill if it does not exit in time."""
+    if not chrome_is_running():
+        return True
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["osascript", "-e", 'tell application "Google Chrome" to quit'],
+            capture_output=True,
+        )
+    else:
+        subprocess.run(["pkill", "-f", "chrome"], capture_output=True)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if not chrome_is_running():
+            return True
+        time.sleep(0.3)
+    if sys.platform == "darwin":
+        subprocess.run(["pkill", "-x", "Google Chrome"], capture_output=True)
+    else:
+        subprocess.run(["pkill", "-9", "-f", "chrome"], capture_output=True)
+    time.sleep(0.5)
+    return not chrome_is_running()
+
+
+def build_chrome_launch_args(
+    browser_path: str,
+    port: int,
+    profile_dir: Path,
+    profile_dir_name: Optional[str] = None,
+) -> list[str]:
+    launch_args = [
+        browser_path,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    if profile_dir_name:
+        launch_args.append(f"--profile-directory={profile_dir_name}")
+    return launch_args
+
+
 class PlaywrightManager:
     def __init__(self, cdp_endpoint: str | None = None):
         from config import cfg
@@ -202,6 +249,91 @@ class PlaywrightManager:
         self.elements = {}          # index -> full element record, latest snapshot
         self.viewport = None        # Viewport from the last snapshot
         self.snapshot_source = "dom"
+        self.last_start_error: Optional[str] = None
+
+    async def _launch_chrome_and_connect(
+        self,
+        browser_path: str,
+        port: int,
+        profile_dir: Path,
+        profile_dir_name: Optional[str],
+        profile_display: Optional[str],
+        wait_rounds: int = 24,
+    ) -> tuple[bool, bool]:
+        """Launch Chrome with CDP and connect. Returns (ok, delegated_to_existing)."""
+        import subprocess
+
+        launch_args = build_chrome_launch_args(browser_path, port, profile_dir, profile_dir_name)
+        prof_info = f" (profile: {profile_display} -> {profile_dir_name})" if profile_dir_name else ""
+        logger.info(
+            f"Launching {browser_path} with user-data-dir={profile_dir}{prof_info} "
+            f"on port {port}"
+        )
+        self._proc = subprocess.Popen(
+            launch_args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        ready = False
+        for _ in range(wait_rounds):
+            await asyncio.sleep(0.5)
+            if await cdp_listening(self.cdp_endpoint):
+                ready = True
+                break
+        if not ready:
+            delegated = self._proc.poll() is not None
+            if self._proc and self._proc.poll() is None:
+                try:
+                    self._proc.terminate()
+                    self._proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        self._proc.kill()
+                    except Exception:
+                        pass
+            self._proc = None
+            return False, delegated
+
+        self.browser = await self.playwright.chromium.connect_over_cdp(
+            self.cdp_endpoint, timeout=10000)
+        self._owns_browser = True
+        logger.info("Attached to the launched browser")
+        return True, False
+
+    async def _connect_over_ws(self, ws: str, timeout: int = 60000) -> bool:
+        """Direct WebSocket CDP (Puppeteer-style). Skip HTTP /json/version."""
+        try:
+            logger.info(f"Connecting over CDP websocket {ws}")
+            self.browser = await self.playwright.chromium.connect_over_cdp(ws, timeout=timeout)
+            self._owns_browser = False
+            return True
+        except Exception as e:
+            logger.warning(f"websocket CDP connect failed: {e}")
+            self.browser = None
+            return False
+
+    async def _connect_live_session(self) -> bool:
+        from phase2_mcp.chrome_bridge import request_live_session, websocket_endpoint
+        from phase2_mcp.chrome_profiles import get_default_chrome_user_data_dir
+
+        base = get_default_chrome_user_data_dir()
+        ws = websocket_endpoint(base)
+        if ws and await self._connect_over_ws(ws, timeout=20000):
+            return True
+        print(
+            "\nChrome 136+ blocks --remote-debugging-port on your daily profile.\n"
+            "Connecting the supported way: native Chrome + chrome://inspect/#remote-debugging.\n",
+            file=sys.stderr,
+        )
+        ws = request_live_session(base)
+        if not ws:
+            self.last_start_error = (
+                "No DevToolsActivePort yet. In Chrome open chrome://inspect/#remote-debugging, "
+                "enable Remote debugging, click Allow, then retry."
+            )
+            return False
+        return await self._connect_over_ws(ws, timeout=60000)
 
     async def start(self) -> bool:
         if not HAS_PLAYWRIGHT:
@@ -213,74 +345,54 @@ class PlaywrightManager:
             if self.browser is not None:
                 return True
 
+            self.last_start_error = None
             try:
                 self.playwright = await async_playwright().start()
+                from phase2_mcp.chrome_bridge import websocket_endpoint
+                from phase2_mcp.chrome_profiles import get_default_chrome_user_data_dir
 
-                if await cdp_listening(self.cdp_endpoint):
-                    logger.info(f"Attaching to the browser on {self.cdp_endpoint}")
-                    self.browser = await self.playwright.chromium.connect_over_cdp(
-                        self.cdp_endpoint, timeout=10000)
-                else:
-                    browser_path = find_chrome(getattr(cfg, "chrome_path", None))
-                    if not browser_path:
-                        logger.error(
-                            "No Chromium-family browser found. Start one with "
-                            "--remote-debugging-port=9222, or set SCREEN_AGENT_CHROME_PATH."
+                connected = False
+                ws = websocket_endpoint(get_default_chrome_user_data_dir())
+                if ws:
+                    connected = await self._connect_over_ws(ws, timeout=20000)
+
+                if not connected and await cdp_listening(self.cdp_endpoint):
+                    try:
+                        logger.info(f"Attaching via HTTP CDP {self.cdp_endpoint}")
+                        self.browser = await self.playwright.chromium.connect_over_cdp(
+                            self.cdp_endpoint, timeout=10000)
+                        connected = True
+                    except Exception as e:
+                        logger.debug(f"HTTP CDP attach failed (expected on inspect-only port): {e}")
+                        self.browser = None
+
+                if not connected:
+                    if getattr(cfg, "chrome_isolated", False):
+                        browser_path = find_chrome(getattr(cfg, "chrome_path", None))
+                        if not browser_path:
+                            self.last_start_error = "No Chromium-family browser found."
+                            return False
+                        from phase2_mcp.chrome_profiles import get_launch_user_data_dir
+                        _, port = split_endpoint(self.cdp_endpoint)
+                        profile_dir, profile_display, profile_dir_name = get_launch_user_data_dir(
+                            getattr(cfg, "chrome_user_data_dir", None),
+                            getattr(cfg, "chrome_profile_directory", None),
                         )
-                        return False
-
-                    import subprocess
-                    _, port = split_endpoint(self.cdp_endpoint)
-                    
-                    user_data_dir = getattr(cfg, "chrome_user_data_dir", None)
-                    if user_data_dir:
-                        profile_dir = os.path.expanduser(user_data_dir)
+                        os.makedirs(profile_dir, exist_ok=True)
+                        ok, _ = await self._launch_chrome_and_connect(
+                            browser_path, port, profile_dir, profile_dir_name, profile_display)
+                        connected = ok
                     else:
-                        profile_dir = os.path.expanduser("~/.mcp-vision/browser_profile")
-                    os.makedirs(profile_dir, exist_ok=True)
+                        connected = await self._connect_live_session()
 
-                    launch_args = [
-                        browser_path,
-                        f"--remote-debugging-port={port}",
-                        f"--user-data-dir={profile_dir}",
-                        "--no-first-run",
-                        "--no-default-browser-check",
-                    ]
-                    profile_name = getattr(cfg, "chrome_profile_directory", None)
-                    if profile_name:
-                        launch_args.append(f"--profile-directory={profile_name}")
-
-                    prof_info = f" (profile: {profile_name})" if profile_name else ""
-                    logger.info(f"Nothing on {self.cdp_endpoint}; launching {browser_path} with user-data-dir={profile_dir}{prof_info}")
-                    self._proc = subprocess.Popen(
-                        launch_args,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                if not connected:
+                    self.last_start_error = self.last_start_error or (
+                        "Could not attach to Chrome. Open chrome://inspect/#remote-debugging, "
+                        "enable Remote debugging, click Allow, then retry."
                     )
-
-                    ready = False
-                    for _ in range(20):  # ~10s, probing a port rather than stalling on connect
-                        await asyncio.sleep(0.5)
-                        if await cdp_listening(self.cdp_endpoint):
-                            ready = True
-                            break
-                    if not ready:
-                        # On macOS, launching the binary while that browser is
-                        # already running just hands off to the running copy and
-                        # exits, so the debug port never opens. Say so plainly —
-                        # this is the one case the user has to resolve.
-                        delegated = self._proc.poll() is not None
-                        logger.error(
-                            f"Launched {browser_path} but nothing is listening on {self.cdp_endpoint}."
-                            + (" It handed off to an already-running browser; quit that browser and"
-                               " retry, or start it yourself with --remote-debugging-port."
-                               if delegated else "")
-                        )
-                        return False
-
-                    self.browser = await self.playwright.chromium.connect_over_cdp(
-                        self.cdp_endpoint, timeout=10000)
-                    self._owns_browser = True
-                    logger.info("Attached to the launched browser")
+                    logger.error(self.last_start_error)
+                    await self._teardown()
+                    return False
 
                 self.page = await asyncio.wait_for(self._acquire_page(), timeout=20)
                 if self.page is None:
@@ -295,26 +407,83 @@ class PlaywrightManager:
                 await self._teardown()
                 return False
 
-    async def _acquire_page(self):
-        """Get a usable page from an attached browser.
+    def _all_pages(self) -> list:
+        if not self.browser:
+            return []
+        pages = []
+        for ctx in self.browser.contexts:
+            for p in ctx.pages:
+                if not p.is_closed():
+                    pages.append(p)
+        return pages
 
-        A CDP-attached browser only ever has its default context, and it can
-        legitimately have zero tabs (every window closed). new_context() is not
-        supported on that connection and will hang, so reuse the existing
-        context and open a tab in it; only fall back to new_context() when the
-        browser genuinely reports none.
-        """
+    async def list_tabs(self):
+        """List all open pages across every attached context."""
+        live = self._all_pages()
+        res = []
+        for i, p in enumerate(live):
+            try:
+                title = await p.title()
+            except Exception:
+                title = ""
+            res.append({
+                "index": i,
+                "url": p.url,
+                "title": title,
+                "active": p == self.page,
+            })
+        return res
+
+    async def find_tab_by_url_or_title(self, target: str) -> Optional[Page]:
+        """Find an open tab matching a domain, URL substring, or title keyword."""
+        from phase2_mcp.tab_router import match_tab
+        live = self._all_pages()
+        tabs = []
+        for p in live:
+            try:
+                title = await p.title()
+            except Exception:
+                title = ""
+            tabs.append({"url": p.url, "title": title})
+        idx = match_tab(tabs, target)
+        if idx is None:
+            return None
+        return live[idx]
+
+    async def switch_to_tab(self, target: str | int) -> bool:
+        """Switch current active page to a specific tab index, URL, or title."""
+        live = self._all_pages()
+        if isinstance(target, int) or (isinstance(target, str) and str(target).isdigit()):
+            idx = int(target)
+            if 0 <= idx < len(live):
+                self.page = live[idx]
+                await self.page.bring_to_front()
+                return True
+            return False
+
+        tab = await self.find_tab_by_url_or_title(str(target))
+        if tab:
+            self.page = tab
+            await self.page.bring_to_front()
+            return True
+        return False
+
+    async def _acquire_page(self):
+        """Get a usable page from an attached browser."""
+        live = self._all_pages()
+        if live:
+            logger.info(f"Discovered {len(live)} open tab(s) in attached browser")
+            return live[0]
         contexts = self.browser.contexts
-        if contexts:
-            context = contexts[0]
-        else:
+        if not contexts:
             try:
                 context = await self.browser.new_context()
             except Exception as e:
                 logger.debug(f"new_context unsupported on this connection: {e}")
                 return None
-        live = [p for p in context.pages if not p.is_closed()]
-        return live[0] if live else await context.new_page()
+        else:
+            context = contexts[0]
+        return await context.new_page()
 
     async def stop(self):
         async with self._lock:
@@ -364,41 +533,109 @@ class PlaywrightManager:
         try:
             if "://" not in url:
                 url = "https://" + url
+
+            from phase2_mcp.tab_router import decide_route
+            live = self._all_pages()
+            tabs = []
+            for p in live:
+                try:
+                    title = await p.title()
+                except Exception:
+                    title = ""
+                tabs.append({"url": p.url, "title": title})
+            cur = live.index(self.page) if self.page in live else 0
+            route = decide_route(tabs, url, current_index=cur)
+
+            if route.action == "reuse" and route.index is not None:
+                tab = live[route.index]
+                logger.info(f"Reusing tab [{route.index}] {tab.url}")
+                self.page = tab
+                await self.page.bring_to_front()
+                if self.page.url == url or url.rstrip("/") in (self.page.url or ""):
+                    return True
+                await self.page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+                return True
+
+            if route.action == "new_tab":
+                ctx = self.page.context if self.page else (self.browser.contexts[0] if self.browser.contexts else None)
+                if ctx is None:
+                    return False
+                logger.info(f"Opening new tab for {url} (keeping current session intact)")
+                self.page = await ctx.new_page()
+                self.page.set_default_timeout(10000)
+
+            await self.page.bring_to_front()
             await self.page.goto(url, timeout=timeout, wait_until="domcontentloaded")
             return True
         except Exception as e:
             logger.debug(f"Playwright navigate failed: {e}")
             return False
 
+    async def _ax_snapshot(self, max_elements: int = 60):
+        """Accessibility.getFullAXTree + box model. No full-screen image."""
+        from phase2_mcp.ax_tree import box_model_to_rect, flatten_ax_nodes
+        try:
+            cdp = await self.page.context.new_cdp_session(self.page)
+            await cdp.send("Accessibility.enable")
+            await cdp.send("DOM.enable")
+            raw = await cdp.send("Accessibility.getFullAXTree")
+            sketched = flatten_ax_nodes(raw.get("nodes") or [], max_elements=max_elements * 2)
+            els = []
+            for n in sketched:
+                backend = n.get("backendDOMNodeId")
+                if not backend:
+                    continue
+                try:
+                    model = await cdp.send("DOM.getBoxModel", {"backendNodeId": backend})
+                except Exception:
+                    continue
+                rect = box_model_to_rect(model.get("model") or model)
+                if not rect:
+                    continue
+                els.append({
+                    "index": len(els),
+                    "role": n["role"],
+                    "name": n["name"],
+                    **rect,
+                })
+                if len(els) >= max_elements:
+                    break
+            try:
+                await cdp.detach()
+            except Exception:
+                pass
+            return els
+        except Exception as e:
+            logger.debug(f"AX tree snapshot failed: {e}")
+            return []
+
     async def snapshot(self, max_elements: int = 60):
-        """Semantic, occlusion-pruned snapshot of what can actually be clicked."""
+        """Numbered interactive controls from AX tree, then DOM."""
         if not await self.is_running():
             return None
-        # A client-rendered page paints an empty shell first; interactive
-        # elements only exist after hydration/layout. Retry before concluding
-        # the page is genuinely empty.
+        els = await self._ax_snapshot(max_elements)
+        source = "ax"
         snap = None
-        for attempt in range(3):
-            try:
-                snap = await self.page.evaluate(SNAPSHOT_JS, max_elements)
-            except Exception as e:
-                # A broken snapshot script looks exactly like an empty page, so
-                # this is worth a real warning rather than a debug line.
-                logger.warning(f"snapshot script failed: {e}")
-                snap = None
-            if snap and snap.get("elements"):
-                break
-            if attempt < 2:
-                await asyncio.sleep(1.0)
-        els = (snap or {}).get("elements") or []
-        self.snapshot_source = "dom"
+        if not els:
+            for attempt in range(3):
+                try:
+                    snap = await self.page.evaluate(SNAPSHOT_JS, max_elements)
+                except Exception as e:
+                    logger.warning(f"snapshot script failed: {e}")
+                    snap = None
+                if snap and snap.get("elements"):
+                    break
+                if attempt < 2:
+                    await asyncio.sleep(1.0)
+            els = (snap or {}).get("elements") or []
+            source = "dom"
+
+        metrics = None
         try:
             metrics = await self.page.evaluate(VIEWPORT_METRICS_JS)
             size = self.page.viewport_size or {}
             shot = (size.get("width"), size.get("height")) if size.get("width") else None
             self.viewport = from_browser(metrics, shot)
-            if snap is not None:
-                snap["viewport"] = metrics
         except Exception as e:
             logger.debug(f"viewport metrics failed: {e}")
 
@@ -406,9 +643,12 @@ class PlaywrightManager:
             vis = await self._visual_fallback()
             if vis:
                 els = vis
-                snap = {**(snap or {}), "elements": els, "source": "visual"}
-                self.snapshot_source = "visual"
+                source = "visual"
 
+        snap = {**(snap or {}), "elements": els, "source": source}
+        if metrics:
+            snap["viewport"] = metrics
+        self.snapshot_source = source
         self.index_labels = {e["index"]: e.get("name", "") for e in els}
         self.elements = {e["index"]: e for e in els}
         return snap
@@ -468,18 +708,18 @@ class PlaywrightManager:
         return False, how + "-noop"
 
     async def click_index(self, index: int, timeout: int = 8000):
-        """Click an element from the last snapshot. Returns (ok, how).
-
-        After every click, fingerprint the page. A mouse event that hits a
-        modal scrim and changes nothing is a failed action, not a success —
-        we then try scroll-into-center, Escape (dismiss overlay), and
-        micro-vision, in that order.
-        """
+        """Click an element from the last snapshot. Returns (ok, how)."""
         if not await self.is_running():
             return False, "no browser"
-        sel = f'[data-agent-index="{index}"]'
+        rec = self.elements.get(index) or {}
         before = await self.fingerprint()
 
+        if rec.get("cx") is not None and rec.get("cy") is not None:
+            ok, how = await self._click_and_verify(rec["cx"], rec["cy"], before, "ax-click")
+            if ok:
+                return True, how
+
+        sel = f'[data-agent-index="{index}"]'
         hit = await self._reachable(sel)
         if hit:
             ok, how = await self._click_and_verify(hit["cx"], hit["cy"], before, "click")
@@ -510,11 +750,8 @@ class PlaywrightManager:
             if ok:
                 return True, how
 
-        if await self._micro_vision_click(sel, index):
-            after = await self.fingerprint()
-            if did_state_change(before, after):
-                return True, "micro-vision"
-            return False, "micro-vision-noop"
+        if rec.get("cx") is not None:
+            return False, "ax-noop"
         return False, "occluded"
 
     async def _micro_vision_click(self, sel, index):
@@ -681,24 +918,108 @@ def navigate(url: str) -> str:
     if not HAS_PLAYWRIGHT:
         return "ERROR: Playwright not available"
 
+    from phase2_mcp.auth_detector import detect_auth_challenge, handle_auth_pause
+
     async def _nav():
         if not await _ensure_playwright_started():
-            return False
-        return await _get_playwright_manager().navigate(url)
+            return False, "start_failed"
+        mgr = _get_playwright_manager()
+        ok = await mgr.navigate(url)
+        if not ok:
+            return False, "nav_failed"
+        
+        # Check if landed on an auth challenge
+        try:
+            cur_url = mgr.page.url
+            cur_title = await mgr.page.title()
+            cur_text = await mgr.get_page_text() or ""
+            challenge = detect_auth_challenge(cur_url, cur_title, cur_text)
+            if challenge:
+                auth_ok = handle_auth_pause(challenge, page=mgr.page)
+                if auth_ok:
+                    return True, f"auth_completed:{challenge.service}"
+                return False, f"auth_cancelled:{challenge.service}"
+        except Exception as e:
+            logger.debug(f"auth check failed: {e}")
+        return True, "ok"
 
-    if _run_async(_nav()):
+    ok, status = _run_async(_nav())
+    if ok:
+        if status.startswith("auth_completed:"):
+            service = status.split(":", 1)[1]
+            return f"Navigated to {url}. [AUTH_COMPLETED: User successfully authenticated to {service}]"
         return f"Navigated to {url}"
-    return f"ERROR: Failed to navigate to {url} (is Chrome running with --remote-debugging-port=9222?)"
+    if status.startswith("auth_cancelled:"):
+        service = status.split(":", 1)[1]
+        return f"AUTH_REQUIRED: Task paused because {service} login was required, but authentication was cancelled."
+    if status == "start_failed":
+        mgr = _get_playwright_manager()
+        detail = mgr.last_start_error or "Could not start or attach to Chrome."
+        return f"CHROME_ATTACH_FAILED: {detail}"
+    return f"ERROR: Failed to navigate to {url}"
+
+
+def list_tabs() -> str:
+    if not HAS_PLAYWRIGHT:
+        return "ERROR: Playwright not available"
+
+    async def _list():
+        if not await _ensure_playwright_started():
+            return "ERROR: Browser not running or cannot attach"
+        mgr = _get_playwright_manager()
+        tabs = await mgr.list_tabs()
+        if not tabs:
+            return "No tabs open."
+        out = [f"Found {len(tabs)} open tab(s):"]
+        for t in tabs:
+            cur = " (current)" if t["active"] else ""
+            out.append(f"  [{t['index']}] {t['title']} - {t['url']}{cur}")
+        return "\n".join(out)
+
+    return _run_async(_list())
+
+
+def switch_tab(target: str) -> str:
+    if not HAS_PLAYWRIGHT:
+        return "ERROR: Playwright not available"
+
+    async def _switch():
+        if not await _ensure_playwright_started():
+            return "ERROR: Browser not running or cannot attach"
+        mgr = _get_playwright_manager()
+        ok = await mgr.switch_to_tab(target)
+        if ok:
+            title = await mgr.page.title() if mgr.page else ""
+            return f"Switched to tab: {title} ({mgr.page.url if mgr.page else ''})"
+        return f"ERROR: No tab matching '{target}' found"
+
+    return _run_async(_switch())
 
 
 def snapshot() -> str:
     if not HAS_PLAYWRIGHT:
         return "ERROR: Playwright not available"
 
+    from phase2_mcp.auth_detector import detect_auth_challenge, handle_auth_pause
+
     async def _snap():
         if not await _ensure_playwright_started():
             return None
-        return await _get_playwright_manager().snapshot()
+        mgr = _get_playwright_manager()
+        snap = await mgr.snapshot()
+        if snap and mgr.page:
+            try:
+                cur_url = mgr.page.url
+                cur_title = await mgr.page.title()
+                elements = snap.get("elements", [])
+                challenge = detect_auth_challenge(cur_url, cur_title, "", elements)
+                if challenge:
+                    auth_ok = handle_auth_pause(challenge, page=mgr.page)
+                    if auth_ok:
+                        snap = await mgr.snapshot()
+            except Exception as e:
+                logger.debug(f"snapshot auth check failed: {e}")
+        return snap
 
     return format_elements(_run_async(_snap()))
 
@@ -942,6 +1263,11 @@ def demo():
     # nothing installed -> None, so the caller can report it instead of crashing
     assert find_chrome(None, platform="linux", exists=lambda p: False, which=lambda n: None) is None
     assert find_chrome(None, platform="plan9", exists=lambda p: True) is None
+
+    args = build_chrome_launch_args("/chrome", 9222, Path("/tmp/profile"), "Default")
+    assert args[0] == "/chrome"
+    assert "--remote-debugging-port=9222" in args
+    assert "--profile-directory=Default" in args
 
     from runtime import did_state_change, coerce_args
     assert coerce_args({"index": "4"})["index"] == 4
