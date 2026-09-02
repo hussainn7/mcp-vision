@@ -81,16 +81,19 @@ Fill in API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, etc.)
 
 ---
 
-## 🌐 Running Browser Automation (Chrome CDP)
+## 🌐 Live Chrome (your real session)
 
-The web automation tools connect to Google Chrome via the Chrome DevTools Protocol (CDP) on port `9222`.
+Default is **not** CDP. CDP is what paints “Chrome is being controlled by automated test software” and makes Google sign you out.
 
-- **To use your own logged-in Chrome session** (cookies, history, logins):
-  Close all active Google Chrome instances, then launch Chrome from your terminal with remote debugging enabled:
-  ```bash
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222
-  ```
-- **If Chrome is not running on port 9222**, the agent will automatically launch a clean, temporary debug profile.
+- **macOS:** AppleScript against Google Chrome. Just have Chrome open.
+- **Windows/Linux:** `chrome://extensions` → Load unpacked → `chrome_relay/`
+
+```bash
+mcp-vision connect
+python agent.py --model gemini "Check my Gmail. Do not modify anything."
+```
+
+Tab routing still reuses Gmail if it is already open. CDP: `SCREEN_AGENT_CHROME_BACKEND=cdp` (dev only).
 
 ---
 

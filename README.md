@@ -7,6 +7,22 @@
 
 Local-first **screen perception + actuation** over the [Model Context Protocol](https://modelcontextprotocol.io). A host (Claude Desktop, Cursor, or `agent.py`) calls tools; the server looks at the display, numbers the controls, and clicks only after a safety governor (and, for restricted actions, a transparent HUD confirm).
 
+### Real Chrome, no automation banner
+
+Chrome CDP (Playwright, Puppeteer, `--remote-debugging-port`, `chrome://inspect`) always sets `navigator.webdriver` and shows **“Chrome is being controlled by automated test software.”** Google treats that as a compromised session and signs you out. That is a Chrome security feature, not something we hide.
+
+mcp-vision’s default is **not CDP**:
+
+- **macOS:** AppleScript talks to your installed Chrome (`open -a`). Same profile, cookies, tabs. No infobar.
+- **Windows/Linux:** unpacked extension in `chrome_relay/` (`tabs` + `scripting` only — not `debugger`).
+
+```bash
+mcp-vision connect
+python agent.py --model gemini "Check my Gmail and tell me the latest subject. Do not modify anything."
+```
+
+CDP remains available if you opt in (`SCREEN_AGENT_CHROME_BACKEND=cdp`) for isolated/dev browsers — expect the banner and possible Google logout.
+
 <p align="center">
   <img src="demo.gif" alt="mcp-vision demo" width="720">
 </p>
@@ -23,6 +39,7 @@ uv pip install -e .
 pipx install .
 
 mcp-vision doctor          # display / accessibility / backends
+mcp-vision connect         # attach to your real Chrome (Chrome 144+)
 mcp-vision install         # write Claude Desktop + Cursor MCP config
 mcp-vision serve           # stdio JSON-RPC (logs on stderr only)
 ```
@@ -86,14 +103,22 @@ graph LR
     A[Task] --> B[qwen3:8b picks a tool]
     B --> C{Tool}
     C -->|Notes / Reminders / Calendar| D[AppleScript]
-    C -->|web_*| E[Playwright AX + SoM fallback]
+    C -->|web_*| E[Live Chrome AX tree]
     D --> V{eval gate}
     E --> V
     V --> F[trace.jsonl + OTLP runs/id/trace.json]
     F --> B
 ```
 
-## Tests
+## Demo (record this)
+
+```bash
+# Chrome already open, Gmail + other tabs, Gmail not focused
+mcp-vision connect
+python agent.py --model gemini "Check my Gmail and tell me the latest subject. Do not modify anything."
+```
+
+No automation infobar. Gmail tab comes forward; subject is read.
 
 Hermetic unit tests use synthetic screens — no physical display, no stdout pollution of MCP.
 
