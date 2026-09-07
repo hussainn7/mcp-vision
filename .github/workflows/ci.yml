@@ -1,42 +1,60 @@
-name: ci
+name: runtime checks
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  demos-and-bench:
+  runtime:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13']
+    env:
+      MCP_VISION_STATE_DIR: ${{ runner.temp }}/mcp-vision-state
+      MCP_VISION_HUD: 'off'
+      MCP_VISION_BROWSER_TESTS: '1'
+      PYTHONPATH: src:.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install ollama pydantic-settings loguru pillow
-      - name: module self-checks
-        run: python tests/run.py
-      - name: bench (dry, deterministic)
-        run: python bench/runner.py
-
-  unit-mcp-vision:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install pytest pydantic pillow mss
-      - name: hermetic unit tests
-        run: PYTHONPATH=src pytest tests/test_capture.py tests/test_parser.py tests/test_governor.py tests/test_mcp_tools.py tests/test_config_sync.py
-
-  e2e-playwright:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install ollama pydantic-settings loguru pillow playwright
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install '.[dev]' build
       - run: python -m playwright install --with-deps chromium
-      - name: headless browser workflows
-        run: python tests/e2e_web.py
+      - name: Full tests, including real Chromium contracts
+        run: xvfb-run -a python -m pytest
+      - name: First-run demo
+        run: mcp-vision demo
+      - name: Module self-checks
+        run: xvfb-run -a python tests/run.py
+      - name: Deterministic agent benchmark (no model)
+        run: xvfb-run -a python bench/runner.py
+      - name: Existing browser workflows
+        run: xvfb-run -a python tests/e2e_web.py
+      - name: Build distributable
+        run: python -m build
+      - name: Installed wheel from outside the checkout
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-env"
+          "$RUNNER_TEMP/wheel-env/bin/pip" install dist/*.whl
+          cd "$RUNNER_TEMP"
+          unset PYTHONPATH
+          "$RUNNER_TEMP/wheel-env/bin/mcp-vision" --help
+          "$RUNNER_TEMP/wheel-env/bin/mcp-vision" serve --help
+          "$RUNNER_TEMP/wheel-env/bin/python" "$GITHUB_WORKSPACE/tests/wheel_smoke.py"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-python-${{ matrix.python }}
+          path: |
+            bench/results/
+            state/bench/
+            dist/

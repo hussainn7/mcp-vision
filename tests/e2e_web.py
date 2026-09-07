@@ -172,8 +172,8 @@ async def test_viewport_metrics(pw):
 
 async def main():
     if not _playwright_ok():
-        print("skip: playwright not installed")
-        return 0
+        print("FAIL: playwright not installed")
+        return 1
     from playwright.async_api import async_playwright
 
     pw = await async_playwright().start()
@@ -181,9 +181,9 @@ async def main():
         b = await pw.chromium.launch(headless=True)
         await b.close()
     except Exception as e:
-        print(f"skip: chromium unavailable ({e})")
+        print(f"FAIL: chromium unavailable ({e})")
         await pw.stop()
-        return 0
+        return 1
 
     tests = [
         test_issue_form,

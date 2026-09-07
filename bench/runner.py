@@ -32,7 +32,7 @@ import agent
 import judge as judge_mod
 import skills as skill_lib
 from tools import REGISTRY
-from trace import load_trace
+from mcp_vision.tracing import load_trace
 
 SUITE_DEFAULT = Path(__file__).parent / "suites" / "core.toml"
 RESULTS = Path(__file__).parent / "results"
@@ -178,7 +178,13 @@ def run_suite(suite_path=SUITE_DEFAULT, live=False, out_root=None):
         restore()
 
     n_pass = sum(r["passed"] for r in results)
+    import subprocess
+    try:
+        revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        revision = "unknown"
     report = {
+        "revision": revision,
         "suite": str(suite_path), "mode": "live" if live else "dry",
         "when": time.strftime("%Y-%m-%d %H:%M:%S"),
         "passed": n_pass, "total": len(results),
