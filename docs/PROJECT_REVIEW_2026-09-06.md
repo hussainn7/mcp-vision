@@ -1,3 +1,5 @@
+> Historical pre-change audit. The selected OSS direction and current implementation status are in [OSS_DIRECTION.md](OSS_DIRECTION.md). Results below describe the earlier checkout, not validation of the new runtime.
+
 **mcp-vision: project audit and product direction — September 6, 2026**
 
 My strongest recommendation is to build **verifiable task packs for computer use**, initially for a narrow business workflow: collecting evidence from client dashboards and producing a reviewable weekly report. Pair each pack with reproducible failure cases. A pack should say which account it uses, what it is allowed to do, what constitutes completion, and what evidence supports the result.
