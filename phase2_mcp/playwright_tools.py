@@ -648,6 +648,11 @@ class PlaywrightManager:
         snap = {**(snap or {}), "elements": els, "source": source}
         if metrics:
             snap["viewport"] = metrics
+        try:
+            snap["url"] = self.page.url
+            snap["title"] = await self.page.title()
+        except Exception:
+            pass
         self.snapshot_source = source
         self.index_labels = {e["index"]: e.get("name", "") for e in els}
         self.elements = {e["index"]: e for e in els}
@@ -1021,7 +1026,17 @@ def snapshot() -> str:
                 logger.debug(f"snapshot auth check failed: {e}")
         return snap
 
-    return format_elements(_run_async(_snap()))
+    snap = _run_async(_snap())
+    from phase2_mcp.session_state import observe_page
+    tag = ""
+    if snap:
+        tag = observe_page(
+            url=snap.get("url") or "",
+            title=snap.get("title") or "",
+            elements=snap.get("elements") or [],
+        )
+    out = format_elements(snap)
+    return f"{out}\n{tag}" if tag else out
 
 
 def click_index(index) -> str:
@@ -1176,7 +1191,9 @@ def get_page_text() -> str:
     text = _run_async(_get())
     if text:
         preview = text[:4000] + ("..." if len(text) > 4000 else "")
-        return f"Page text: {preview}"
+        from phase2_mcp.session_state import observe_page, STATE
+        tag = observe_page(url=STATE.url, title=STATE.title, text=text)
+        return f"Page text: {preview}\n{tag}"
     return "ERROR: Failed to get page text via Playwright"
 
 

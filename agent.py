@@ -118,7 +118,10 @@ def approve(name, args):
 # --- the loop ----------------------------------------------------------------
 
 def run(task, specialist="general", max_steps=None, approver=approve,
-        chat=None, backend=None, trace_dir=None, learn=True, dashboard=None):
+        chat=None, backend=None, trace_dir=None, learn=True, dashboard=None,
+        debug_state=False):
+    from phase2_mcp.session_state import bind_task, format_debug, reject_unverified_answer, recovery_prompt
+    bind_task(task)
     specs = load_specialists()
     if specialist not in specs:
         return f"unknown specialist '{specialist}'. choose from: {', '.join(specs)}"
@@ -149,6 +152,7 @@ def run(task, specialist="general", max_steps=None, approver=approve,
     reflected = False
     final, status = "hit max steps", "error"
     subgoals = []
+    verify_nudge = False
 
     # A cloud backend can fail mid-run (bad key, network blip, rate limit).
     # This must never lose the trace: whatever happened up to that point still
@@ -168,6 +172,12 @@ def run(task, specialist="general", max_steps=None, approver=approve,
 
             if not msg.get("tool_calls"):
                 answer = (msg.get("content") or "").strip()
+                blocked = reject_unverified_answer(answer)
+                if blocked and not verify_nudge:
+                    verify_nudge = True
+                    print(f"  verify: {blocked}")
+                    messages.append({"role": "user", "content": blocked + " Keep going."})
+                    continue
                 if not reflected:  # Reflect/Critic: check the goal once before quitting
                     reflected = True
                     verdict = reflect(chat, task, answer)
@@ -231,6 +241,11 @@ def run(task, specialist="general", max_steps=None, approver=approve,
                           confidence=0.9 if not str(result).lower().startswith("error") else 0.25,
                           status=s.get("status", "ok"))
                 print(f"     {result[:120]}")
+                hint = recovery_prompt()
+                if hint and hint not in result:
+                    result = str(result) + "\n[verify] " + hint
+                if debug_state:
+                    print(format_debug())
                 messages.append({"role": "tool", "tool_name": name, "tool_call_id": call_id, "content": result})
     except backends.BackendError as e:
         final, status = f"error: {e}", "error"
@@ -248,6 +263,9 @@ def run(task, specialist="general", max_steps=None, approver=approve,
             skill_lib.learn(specialist, tr.events)
         print(f"  [judge] {verdict['verdict']} score={verdict['score']} · trace: {tr.path}")
         dash.summary()
+        if debug_state:
+            print()
+            print(format_debug())
 
     return final
 
@@ -282,6 +300,11 @@ def _parse_argv(argv):
     )
     specialist, backend, tui = None, None, False
     explicit_specialist = False
+    debug_state = False
+
+    if "--debug-state" in argv:
+        debug_state = True
+        argv = [a for a in argv if a != "--debug-state"]
 
     if "--list-profiles" in argv:
         base = Path(cfg.chrome_user_data_dir) if cfg.chrome_user_data_dir else get_default_chrome_user_data_dir()
@@ -292,8 +315,9 @@ def _parse_argv(argv):
             email_info = f" ({p['email']})" if p["email"] else ""
             print(f"  • {p['name']}{email_info}  [{dir_name}]")
         print("=" * 60)
-        print("Default: attach to running Chrome via chrome://inspect/#remote-debugging")
-        print("Isolated fallback: SCREEN_AGENT_CHROME_ISOLATED=true\n")
+        print("Default: whatever Chrome window is already open (your current profile).")
+        print("Pick one:  python agent.py --profile Work \"...\"")
+        print("Or just say it:  \"check gmail on my Work profile\"\n")
         sys.exit(0)
 
     if "--as" in argv:
@@ -339,7 +363,7 @@ def _parse_argv(argv):
         else:
             specialist = "general"
 
-    return specialist, backend, tui, task_str
+    return specialist, backend, tui, task_str, debug_state
 
 
 def scripted_chat(responses):
@@ -362,13 +386,14 @@ def demo():
             assert t in REGISTRY, f"{name}: unknown tool {t}"
         assert len(SCHEMAS_FOR(spec["tools"])) == len(spec["tools"])
 
-    assert _parse_argv(["--as", "google-ads", "hello", "world"]) == ("google-ads", None, False, "hello world")
-    assert _parse_argv(["just", "a", "task"]) == ("general", None, False, "just a task")
-    assert _parse_argv(["--model", "claude", "--as", "general", "hi"]) == ("general", "anthropic", False, "hi")
-    assert _parse_argv(["--model", "gpt", "hi"]) == ("general", "openai", False, "hi")
-    assert _parse_argv(["--profile", "Profile 1", "--as", "general", "hi"]) == ("general", None, False, "hi")
+    assert _parse_argv(["--as", "google-ads", "hello", "world"]) == ("google-ads", None, False, "hello world", False)
+    assert _parse_argv(["just", "a", "task"]) == ("general", None, False, "just a task", False)
+    assert _parse_argv(["--model", "claude", "--as", "general", "hi"]) == ("general", "anthropic", False, "hi", False)
+    assert _parse_argv(["--model", "gpt", "hi"]) == ("general", "openai", False, "hi", False)
+    assert _parse_argv(["--profile", "Profile 1", "--as", "general", "hi"]) == ("general", None, False, "hi", False)
     assert cfg.chrome_profile_directory == "Profile 1"
-    assert _parse_argv(["--tui", "--as", "general", "hi"]) == ("general", None, True, "hi")
+    assert _parse_argv(["--tui", "--as", "general", "hi"]) == ("general", None, True, "hi", False)
+    assert _parse_argv(["--debug-state", "--as", "general", "hi"])[4] is True
 
     import judge as judge_mod
     global MEM_DIR
@@ -476,12 +501,14 @@ if __name__ == "__main__":
     if argv and argv[0] == "--demo":
         demo()
     elif argv:
-        spec, model, tui, task = _parse_argv(argv)
+        spec, model, tui, task, debug_state = _parse_argv(argv)
         if not task:
             print("give a task, e.g. python agent.py --as web-researcher \"...\"")
         else:
+            if cfg.chrome_profile_directory:
+                print(f"  Chrome profile: {cfg.chrome_profile_directory}")
             dash = Dashboard(task=task, enabled=tui)
-            print(run(task, spec, backend=model, dashboard=dash))
+            print(run(task, spec, backend=model, dashboard=dash, debug_state=debug_state))
     else:
         print(f"Usage: python agent.py --as <specialist> [--model local|claude|gpt|gemini|nvidia] \"<task>\"")
         print(f"Specialists: {', '.join(load_specialists())}")

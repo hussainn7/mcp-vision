@@ -58,8 +58,22 @@ def _web(name, *args, **kwargs):
     return getattr(pt, name)(*args, **kwargs)
 
 
-def web_navigate(url):
-    return _web("navigate", url)
+def web_navigate(url, reason=None, destination_confidence=None,
+                 entity_sources=None, requires_identity_verification=None, **_k):
+    from phase2_mcp.session_state import gate_navigate, observe_page
+    decision = gate_navigate(url)
+    result = _web("navigate", decision.url)
+    extra = []
+    if decision.note:
+        extra.append(decision.note)
+    if decision.needs_identity:
+        extra.append("Discover identity from the page (web_snapshot / web_read) before opening a personal URL.")
+    extra.append(observe_page(url=decision.url))
+    from phase2_mcp.session_state import recovery_prompt
+    hint = recovery_prompt()
+    if hint:
+        extra.append("[verify] " + hint)
+    return str(result) + "\n" + "\n".join(x for x in extra if x)
 
 
 def web_list_tabs():
@@ -174,7 +188,11 @@ _STR = {"type": "string"}
 _INT = {"type": "integer"}
 
 WEB_SCHEMAS = {
-    "web_navigate": _fn("web_navigate", "Open a URL or switch to an existing tab in the attached Chrome.", ["url"], {"url": _STR}),
+    "web_navigate": _fn(
+        "web_navigate",
+        "Open a URL in Chrome. For 'my account/mail/profile' tasks, pass the application root (e.g. https://mail.google.com), not a guessed username URL. The runtime rewrites inferred personal URLs.",
+        ["url"], {"url": _STR},
+    ),
     "web_list_tabs": _fn("web_list_tabs", "List all currently open tabs in Chrome.", [], {}),
     "web_switch_tab": _fn("web_switch_tab", "Switch active tab by title, URL keyword, or index.", ["target"], {"target": _STR}),
     "web_read": _fn("web_read", "Read the main text content of the current page.", [], {}),

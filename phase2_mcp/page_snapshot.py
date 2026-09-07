@@ -159,7 +159,7 @@ SNAPSHOT_JS = r"""(maxElements) => {
     });
     i++;
   }
-  return {elements: out, pruned: pruned};
+  return {elements: out, pruned: pruned, url: location.href, title: document.title};
 }""" % {"helpers": _JS_HELPERS, "sel": json.dumps(_CANDIDATE_SELECTOR)}
 
 
