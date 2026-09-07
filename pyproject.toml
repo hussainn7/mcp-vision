@@ -1,7 +1,8 @@
 [project]
 name = "mcp-vision"
-version = "0.2.0"
-description = "Local multi-modal desktop agent: screen perception and actuation over MCP"
+version = "0.3.0"
+description = "Model-neutral computer-use runtime with grounded actions and explicit evidence"
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -28,7 +29,7 @@ dev = ["pytest>=8.0.0"]
 
 [project.scripts]
 mcp-vision = "mcp_vision.cli:cli"
-mac-agent = "mac_agent:run"
+mac-agent = "mcp_vision.cli:agent_cli"
 screen-agent = "simple_agent:main"
 
 [project.urls]
@@ -43,6 +44,23 @@ packages = ["src/mcp_vision", "phase1_vision", "phase2_mcp"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src/mcp_vision" = "mcp_vision"
+
+# Compatibility modules used by the original agent. Keep the installed wheel
+# equivalent to a checkout until these imports move under mcp_vision.
+[tool.hatch.build.targets.wheel.force-include]
+"agent.py" = "agent.py"
+"mac_agent.py" = "mac_agent.py"
+"simple_agent.py" = "simple_agent.py"
+"backends.py" = "backends.py"
+"config.py" = "config.py"
+"runtime.py" = "runtime.py"
+"tools.py" = "tools.py"
+"trace_viewer.py" = "trace_viewer.py"
+"judge.py" = "judge.py"
+"skills.py" = "skills.py"
+"dashboard.py" = "dashboard.py"
+"specialists.toml" = "specialists.toml"
+"chrome_relay" = "chrome_relay"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

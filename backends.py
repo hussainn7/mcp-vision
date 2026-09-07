@@ -39,6 +39,7 @@ import urllib.error
 import urllib.request
 
 from config import cfg
+from mcp_vision.redaction import redact
 
 
 class BackendError(Exception):
@@ -65,11 +66,11 @@ def _urllib_post(url, headers, body, timeout):
             if e.code in (429, 503) and attempt < max_retries - 1:
                 time.sleep(2.0 * (attempt + 1))
                 continue
-            raise BackendError(f"HTTP {e.code} from {url}: {e.read().decode()[:500]}")
+            raise BackendError(redact(f"HTTP {e.code} from {url}: {e.read().decode()[:500]}"))
         except urllib.error.URLError as e:
-            raise BackendError(f"network error calling {url}: {e.reason}")
+            raise BackendError(redact(f"network error calling {url}: {e.reason}"))
         except (TimeoutError, OSError) as e:
-            raise BackendError(f"error calling {url}: {e}")
+            raise BackendError(redact(f"error calling {url}: {e}"))
 
 
 def _post_json(url, headers, body, timeout=60, _post=None):
@@ -236,10 +237,13 @@ def make_anthropic_chat(api_key, model, _post=None):
 def make_local_chat(host, model, keep_alive):
     def chat(messages, tools=None):
         import ollama  # lazy: bench/demos run without ollama installed or running
-        client = ollama.Client(host=host)
+        client = ollama.Client(host=host, timeout=120)
         kwargs = {"tools": tools} if tools else {}
-        reply = client.chat(model=model, messages=messages, think=False,
-                            keep_alive=keep_alive, **kwargs)
+        try:
+            reply = client.chat(model=model, messages=messages, think=False,
+                                keep_alive=keep_alive, **kwargs)
+        except Exception as e:
+            raise BackendError(redact(f"local model unavailable: {e}")) from e
         raw = reply["message"]
         tool_calls = [{"id": f"local_{i}",
                        "function": {"name": tc["function"]["name"],

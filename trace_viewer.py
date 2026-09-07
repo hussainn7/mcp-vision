@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-from trace import load_trace
+from mcp_vision.tracing import load_trace
 
 # span/event colors by type — keep in sync with the legend in TEMPLATE
 COLORS = {
@@ -133,7 +133,7 @@ def render_file(trace_path, out_path=None):
 
 def demo():
     import shutil
-    from trace import Tracer
+    from mcp_vision.tracing import Tracer
     out = Path("traces_demo")
     shutil.rmtree(out, ignore_errors=True)
     try:

@@ -38,12 +38,13 @@ from phase2_mcp.playwright_tools import cleanup_playwright
 from dashboard import Dashboard
 from runtime import coerce_args, parse_subgoals, remaining_subgoals, stale_snapshot
 from tools import REGISTRY, SCHEMAS_FOR
-from trace import Tracer
+from mcp_vision.tracing import Tracer
 import skills as skill_lib
 
 ROOT = Path(__file__).parent
 SPECS = ROOT / "specialists.toml"
-MEM_DIR = ROOT / "memory"
+from mcp_vision.paths import state_dir
+MEM_DIR = state_dir() / "memory"
 
 
 # --- specialists -------------------------------------------------------------
@@ -68,7 +69,7 @@ def load_memory(name):
 
 
 def save_memory(name, mem):
-    MEM_DIR.mkdir(exist_ok=True)
+    MEM_DIR.mkdir(parents=True, exist_ok=True)
     mem = {k: v[-50:] for k, v in mem.items()}
     _mem_path(name).write_text(json.dumps(mem, indent=2))
 
@@ -112,14 +113,17 @@ def reflect(chat, task, answer):
 def approve(name, args):
     """HITL gate: terminal y/n before an irreversible action."""
     print(f"\n[approval needed] {name}({json.dumps(args)})")
-    return input("  run this? [y/N] ").strip().lower() in ("y", "yes")
+    try:
+        return input("  run this? [y/N] ").strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        return False
 
 
 # --- the loop ----------------------------------------------------------------
 
 def run(task, specialist="general", max_steps=None, approver=approve,
         chat=None, backend=None, trace_dir=None, learn=True, dashboard=None,
-        debug_state=False):
+        debug_state=False, completion_check=None):
     from phase2_mcp.session_state import bind_task, format_debug, reject_unverified_answer, recovery_prompt
     bind_task(task)
     specs = load_specialists()
@@ -138,27 +142,26 @@ def run(task, specialist="general", max_steps=None, approver=approve,
     system = spec["prompt"] + memory_block(specialist) + skill_lib.skills_block(specialist, task)
     messages = [{"role": "system", "content": system}]
 
-    if spec.get("plan"):
-        with tr.span("plan") as s:
-            plan = make_plan(chat, spec["prompt"], task)
-            s["plan"] = plan
-        subgoals = parse_subgoals(plan)
-        print(f"Plan:\n{plan}\n")
-        messages.append({"role": "user", "content": f"Task: {task}\n\nPlan:\n{plan}\n\nExecute it, one tool call at a time."})
-    else:
-        messages.append({"role": "user", "content": task})
-
-    schemas = SCHEMAS_FOR(allowed)
-    reflected = False
     final, status = "hit max steps", "error"
-    subgoals = []
-    verify_nudge = False
 
     # A cloud backend can fail mid-run (bad key, network blip, rate limit).
     # This must never lose the trace: whatever happened up to that point still
     # gets closed out, judged, and — if it's a real failure — added to the
     # golden regression set, exactly like any other bad run.
     try:
+        if spec.get("plan"):
+            with tr.span("plan") as s:
+                plan = make_plan(chat, spec["prompt"], task)
+                s["plan"] = plan
+            subgoals = parse_subgoals(plan)
+            print(f"Plan:\n{plan}\n")
+            messages.append({"role": "user", "content": f"Task: {task}\n\nPlan:\n{plan}\n\nExecute it, one tool call at a time."})
+        else:
+            messages.append({"role": "user", "content": task})
+
+        schemas = SCHEMAS_FOR(allowed)
+        subgoals = parse_subgoals(plan) if spec.get("plan") else []
+
         for _ in range(max_steps):
             n_tools = sum(1 for m in messages if m.get("role") == "tool")
             if n_tools > 6:
@@ -173,25 +176,21 @@ def run(task, specialist="general", max_steps=None, approver=approve,
             if not msg.get("tool_calls"):
                 answer = (msg.get("content") or "").strip()
                 blocked = reject_unverified_answer(answer)
-                if blocked and not verify_nudge:
-                    verify_nudge = True
+                if blocked:
                     print(f"  verify: {blocked}")
                     messages.append({"role": "user", "content": blocked + " Keep going."})
                     continue
-                if not reflected:  # Reflect/Critic: check the goal once before quitting
-                    reflected = True
-                    verdict = reflect(chat, task, answer)
-                    ok = verdict.lower().startswith("yes")
-                    tr.event("reflect", verdict=verdict, ok=ok)
-                    if not ok:
-                        print(f"  reflect: {verdict}")
-                        used = [e.get("tool") for e in tr.events
-                                if e["type"] == "tool_call" and e.get("status") != "error"]
-                        left = remaining_subgoals(subgoals, used) if subgoals else []
-                        extra = f" Remaining: {'; '.join(left)}." if left else ""
-                        messages.append({"role": "user", "content": f"Not fully done: {verdict}{extra} Keep going."})
-                        continue
-                record(specialist, "successes", f"{task} -> {answer[:120]}")
+                verdict = reflect(chat, task, answer)
+                ok = verdict.lower().startswith("yes")
+                tr.event("reflect", verdict=verdict, ok=ok)
+                if not ok:
+                    print(f"  reflect: {verdict}")
+                    used = [e.get("tool") for e in tr.events
+                            if e["type"] == "tool_call" and e.get("status") != "error"]
+                    left = remaining_subgoals(subgoals, used) if subgoals else []
+                    extra = f" Remaining: {'; '.join(left)}." if left else ""
+                    messages.append({"role": "user", "content": f"Not fully done: {verdict}{extra} Keep going."})
+                    continue
                 final, status = answer, "ok"
                 break
 
@@ -227,12 +226,17 @@ def run(task, specialist="general", max_steps=None, approver=approve,
                     if stale_snapshot(result):
                         result = result.rstrip(".") + ". Take a fresh web_snapshot before retrying."
 
-                    if result.startswith("error:") or result.startswith("ERROR"):
+                    if result.lower().startswith(("error", "blocked", "unverified")):
+                        s["status"] = "error"
                         record(specialist, "failures", f"{name}: {result[:120]}")
                     elif entry["verify"]:  # eval gate: confirm it actually landed
-                        problem = entry["verify"](**args)
+                        try:
+                            problem = entry["verify"](**args)
+                        except Exception as e:
+                            problem = f"verification unavailable: {e}"
                         tr.event("verify", tool=name, ok=not problem, problem=problem or "")
                         if problem:
+                            s["status"] = "error"
                             result = f"error: action ran but verification failed: {problem}"
                             record(specialist, "failures", f"{name}: {problem}")
                     s["result"] = result
@@ -254,12 +258,23 @@ def run(task, specialist="general", max_steps=None, approver=approve,
         cleanup_playwright()
         tr.end(status=status, answer=final)
 
-        # score the run; failures become regression data, passes become skills
+        # A host-provided predicate is independent of the model's self-report.
+        completion = "unknown"
+        if completion_check is not None and status == "ok":
+            try:
+                completion = "verified" if completion_check() is True else "unverified"
+            except Exception:
+                completion = "unverified"
+        tr.event("completion", status=completion)
+        if completion == "verified":
+            record(specialist, "successes", f"{task} -> {final[:120]}")
+        # Execution quality is useful feedback, but is not proof of the goal.
         verdict = judge_run(tr.events)
         tr.event("judge", **verdict)
+        tr.export_otel()
         if verdict["verdict"] == "fail":
             record_golden(tr.events, verdict)
-        elif learn and status == "ok":
+        elif learn and status == "ok" and completion == "verified":
             skill_lib.learn(specialist, tr.events)
         print(f"  [judge] {verdict['verdict']} score={verdict['score']} · trace: {tr.path}")
         dash.summary()
@@ -416,10 +431,11 @@ def demo():
             {"content": "yes"},                                   # reflect verdict
         ])
         out = run("list the current directory", specialist="general",
-                  chat=chat, trace_dir=trace_dir, max_steps=4)
+                  chat=chat, trace_dir=trace_dir, max_steps=4,
+                  completion_check=lambda: True)
         assert out == "Listed the current directory."
 
-        from trace import load_trace
+        from mcp_vision.tracing import load_trace
         tfiles = sorted(trace_dir.glob("run_*.jsonl"), key=lambda p: p.stat().st_mtime)
         assert tfiles, "no trajectory written"
         events = load_trace(tfiles[-1])

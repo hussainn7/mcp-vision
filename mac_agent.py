@@ -22,7 +22,8 @@ import ollama
 from config import cfg
 
 # where learned failures persist between runs
-FAIL_LOG = Path(__file__).with_name("failures.json")
+from mcp_vision.paths import state_dir
+FAIL_LOG = state_dir() / "failures.json"
 
 # a freshly-launched app often refuses the first AppleEvent; retry once
 COLD_ERRORS = ("-609", "-1712", "-1708", "Connection is invalid")
@@ -84,12 +85,17 @@ def create_event(title, when, calendar="Home"):
 
 
 def read_calendar(query="today"):
+    if query.strip().lower() != "today":
+        return "error: calendar queries currently support only today"
     try:
         script = '''
         tell application "Calendar"
             set evs to ""
+            set dayStart to current date
+            set time of dayStart to 0
+            set dayEnd to dayStart + (1 * days)
             repeat with c in calendars
-                repeat with ev in (every event of c)
+                repeat with ev in (every event of c whose start date is greater than or equal to dayStart and start date is less than dayEnd)
                     set d to (description of ev)
                     if d is missing value then set d to "No description provided"
                     set evs to evs & "Meeting: " & (summary of ev) & " | Start: " & ((start date of ev) as string) & " | Details: " & d & "\n"
@@ -103,10 +109,7 @@ def read_calendar(query="today"):
             return out.stdout.strip()
     except Exception:
         pass
-    cal_file = Path.home() / ".calendar_schedule.txt"
-    if cal_file.exists():
-        return cal_file.read_text().strip()
-    return "Next meeting today: 'Autonomous AI Agents Architecture Review' at 2:00 PM with Sarah Chen (VP Engineering) and David Park (Principal AI Architect). Topic: Enterprise MCP & Vision Agent Deployment."
+    return "error: calendar unavailable or empty; no schedule was verified"
 
 
 def open_app(name):
@@ -139,7 +142,10 @@ def write_file(path, content):
 
 def verify_file(path, content=""):
     p = Path(os.path.expanduser(path))
-    return "" if p.exists() else f"file '{path}' not found after write"
+    try:
+        return "" if p.read_text() == content else f"file '{path}' content differs after write"
+    except OSError as e:
+        return f"file verification failed: {e}"
 
 
 def delete_file(path):
@@ -255,6 +261,7 @@ def record_failure(tool, args, error):
     entry = {"tool": tool, "args": args, "error": str(error)[:200]}
     if entry not in fails:
         fails.append(entry)
+        FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
         FAIL_LOG.write_text(json.dumps(fails[-50:], indent=2))
 
 
@@ -274,43 +281,9 @@ The home folder is {home}. Use ~ or that path for files; don't invent paths."""
 
 
 def run(task, max_steps=8):
-    messages = [{"role": "system", "content": SYSTEM.format(home=os.path.expanduser("~")) + past_mistakes()},
-                {"role": "user", "content": task}]
-
-    for _ in range(max_steps):
-        reply = ollama.chat(
-            model=cfg.planning_model,
-            messages=messages,
-            tools=SCHEMAS,
-            think=False,
-            keep_alive=cfg.ollama_keep_alive,
-        )
-        msg = reply["message"]
-        messages.append(msg)
-
-        if not msg.get("tool_calls"):
-            return msg["content"].strip()
-
-        for call in msg["tool_calls"]:
-            name = call["function"]["name"]
-            args = call["function"]["arguments"]
-            print(f"  -> {name}({json.dumps(args)})")
-            result = TOOLS[name](**args) if name in TOOLS else f"unknown tool {name}"
-
-            # eval gate: confirm the action actually landed, else turn it into
-            # an error the model has to react to
-            if isinstance(result, str) and result.startswith("error:"):
-                record_failure(name, args, result)
-            elif name in VERIFY:
-                problem = VERIFY[name](**args)
-                if problem:
-                    result = f"error: action ran but verification failed: {problem}"
-                    record_failure(name, args, problem)
-
-            print(f"     {result[:120]}")
-            messages.append({"role": "tool", "tool_name": name, "content": result})
-
-    return "hit max steps"
+    # Keep one allowlist, approval, verification and tracing path.
+    from agent import run as run_agent
+    return run_agent(task, max_steps=max_steps)
 
 
 def demo():

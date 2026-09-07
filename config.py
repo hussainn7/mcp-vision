@@ -3,13 +3,15 @@ Central config. Override any of these with SCREEN_AGENT_* env vars or a .env fil
 """
 
 from pathlib import Path
+from mcp_vision.paths import state_dir
 from typing import Optional
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Config(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="SCREEN_AGENT_", env_file=".env", extra="ignore")
     # where Ollama is listening
     ollama_host: str = "http://localhost:11434"
 
@@ -39,10 +41,10 @@ class Config(BaseSettings):
     inference_width: int = 1280
 
     # where screenshots get saved
-    output_dir: Path = Path("outputs")
+    output_dir: Path = state_dir() / "outputs"
 
     # where run trajectories (JSONL) get saved; view with trace_viewer.py
-    trace_dir: Path = Path("traces")
+    trace_dir: Path = state_dir() / "traces"
 
     # seconds to wait after each action before looking again
     loop_delay: float = 0.5
@@ -96,11 +98,4 @@ class Config(BaseSettings):
     gemini_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")
     nvidia_api_key: Optional[str] = Field(default=None, validation_alias="NVIDIA_API_KEY")
 
-    class Config:
-        env_prefix = "SCREEN_AGENT_"
-        env_file = ".env"
-        extra = "ignore"
-
-
 cfg = Config()
-cfg.output_dir.mkdir(exist_ok=True)
