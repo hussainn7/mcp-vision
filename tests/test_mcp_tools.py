@@ -24,6 +24,7 @@ def _ui() -> Image.Image:
 
 
 def test_inspect_then_click_records_coords() -> None:
+    set_forced_result(True)
     set_grabber(lambda _i: _ui())
     r = inspect_screen(0)
     assert r.elements
@@ -37,6 +38,7 @@ def test_inspect_then_click_records_coords() -> None:
 
 
 def test_type_and_hotkey() -> None:
+    set_forced_result(True)
     set_grabber(lambda _i: _ui())
     inspect_screen(0)
     assert type_text(0, "hello", press_enter=True).ok
@@ -83,3 +85,26 @@ def test_restricted_click_aborts_when_hud_says_no() -> None:
     act = get_actuator()
     assert isinstance(act, RecordingActuator)
     assert act.calls == []
+
+
+def test_desktop_input_consumes_observation():
+    set_forced_result(True)
+    set_grabber(lambda _: _ui())
+    inspect_screen()
+    assert click_element(0).ok
+    assert not click_element(0).ok
+    assert len(get_actuator().calls) == 1
+
+
+def test_desktop_screen_change_during_confirmation_blocks_input():
+    from mcp_vision.server import set_governor
+    from mcp_vision.core.governor import Governor
+    current = [_ui()]
+    set_grabber(lambda _: current[0])
+    inspect_screen()
+    def approve(*_):
+        current[0] = Image.new('RGB', (400, 200), 'red')
+        return True
+    set_governor(Governor(confirmer=approve))
+    assert not click_element(0).ok
+    assert get_actuator().calls == []

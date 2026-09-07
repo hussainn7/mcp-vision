@@ -35,12 +35,10 @@ def test_hud_esc_aborts_destructive_action():
     im = Image.new("RGB", (200, 200), (255, 255, 255))
     draw = ImageDraw.Draw(im)
     draw.rectangle([20, 20, 100, 60], fill=(0, 0, 0))
-    res = inspect_image(im, display_id=0, scale=1.0)
-    
     import mcp_vision.server as srv
-    srv._last = res
-    from mcp_vision.core.capture import Frame
-    srv._last_frame = Frame(display_id=0, image=im, png=b"", width=200, height=200, scale=1.0, monitor={"left": 0, "top": 0, "width": 200, "height": 200})
+    srv.set_grabber(lambda _: im)
+    srv.inspect_screen()
+
 
     # Attempt destructive type action
     result = type_text(0, "rm -rf test_folder", press_enter=True)
@@ -62,12 +60,10 @@ def test_hud_space_allows_destructive_action():
     im = Image.new("RGB", (200, 200), (255, 255, 255))
     draw = ImageDraw.Draw(im)
     draw.rectangle([20, 20, 100, 60], fill=(0, 0, 0))
-    res = inspect_image(im, display_id=0, scale=1.0)
-    
     import mcp_vision.server as srv
-    srv._last = res
-    from mcp_vision.core.capture import Frame
-    srv._last_frame = Frame(display_id=0, image=im, png=b"", width=200, height=200, scale=1.0, monitor={"left": 0, "top": 0, "width": 200, "height": 200})
+    srv.set_grabber(lambda _: im)
+    srv.inspect_screen()
+
 
     result = type_text(0, "rm -rf test_folder", press_enter=True)
     assert result.ok is True, "Action must proceed when HUD Space is pressed"

@@ -613,22 +613,12 @@ class PlaywrightManager:
         """Numbered interactive controls from AX tree, then DOM."""
         if not await self.is_running():
             return None
-        els = await self._ax_snapshot(max_elements)
-        source = "ax"
-        snap = None
-        if not els:
-            for attempt in range(3):
-                try:
-                    snap = await self.page.evaluate(SNAPSHOT_JS, max_elements)
-                except Exception as e:
-                    logger.warning(f"snapshot script failed: {e}")
-                    snap = None
-                if snap and snap.get("elements"):
-                    break
-                if attempt < 2:
-                    await asyncio.sleep(1.0)
-            els = (snap or {}).get("elements") or []
-            source = "dom"
+        # DOM roles/accessibility names and element IDs must refer to the same
+        # live nodes. The old AX-only path had no data-agent-index mapping and
+        # skipped occlusion pruning, so typing and modal handling diverged.
+        snap = await self.page.evaluate(SNAPSHOT_JS, max_elements)
+        els = (snap or {}).get("elements") or []
+        source = "dom"
 
         metrics = None
         try:

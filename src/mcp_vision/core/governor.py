@@ -14,7 +14,7 @@ ROUTINE_ACTIONS = frozenset({"click_element", "type_text", "press_key_combinatio
 
 _RESTRICTED_LABEL = re.compile(
     r"\b(password|passwd|pin|ssn|delete|trash|remove|rm|wipe|destroy|uninstall|format|"
-    r"buy|purchase|checkout|pay|terminal|iterm|sudo|root)\b",
+    r"buy|purchase|checkout|pay|send|submit|publish|post|confirm|terminal|iterm|sudo|root)\b",
     re.I,
 )
 _RESTRICTED_KEYS = {
@@ -47,6 +47,8 @@ def classify(
         return Policy.RESTRICTED_ACTION
     if keys:
         chord = frozenset(k.strip().lower() for k in keys)
+        if "enter" in chord or "return" in chord:
+            return Policy.RESTRICTED_ACTION
         if chord in _RESTRICTED_KEYS:
             return Policy.RESTRICTED_ACTION
         if "terminal" in blob or action == "press_key_combination" and "sudo" in " ".join(keys).lower():

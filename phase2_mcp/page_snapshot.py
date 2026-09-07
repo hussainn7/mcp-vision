@@ -73,7 +73,7 @@ _JS_HELPERS = r"""
     if (!n) n = el.getAttribute('title') || '';
     if (!n) n = el.getAttribute('alt') || '';
     if (!n) n = el.innerText || '';
-    if (!n && typeof el.value === 'string') n = el.value;
+    if (!n && ['button', 'submit', 'reset'].includes(el.type) && typeof el.value === 'string') n = el.value;
     return n.replace(/\s+/g, ' ').trim().slice(0, 100);
   };
 
@@ -108,7 +108,7 @@ _JS_HELPERS = r"""
       if (x < 1 || y < 1 || x > window.innerWidth - 1 || y > window.innerHeight - 1) continue;
       const hit = document.elementFromPoint(x, y);
       if (!hit) continue;
-      if (hit === el || el.contains(hit) || hit.contains(el)) return [Math.round(x), Math.round(y)];
+      if (hit === el || el.contains(hit)) return [Math.round(x), Math.round(y)];
     }
     return null;
   };
@@ -120,7 +120,7 @@ SNAPSHOT_JS = r"""(maxElements) => {
   %(helpers)s
 
   const out = [];
-  const seen = new Set();
+  document.querySelectorAll('[data-agent-index]').forEach(el => el.removeAttribute('data-agent-index'));
   const pruned = {occluded: 0, offscreen: 0, disabled: 0};
   let i = 0;
 
@@ -146,9 +146,6 @@ SNAPSHOT_JS = r"""(maxElements) => {
     const point = reachablePoint(el, r);
     if (!point) { pruned.occluded++; continue; }
 
-    const key = role + '|' + name;
-    if (seen.has(key)) continue;
-    seen.add(key);
 
     el.setAttribute('data-agent-index', String(i));
     out.push({
