@@ -49,14 +49,19 @@ class Target:
     record: dict
 
 
-_STATE_JS = """el => ({
+_STATE_JS = r"""el => ({
   connected: el.isConnected && el.ownerDocument === document,
   html: el.outerHTML,
+  value: el.value, checked: el.checked, selectedIndex: el.selectedIndex,
+  labels: el.labels ? Array.from(el.labels).map(n => n.textContent) : [],
+  labelledBy: (el.getAttribute('aria-labelledby') || '').split(/\s+/)
+    .map(id => document.getElementById(id)?.textContent || ''),
+  form: el.form ? {action: el.form.action, method: el.form.method} : null,
   x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y,
   w: el.getBoundingClientRect().width, h: el.getBoundingClientRect().height
 })"""
 _REACHABLE_JS = """el => {
-  if (!el.isConnected || el.disabled || el.closest('[inert]') || el.getAttribute('aria-disabled') === 'true') return false;
+  if (!el.isConnected || el.matches(':disabled') || el.disabled || el.closest('[inert]') || el.getAttribute('aria-disabled') === 'true') return false;
   const r = el.getBoundingClientRect();
   const x = r.x + r.width / 2, y = r.y + r.height / 2;
   const top = document.elementFromPoint(x, y);

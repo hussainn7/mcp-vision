@@ -173,3 +173,13 @@ def test_password_value_is_never_used_as_control_name():
         snap = await runtime.snapshot()
         assert "private-password" not in snap.model_dump_json()
     run_case(case)
+
+
+def test_live_field_change_invalidates_observation():
+    async def case(runtime, page):
+        snap = await runtime.snapshot()
+        await page.locator("#title").evaluate("el => {el.value='Changed by someone else';}")
+        receipt = await runtime.fill(snap.snapshot_id, target(snap, "Issue title"), "Overwrite")
+        assert receipt.status == "stale" and receipt.executed is False
+        assert await page.input_value("#title") == "Changed by someone else"
+    run_case(case)
