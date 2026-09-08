@@ -21,6 +21,8 @@ The MCP host owns model selection, planning, and task-specific success criteria.
 
 Click dispatch returns `unverified`. Fill read-back verifies only the field value. Text presence does not prove a backend save, delivery, payment, or persistence. Applications with such requirements need an independent state check appropriate to the task.
 
+Select and checked-state tools read the resulting control value back. Scrolling verifies the resulting page position. File upload is limited to one local file up to 10 MiB, always requires trusted operator confirmation, and reports only the selected file name and byte count. Every operation consumes its snapshot, including blocked and failed attempts.
+
 Browser operations are serialized per runtime. Desktop calls have a separate lock and invalidate their screen observation after input. Human confirmation is required for all desktop input because pixels cannot establish application semantics. Desktop `ActionResult.ok` means input dispatched, with `verification: unverified`.
 
 ## Integrating Python directly

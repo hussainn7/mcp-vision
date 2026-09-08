@@ -23,6 +23,7 @@ async def main():
             result = await session.list_tools()
             names = {t.name for t in result.tools}
             assert {"browser_snapshot", "browser_navigate", "browser_fill", "browser_click",
+                    "browser_select", "browser_set_checked", "browser_upload", "browser_scroll",
                     "browser_verify_text", "browser_screenshot", "screen_image"} <= names
             blocked = await session.call_tool("browser_navigate", {"url": "file:///etc/passwd"})
             assert not blocked.is_error

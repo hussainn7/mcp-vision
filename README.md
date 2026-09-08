@@ -84,6 +84,10 @@ Ask your agent: “Inspect the page, use the returned snapshot ID and control in
 | `browser_snapshot()` | Read text and numbered controls with a snapshot ID |
 | `browser_click(snapshot_id, index)` | Revalidate and click an exact observed control |
 | `browser_fill(snapshot_id, index, text)` | Fill and read back a field value |
+| `browser_select(snapshot_id, index, value)` | Select an option value and read it back |
+| `browser_set_checked(snapshot_id, index, checked)` | Set and verify a checkbox or radio control |
+| `browser_upload(snapshot_id, index, path)` | Confirm, upload, and verify one local file up to 10 MiB |
+| `browser_scroll(snapshot_id, delta_y)` | Scroll from a fresh observation and report the resulting position |
 | `browser_verify_text(text)` | Observe a visible-text predicate |
 | `browser_screenshot()` | Return PNG pixels to the host |
 | `inspect_screen()` / `screen_image()` | Inspect desktop regions / return display pixels |

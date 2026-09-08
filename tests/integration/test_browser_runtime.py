@@ -17,6 +17,9 @@ HTML = '''<html><body>
 <button id="second" onclick="document.querySelector('#result').textContent='Second selected'">Choose</button>
 <form onsubmit="event.preventDefault();document.querySelector('#result').textContent='Submitted'">
 <button>Next</button></form><input type="password" aria-label="Credential">
+<label for="track">Track</label><select id="track"><option value="">Choose</option><option value="eng">Engineering</option></select>
+<label><input id="updates" type="checkbox"> Contact me</label>
+<label for="resume">Resume</label><input id="resume" type="file">
 <div id="result"></div></body></html>'''
 
 
@@ -99,6 +102,75 @@ def test_default_readonly_and_unconfirmed_submission_and_password():
         assert (await runtime.fill(snap.snapshot_id, target(snap, "Credential"), "secret")).status == "blocked"
         assert await page.input_value("input[type=password]") == ""
         assert await page.locator("#result").inner_text() == ""
+    run_case(case)
+
+
+def test_form_controls_are_verified(tmp_path):
+    resume = tmp_path / "test-resume.txt"
+    resume.write_text("Disposable test resume. No personal data.")
+
+    async def case(runtime, page):
+        snap = await runtime.snapshot()
+        select = next(e for e in snap.elements if e["name"] == "Track" and e["role"] == "combobox")
+        assert {o["value"] for o in select["options"]} == {"", "eng"}
+        chosen = await runtime.select(snap.snapshot_id, select["index"], "eng")
+        assert chosen.status == "verified" and chosen.evidence["selected_value"] == "eng"
+        assert await page.input_value("#track") == "eng"
+
+        snap = await runtime.snapshot()
+        checkbox = next(e for e in snap.elements if e["role"] == "checkbox")
+        assert checkbox["checked"] is False
+        checked = await runtime.set_checked(snap.snapshot_id, checkbox["index"], True)
+        assert checked.status == "verified" and checked.evidence["checked"] is True
+        assert await page.is_checked("#updates")
+
+        snap = await runtime.snapshot()
+        upload_index = target(snap, "Resume")
+        blocked = await runtime.upload(snap.snapshot_id, upload_index, str(resume))
+        assert blocked.status == "blocked" and await page.locator("#resume").evaluate("el => el.files.length") == 0
+
+        confirmations = []
+        runtime.governor = Governor(confirmer=lambda policy, summary: confirmations.append((policy, summary)) or True)
+        snap = await runtime.snapshot()
+        uploaded = await runtime.upload(snap.snapshot_id, target(snap, "Resume"), str(resume))
+        assert uploaded.status == "verified" and uploaded.evidence["file_name"] == resume.name
+        assert str(tmp_path) not in uploaded.model_dump_json()
+        assert len(confirmations) == 1
+        assert await page.locator("#resume").evaluate("el => el.files[0].name") == resume.name
+
+    run_case(case)
+
+
+def test_scroll_reveals_offscreen_control():
+    async def case(runtime, page):
+        await page.set_content("""<body style='margin:0;min-height:2400px'>
+          <p>Top</p><button style='position:absolute;top:1800px'
+          onclick="document.querySelector('#status').textContent='Reached'">Continue below</button>
+          <p id='status' style='position:absolute;top:1900px'>Waiting</p></body>""")
+        snap = await runtime.snapshot()
+        assert all(e["name"] != "Continue below" for e in snap.elements)
+        moved = await runtime.scroll(snap.snapshot_id, 1800)
+        assert moved.status == "verified" and moved.evidence["after_y"] > moved.evidence["before_y"]
+        assert (await runtime.scroll(snap.snapshot_id, 100)).status == "stale"
+        snap = await runtime.snapshot()
+        result = await runtime.click(snap.snapshot_id, target(snap, "Continue below"))
+        assert result.status == "unverified"
+        assert (await runtime.verify_text("Reached")).status == "verified"
+
+    run_case(case)
+
+
+def test_form_submit_asks_once_and_needs_separate_verification():
+    async def case(runtime, page):
+        confirmations = []
+        runtime.governor = Governor(confirmer=lambda policy, summary: confirmations.append((policy, summary)) or True)
+        snap = await runtime.snapshot()
+        receipt = await runtime.click(snap.snapshot_id, target(snap, "Next"))
+        assert receipt.status == "unverified" and receipt.task_complete is False
+        assert len(confirmations) == 1
+        assert confirmations[0][0].value == "RESTRICTED_ACTION"
+        assert (await runtime.verify_text("Submitted")).status == "verified"
+
     run_case(case)
 
 
