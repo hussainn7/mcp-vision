@@ -4,7 +4,7 @@ Start with the [README](README.md). The supported development focus is the model
 
 ## Isolated browser
 
-Install the checkout and Chromium, then run `mcp-vision demo` on the intended executor. The demo needs no model or credentials. Run `mcp-vision install` to register Claude Desktop, Claude Code, Cursor, and an installed Codex client, or configure another MCP host to launch `mcp-vision serve` using an absolute executable path. Add `--allow-browser-writes` only when the operator wants routine input; recognized sensitive actions still need confirmation. On a headless executor, those actions block without a confirmer.
+Install from GitHub with `uv tool install git+https://github.com/hussainn7/mcp-vision.git`, install Chromium with `uv tool run --from playwright playwright install chromium`, then run `mcp-vision demo` on the intended executor. The future PyPI distribution is `mcp-vision-runtime`; the CLI remains `mcp-vision`. The demo needs no model or credentials. Run `mcp-vision install` to register Claude Desktop, Claude Code, Cursor, and an installed Codex client, or configure another MCP host to launch `mcp-vision serve` using an absolute executable path. Add `--allow-browser-writes` only when the operator wants routine input; recognized sensitive actions still need confirmation. On a headless executor, those actions block without a confirmer.
 
 Use `browser_navigate`, `browser_snapshot`, then `browser_fill` or `browser_click` with the returned snapshot ID and index. Take a new snapshot after input. Verify a relevant postcondition instead of interpreting a dispatched click as task success. See [the runtime contract](docs/RUNTIME.md).
 

@@ -23,15 +23,17 @@ Your agent + your model
 
 ## Try it
 
-Python 3.12+ is required. Install from this checkout (these changes are not yet a published package):
+Python 3.12+ and [uv](https://docs.astral.sh/uv/) are required. Install the development preview directly from GitHub:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-python -m pip install .
-python -m playwright install chromium
+uv tool install git+https://github.com/hussainn7/mcp-vision.git
+uv tool run --from playwright playwright install chromium
 mcp-vision demo
 ```
+
+The future PyPI distribution is named `mcp-vision-runtime`; the `mcp-vision` distribution on PyPI belongs to an unrelated project. The installed command remains `mcp-vision`.
+
+For checkout development, use `python -m pip install .` in a virtual environment, followed by `python -m playwright install chromium`.
 
 On a Linux test server, use `python -m playwright install --with-deps chromium` to install browser system dependencies. Run the demo on the computer/server that should execute browser actions. No model download, GPU, API key, or personal browser profile is needed. It fills a disposable draft, clicks Preview, and verifies the resulting text.
 
