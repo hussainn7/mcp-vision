@@ -39,7 +39,13 @@ The demo deliberately reports the click as `unverified`: dispatch is not proof o
 
 ## Connect your agent
 
-Configure an MCP-capable host with the **absolute path** to the installed `mcp-vision` executable:
+Register the installed executable with Claude Desktop, Cursor, and Codex (when their local clients are installed):
+
+```bash
+mcp-vision install
+```
+
+The Codex registration uses the supported `codex mcp add` command. Codex CLI, the ChatGPT desktop app, and the Codex IDE extension share that MCP configuration on the same host. You can also configure any MCP-capable host manually with the **absolute path** to the installed `mcp-vision` executable:
 
 ```json
 {

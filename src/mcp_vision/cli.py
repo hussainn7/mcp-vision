@@ -51,7 +51,7 @@ def demo() -> None:
 @cli.command()
 @click.option("--command", default=None, help="Override the server executable written into host configs.")
 def install(command: str | None) -> None:
-    """Register mcp-vision in Claude Desktop and Cursor."""
+    """Register mcp-vision in Claude Desktop, Cursor, and Codex."""
     from mcp_vision.utils.config_sync import install_hosts
     paths = install_hosts(command)
     for p in paths:

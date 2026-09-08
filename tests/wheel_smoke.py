@@ -18,7 +18,8 @@ async def main():
     params = StdioServerParameters(command=sys.executable, args=["-m", "mcp_vision.cli", "serve"])
     async with stdio_client(params) as streams:
         async with ClientSession(*streams) as session:
-            await session.initialize()
+            initialized = await session.initialize()
+            assert initialized.instructions and "snapshot_id" in initialized.instructions
             result = await session.list_tools()
             names = {t.name for t in result.tools}
             assert {"browser_snapshot", "browser_navigate", "browser_fill", "browser_click",
