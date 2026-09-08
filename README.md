@@ -39,7 +39,7 @@ The demo deliberately reports the click as `unverified`: dispatch is not proof o
 
 ## Connect your agent
 
-Register the installed executable with Claude Desktop, Cursor, and Codex (when their local clients are installed):
+Register the installed executable with Claude Desktop, Claude Code, Cursor, and Codex (when their local clients are installed):
 
 ```bash
 mcp-vision install
