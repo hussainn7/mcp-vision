@@ -270,7 +270,8 @@ def demo():
     # by hand once produced `[contenteditable=""]`, whose quotes closed the
     # literal early and made the whole snapshot a syntax error — which shows up
     # only as "0 elements found", never as an error. Check the literal instead.
-    at = SNAPSHOT_JS.index("querySelectorAll(") + len("querySelectorAll(")
+    candidate_call = "for (const el of document.querySelectorAll("
+    at = SNAPSHOT_JS.index(candidate_call) + len(candidate_call)
     embedded, _ = json.JSONDecoder().raw_decode(SNAPSHOT_JS[at:])
     assert embedded == _CANDIDATE_SELECTOR
     assert _CANDIDATE_SELECTOR.count("[") == _CANDIDATE_SELECTOR.count("]")
