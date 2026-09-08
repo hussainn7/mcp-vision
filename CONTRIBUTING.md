@@ -20,12 +20,15 @@ mcp-vision demo
 xvfb-run -a python tests/run.py
 xvfb-run -a python bench/runner.py
 xvfb-run -a python tests/e2e_web.py
+MCP_VISION_BROWSER_TESTS=1 xvfb-run -a python tests/live_web_smoke.py
 python -m build
 ```
 
 Install `xvfb`/`xauth` if missing. These checks require no paid API, local model inference, or personal profile. GitHub Actions runs this sequence plus installation and MCP protocol checks from outside the checkout. Its artifacts preserve benchmark reports and wheels. New code is not validated until those jobs pass.
 
 Desktop tests use synthetic images and a recording actuator. They do not prove real macOS, Windows, or Linux input behavior. Real OS checks belong on an explicitly designated disposable executor with its own test accounts and permissions.
+
+`tests/live_web_smoke.py` makes read-only requests to IANA's stable `example.com` page. It proves public navigation, observation, evidence, and screenshots on the hosted runner. It does not test authenticated sites, transactions, or a particular model provider.
 
 For a new bug, prefer a small regression test: replacement DOM nodes, duplicate labels, late overlays, navigation during approval, timeouts after dispatch, wrong form values, or missing postconditions. A skipped browser test is not evidence of browser correctness.
 

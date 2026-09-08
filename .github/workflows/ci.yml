@@ -38,6 +38,8 @@ jobs:
         run: xvfb-run -a python bench/runner.py
       - name: Existing browser workflows
         run: xvfb-run -a python tests/e2e_web.py
+      - name: Read-only public web smoke
+        run: xvfb-run -a python tests/live_web_smoke.py
       - name: Build distributable
         run: python -m build
       - name: Installed wheel from outside the checkout
