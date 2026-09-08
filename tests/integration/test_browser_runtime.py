@@ -19,6 +19,9 @@ HTML = '''<html><body>
 <button>Next</button></form><input type="password" aria-label="Credential">
 <label for="track">Track</label><select id="track"><option value="">Choose</option><option value="eng">Engineering</option></select>
 <label><input id="updates" type="checkbox"> Contact me</label>
+<label for="start-date">Start date</label><input id="start-date" type="date">
+<label><input id="day-shift" name="shift" type="radio" value="day"> Day shift</label>
+<label><input id="night-shift" name="shift" type="radio" value="night"> Night shift</label>
 <label for="resume">Resume</label><input id="resume" type="file">
 <div id="result"></div></body></html>'''
 
@@ -144,6 +147,17 @@ def test_overlay_blocks_previously_observed_target():
     run_case(case)
 
 
+def test_disabled_target_is_not_clicked():
+    async def case(runtime, page):
+        snap = await runtime.snapshot()
+        await page.locator("#first").evaluate("el => { el.disabled = true; }")
+        result = await runtime.click(snap.snapshot_id, target(snap, "Choose"))
+        assert result.status == "stale" and result.executed is False
+        assert await page.locator("#result").inner_text() == ""
+
+    run_case(case)
+
+
 def test_default_readonly_and_unconfirmed_submission_and_password():
     async def case(runtime, page):
         runtime.allow_writes = False
@@ -177,6 +191,16 @@ def test_form_controls_are_verified(tmp_path):
         checked = await runtime.set_checked(snap.snapshot_id, checkbox["index"], True)
         assert checked.status == "verified" and checked.evidence["checked"] is True
         assert await page.is_checked("#updates")
+
+        snap = await runtime.snapshot()
+        date = await runtime.fill(snap.snapshot_id, target(snap, "Start date"), "2027-06-01")
+        assert date.status == "verified" and await page.input_value("#start-date") == "2027-06-01"
+
+        snap = await runtime.snapshot()
+        radio = next(e for e in snap.elements if e["name"] == "Night shift" and e["role"] == "radio")
+        selected = await runtime.set_checked(snap.snapshot_id, radio["index"], True)
+        assert selected.status == "verified" and await page.is_checked("#night-shift")
+        assert not await page.is_checked("#day-shift")
 
         snap = await runtime.snapshot()
         upload_index = target(snap, "Resume")
