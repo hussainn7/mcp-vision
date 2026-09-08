@@ -57,6 +57,16 @@ def test_agent_profile_dir_not_system_chrome():
     assert sub is None
 
 
+@pytest.mark.parametrize("system", [
+    Path.home() / "Library/Application Support/Google/Chrome",
+    Path.home() / ".config/google-chrome",
+    Path.home() / ".config/google-chrome-stable",
+    Path.home() / ".config/chromium",
+])
+def test_system_profile_paths_are_recognized_cross_platform(system: Path):
+    assert is_system_chrome_user_data_dir(system)
+
+
 def test_auth_detection_google_signin():
     challenge = detect_auth_challenge(
         url="https://accounts.google.com/v3/signin/identifier?continue=https://mail.google.com",

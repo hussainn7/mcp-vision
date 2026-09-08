@@ -173,14 +173,29 @@ def extract_profile_from_prompt(
 
 
 def is_system_chrome_user_data_dir(path: Optional[Path | str]) -> bool:
-    """True when path points at the host's normal Chrome profile root."""
+    """True for a normal Chrome profile root on any supported platform.
+
+    Configuration files can move between operating systems (and CI can inspect
+    them), so recognizing a dangerous personal-profile path must not depend on
+    the platform currently executing this function.
+    """
     if not path:
         return False
-    system = get_default_chrome_user_data_dir()
-    if not system:
-        return False
+    candidates = {
+        Path.home() / "Library/Application Support/Google/Chrome",
+        Path.home() / ".config/google-chrome",
+        Path.home() / ".config/google-chrome-stable",
+        Path.home() / ".config/chromium",
+    }
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.add(Path(local_app_data) / "Google/Chrome/User Data")
+    detected = get_default_chrome_user_data_dir()
+    if detected:
+        candidates.add(detected)
     try:
-        return Path(path).expanduser().resolve() == system.resolve()
+        configured = Path(path).expanduser().resolve()
+        return any(configured == candidate.expanduser().resolve() for candidate in candidates)
     except Exception:
         return False
 
