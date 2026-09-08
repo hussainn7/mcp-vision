@@ -22,8 +22,8 @@ jobs:
       MCP_VISION_BROWSER_TESTS: '1'
       PYTHONPATH: src:.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install '.[dev]' build
@@ -50,11 +50,11 @@ jobs:
           "$RUNNER_TEMP/wheel-env/bin/mcp-vision" --help
           "$RUNNER_TEMP/wheel-env/bin/mcp-vision" serve --help
           "$RUNNER_TEMP/wheel-env/bin/python" "$GITHUB_WORKSPACE/tests/wheel_smoke.py"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: evidence-python-${{ matrix.python }}
           path: |
             bench/results/
-            state/bench/
+            .ci-state/
             dist/

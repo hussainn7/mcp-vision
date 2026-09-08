@@ -24,7 +24,7 @@ async def main():
             assert {"browser_snapshot", "browser_navigate", "browser_fill", "browser_click",
                     "browser_verify_text", "browser_screenshot", "screen_image"} <= names
             blocked = await session.call_tool("browser_navigate", {"url": "file:///etc/passwd"})
-            assert not blocked.isError
+            assert not blocked.is_error
             assert '"executed":false' in ''.join(c.text for c in blocked.content if hasattr(c, "text")).replace(' ', '')
     print("installed wheel imports and MCP handshake passed")
 
