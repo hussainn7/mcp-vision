@@ -17,7 +17,7 @@ jobs:
       matrix:
         python: ['3.12', '3.13']
     env:
-      MCP_VISION_STATE_DIR: ${{ runner.temp }}/mcp-vision-state
+      MCP_VISION_STATE_DIR: ${{ github.workspace }}/.ci-state
       MCP_VISION_HUD: 'off'
       MCP_VISION_BROWSER_TESTS: '1'
       PYTHONPATH: src:.
