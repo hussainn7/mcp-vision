@@ -163,7 +163,9 @@ def test_unverified_answer_is_rejected():
 
 
 def test_ordinary_possessive_does_not_require_identity():
-    assert not task_needs_identity("Summarize My Favorite Tools")
+    bind_task("Summarize My Favorite Tools")
+    assert not task_needs_identity()
+    assert reject_unverified_answer("The list covers editors and terminals") is None
 
 
 def test_account_possessive_requires_identity():

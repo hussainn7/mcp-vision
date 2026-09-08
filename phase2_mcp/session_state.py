@@ -471,10 +471,10 @@ def recovery_prompt() -> str | None:
 
 def reject_unverified_answer(answer: str) -> str | None:
     """Block a final answer that states an identity the page never confirmed."""
-    if not task_needs_identity():
-        return None
     text = answer or ""
     claimed = [m.group(1) for m in _CLAIM_IN_TEXT.finditer(text)]
+    if not task_needs_identity() and not claimed:
+        return None
     ident = identity_verified()
     if claimed:
         guess = claimed[0]
