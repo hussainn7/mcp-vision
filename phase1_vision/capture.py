@@ -58,6 +58,7 @@ def capture_screen(monitor_index: int | None = None, save: bool = True) -> tuple
 
     saved_path = None
     if save:
+        cfg.output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         saved_path = cfg.output_dir / f"raw_{timestamp}.png"
         img.save(saved_path)

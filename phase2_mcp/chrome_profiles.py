@@ -125,33 +125,77 @@ def resolve_profile(query: str, user_data_dir: Optional[Path | str] = None) -> T
     return query, query
 
 
-_PROFILE_PROMPT_RE = re.compile(
-    r"\b(?:use|using|in|with)\s+(?:my\s+)?([a-zA-Z0-9_\-\.]+)\s+(?:chrome|browser)?\s*profile\b",
-    re.IGNORECASE,
-)
+_PROFILE_PROMPT_RES = [
+    re.compile(
+        r"\b(?:use|using|in|with|on)\s+(?:my\s+)?([a-zA-Z0-9_\-\.]+(?:\s+\d+)?)\s+(?:chrome|browser)?\s*profile\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:use|using|in|with|on)\s+(?:my\s+)?([a-zA-Z0-9_\-\.]+(?:\s+\d+)?)\s+(?:chrome|browser)\b",
+        re.IGNORECASE,
+    ),
+]
 
 
-def extract_profile_from_prompt(prompt: str) -> Optional[str]:
-    """Check if the user prompt explicitly requested a specific Chrome profile."""
+def extract_profile_from_prompt(
+    prompt: str, user_data_dir: Optional[Path | str] = None
+) -> Optional[str]:
+    """Pick a profile if the user named one (Work, Personal, an email, …)."""
     if not prompt:
         return None
-    m = _PROFILE_PROMPT_RE.search(prompt)
-    if m:
-        val = m.group(1).strip()
-        if val.lower() not in ("a", "the", "this", "that"):
-            return val
+    for pat in _PROFILE_PROMPT_RES:
+        m = pat.search(prompt)
+        if m:
+            val = (m.group(1) or "").strip()
+            if val.lower() not in ("a", "the", "this", "that"):
+                return val
+    pl = prompt.lower()
+    if not re.search(r"\b(profile|chrome|browser|account)\b", pl):
+        return None
+    hits = []
+    for dir_name, p in list_profiles(user_data_dir).items():
+        tokens = [p.get("name") or "", dir_name]
+        email = p.get("email") or ""
+        if email:
+            tokens.append(email)
+            tokens.append(email.split("@")[0])
+        for token in tokens:
+            t = (token or "").strip()
+            if len(t) < 3:
+                continue
+            if re.search(rf"\b{re.escape(t.lower())}\b", pl):
+                hits.append(dir_name)
+                break
+    uniq = list(dict.fromkeys(hits))
+    if len(uniq) == 1:
+        return uniq[0]
     return None
 
 
 def is_system_chrome_user_data_dir(path: Optional[Path | str]) -> bool:
-    """True when path points at the host's normal Chrome profile root."""
+    """True for a normal Chrome profile root on any supported platform.
+
+    Configuration files can move between operating systems (and CI can inspect
+    them), so recognizing a dangerous personal-profile path must not depend on
+    the platform currently executing this function.
+    """
     if not path:
         return False
-    system = get_default_chrome_user_data_dir()
-    if not system:
-        return False
+    candidates = {
+        Path.home() / "Library/Application Support/Google/Chrome",
+        Path.home() / ".config/google-chrome",
+        Path.home() / ".config/google-chrome-stable",
+        Path.home() / ".config/chromium",
+    }
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.add(Path(local_app_data) / "Google/Chrome/User Data")
+    detected = get_default_chrome_user_data_dir()
+    if detected:
+        candidates.add(detected)
     try:
-        return Path(path).expanduser().resolve() == system.resolve()
+        configured = Path(path).expanduser().resolve()
+        return any(configured == candidate.expanduser().resolve() for candidate in candidates)
     except Exception:
         return False
 

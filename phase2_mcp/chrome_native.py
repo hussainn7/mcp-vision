@@ -206,10 +206,21 @@ def prefer() -> bool:
 
 
 def ensure_chrome() -> None:
+    from config import cfg
+    directory = getattr(cfg, "chrome_profile_directory", None)
     if sys.platform == "darwin":
-        subprocess.run(["open", "-a", "Google Chrome"], capture_output=True)
+        if directory:
+            subprocess.run(
+                ["open", "-na", "Google Chrome", "--args", f"--profile-directory={directory}"],
+                capture_output=True,
+            )
+        else:
+            subprocess.run(["open", "-a", "Google Chrome"], capture_output=True)
         return
-    subprocess.run(["google-chrome"], capture_output=True)
+    cmd = ["google-chrome"]
+    if directory:
+        cmd.append(f"--profile-directory={directory}")
+    subprocess.run(cmd, capture_output=True)
 
 
 # --- macOS AppleScript -------------------------------------------------------
@@ -472,7 +483,9 @@ def get_page_text() -> str:
         text = r.get("value") if r.get("ok") else f"ERROR: {r.get('error')}"
     if not text or str(text).startswith("error:") or str(text).startswith("ERROR:"):
         return f"ERROR: Failed to get page text ({text})"
-    return f"Page text: {text}"
+    from phase2_mcp.session_state import observe_page, STATE
+    tag = observe_page(url=STATE.url, title=STATE.title, text=str(text))
+    return f"Page text: {text}\n{tag}"
 
 
 def snapshot() -> str:
@@ -491,7 +504,13 @@ def snapshot() -> str:
     els = (snap or {}).get("elements") or []
     _last_snap["elements"] = els
     _last_snap["labels"] = {e.get("index"): e.get("name", "") for e in els}
-    return format_elements(snap)
+    from phase2_mcp.session_state import observe_page
+    tag = observe_page(
+        url=snap.get("url") or "",
+        title=snap.get("title") or "",
+        elements=els,
+    )
+    return format_elements(snap) + f"\n{tag}"
 
 
 def click_index(index) -> str:

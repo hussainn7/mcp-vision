@@ -613,22 +613,12 @@ class PlaywrightManager:
         """Numbered interactive controls from AX tree, then DOM."""
         if not await self.is_running():
             return None
-        els = await self._ax_snapshot(max_elements)
-        source = "ax"
-        snap = None
-        if not els:
-            for attempt in range(3):
-                try:
-                    snap = await self.page.evaluate(SNAPSHOT_JS, max_elements)
-                except Exception as e:
-                    logger.warning(f"snapshot script failed: {e}")
-                    snap = None
-                if snap and snap.get("elements"):
-                    break
-                if attempt < 2:
-                    await asyncio.sleep(1.0)
-            els = (snap or {}).get("elements") or []
-            source = "dom"
+        # DOM roles/accessibility names and element IDs must refer to the same
+        # live nodes. The old AX-only path had no data-agent-index mapping and
+        # skipped occlusion pruning, so typing and modal handling diverged.
+        snap = await self.page.evaluate(SNAPSHOT_JS, max_elements)
+        els = (snap or {}).get("elements") or []
+        source = "dom"
 
         metrics = None
         try:
@@ -648,6 +638,11 @@ class PlaywrightManager:
         snap = {**(snap or {}), "elements": els, "source": source}
         if metrics:
             snap["viewport"] = metrics
+        try:
+            snap["url"] = self.page.url
+            snap["title"] = await self.page.title()
+        except Exception:
+            pass
         self.snapshot_source = source
         self.index_labels = {e["index"]: e.get("name", "") for e in els}
         self.elements = {e["index"]: e for e in els}
@@ -703,8 +698,11 @@ class PlaywrightManager:
             return False, how
         await asyncio.sleep(0.15)
         after = await self.fingerprint()
-        if did_state_change(before, after):
+        changed = did_state_change(before, after)
+        if changed is True:
             return True, how
+        if changed is None:
+            return False, how + "-unknown"
         return False, how + "-noop"
 
     async def click_index(self, index: int, timeout: int = 8000):
@@ -716,15 +714,15 @@ class PlaywrightManager:
 
         if rec.get("cx") is not None and rec.get("cy") is not None:
             ok, how = await self._click_and_verify(rec["cx"], rec["cy"], before, "ax-click")
-            if ok:
-                return True, how
+            if ok or how.endswith("-unknown"):
+                return ok, how
 
         sel = f'[data-agent-index="{index}"]'
         hit = await self._reachable(sel)
         if hit:
             ok, how = await self._click_and_verify(hit["cx"], hit["cy"], before, "click")
-            if ok:
-                return True, how
+            if ok or how.endswith("-unknown"):
+                return ok, how
 
         try:
             await self.page.evaluate(SCROLL_INTO_CENTER_JS, sel)
@@ -735,8 +733,8 @@ class PlaywrightManager:
         hit = await self._reachable(sel)
         if hit:
             ok, how = await self._click_and_verify(hit["cx"], hit["cy"], before, "scroll+click")
-            if ok:
-                return True, how
+            if ok or how.endswith("-unknown"):
+                return ok, how
 
         try:
             await self.page.keyboard.press("Escape")
@@ -747,8 +745,8 @@ class PlaywrightManager:
         hit = await self._reachable(sel)
         if hit:
             ok, how = await self._click_and_verify(hit["cx"], hit["cy"], before, "dismiss+click")
-            if ok:
-                return True, how
+            if ok or how.endswith("-unknown"):
+                return ok, how
 
         if rec.get("cx") is not None:
             return False, "ax-noop"
@@ -1021,7 +1019,17 @@ def snapshot() -> str:
                 logger.debug(f"snapshot auth check failed: {e}")
         return snap
 
-    return format_elements(_run_async(_snap()))
+    snap = _run_async(_snap())
+    from phase2_mcp.session_state import observe_page
+    tag = ""
+    if snap:
+        tag = observe_page(
+            url=snap.get("url") or "",
+            title=snap.get("title") or "",
+            elements=snap.get("elements") or [],
+        )
+    out = format_elements(snap)
+    return f"{out}\n{tag}" if tag else out
 
 
 def click_index(index) -> str:
@@ -1050,6 +1058,9 @@ def click_index(index) -> str:
     if how == "occluded":
         return (f"ERROR: [{index}] '{label}' is covered by an overlay and cannot be clicked. "
                 f"Close any cookie/consent banner or modal first, or use guide_user.")
+    if how.endswith("-unknown"):
+        return (f"INCONCLUSIVE: [{index}] '{label}' click was dispatched, but page state "
+                f"verification was unavailable ({how}). Inspect the page before continuing.")
     if how.endswith("-noop"):
         return (f"ERROR: [{index}] '{label}' click landed but the page did not change ({how}). "
                 f"A modal may be intercepting it — close it, then web_snapshot and retry.")
@@ -1176,7 +1187,9 @@ def get_page_text() -> str:
     text = _run_async(_get())
     if text:
         preview = text[:4000] + ("..." if len(text) > 4000 else "")
-        return f"Page text: {preview}"
+        from phase2_mcp.session_state import observe_page, STATE
+        tag = observe_page(url=STATE.url, title=STATE.title, text=text)
+        return f"Page text: {preview}\n{tag}"
     return "ERROR: Failed to get page text via Playwright"
 
 

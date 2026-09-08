@@ -19,7 +19,8 @@ import json
 import re
 from pathlib import Path
 
-SKILL_DIR = Path(__file__).parent / "memory"
+from mcp_vision.paths import state_dir
+SKILL_DIR = state_dir() / "memory"
 MAX_SKILLS = 100        # per specialist
 MIN_SIM = 0.25          # below this a skill is unrelated, don't inject
 DEDUP_SIM = 0.8         # above this it's the same task, update in place
@@ -50,13 +51,15 @@ def load_skills(specialist):
 
 
 def _save(specialist, skills):
-    SKILL_DIR.mkdir(exist_ok=True)
+    SKILL_DIR.mkdir(parents=True, exist_ok=True)
     _path(specialist).write_text(json.dumps(skills[-MAX_SKILLS:], indent=2, ensure_ascii=False))
 
 
 def distill(events):
     """Compress a successful trajectory into a skill. Returns None when there
     is nothing worth keeping (no clean tool calls)."""
+    if not any(e.get("type") == "completion" and e.get("status") == "verified" for e in events):
+        return None
     start = events[0] if events and events[0]["type"] == "run_start" else {}
     end = next((e for e in events if e["type"] == "run_end"), {})
     steps = [
@@ -64,7 +67,7 @@ def distill(events):
         for e in events
         if e["type"] == "tool_call"
         and e.get("status") != "error"
-        and not str(e.get("result", "")).startswith(("error", "ERROR"))
+        and not str(e.get("result", "")).lower().startswith(("error", "blocked", "unverified"))
     ]
     if not steps or not start.get("task"):
         return None
@@ -129,7 +132,7 @@ def demo():
     saved, SKILL_DIR = SKILL_DIR, Path(__file__).parent / "memory_demo"
     try:
         shutil.rmtree(SKILL_DIR, ignore_errors=True)
-        from trace import Tracer, load_trace
+        from mcp_vision.tracing import Tracer, load_trace
         out = SKILL_DIR / "traces"
 
         tr = Tracer(task="summarize the top story on hacker news", specialist="web-researcher", out_dir=out)
@@ -141,6 +144,7 @@ def demo():
         with tr.span("tool_call", tool="web_click_text", args={"text": "ghost"}) as s:
             s["result"] = "error: not found"          # failed step must be dropped
         tr.end(status="ok", answer="the top story is...")
+        tr.event("completion", status="verified")
         events = load_trace(tr.path)
 
         skill = learn("web-researcher", events)

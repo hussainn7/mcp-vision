@@ -58,8 +58,22 @@ def _web(name, *args, **kwargs):
     return getattr(pt, name)(*args, **kwargs)
 
 
-def web_navigate(url):
-    return _web("navigate", url)
+def web_navigate(url, reason=None, destination_confidence=None,
+                 entity_sources=None, requires_identity_verification=None, **_k):
+    from phase2_mcp.session_state import gate_navigate, observe_page
+    decision = gate_navigate(url)
+    result = _web("navigate", decision.url)
+    extra = []
+    if decision.note:
+        extra.append(decision.note)
+    if decision.needs_identity:
+        extra.append("Discover identity from the page (web_snapshot / web_read) before opening a personal URL.")
+    extra.append(observe_page(url=decision.url))
+    from phase2_mcp.session_state import recovery_prompt
+    hint = recovery_prompt()
+    if hint:
+        extra.append("[verify] " + hint)
+    return str(result) + "\n" + "\n".join(x for x in extra if x)
 
 
 def web_list_tabs():
@@ -133,6 +147,7 @@ def guide_user(goal):
         w = cfg.inference_width
         img = img.resize((w, int(img.height * w / img.width)))
     buf = cfg.output_dir / "_guide.png"
+    buf.parent.mkdir(parents=True, exist_ok=True)
     img.save(buf)
 
     if cfg.model_backend != "local":
@@ -174,7 +189,11 @@ _STR = {"type": "string"}
 _INT = {"type": "integer"}
 
 WEB_SCHEMAS = {
-    "web_navigate": _fn("web_navigate", "Open a URL or switch to an existing tab in the attached Chrome.", ["url"], {"url": _STR}),
+    "web_navigate": _fn(
+        "web_navigate",
+        "Open a URL in Chrome. For 'my account/mail/profile' tasks, pass the application root (e.g. https://mail.google.com), not a guessed username URL. The runtime rewrites inferred personal URLs.",
+        ["url"], {"url": _STR},
+    ),
     "web_list_tabs": _fn("web_list_tabs", "List all currently open tabs in Chrome.", [], {}),
     "web_switch_tab": _fn("web_switch_tab", "Switch active tab by title, URL keyword, or index.", ["target"], {"target": _STR}),
     "web_read": _fn("web_read", "Read the main text content of the current page.", [], {}),
@@ -200,10 +219,11 @@ WEB_FNS = {
     "guide_user": guide_user,
 }
 
-# Legacy text/role clicks pause for approval. web_click doesn't need to: it
-# can't reach a purchase/submit control — playwright_tools._looks_risky refuses
-# those in code — so plain navigation clicks flow without prompt spam.
-DANGEROUS = {"web_click_text", "web_click_role"}
+# Legacy personal-profile/native actions require operator review. Labels alone
+# cannot tell whether a click submits, buys, or changes an account.
+DANGEROUS = {"web_click_text", "web_click_role", "web_click", "web_type_into",
+             "delete_file", "write_file", "web_press", "web_type",
+             "create_note", "add_reminder", "create_event", "open_app"}
 
 
 def _entry(name, fn, schema):
@@ -228,9 +248,9 @@ def demo():
     assert REGISTRY["web_click_text"]["dangerous"]
     assert REGISTRY["create_note"]["verify"] is not None       # gate carried over
     assert REGISTRY["web_read"]["verify"] is None
-    # index-based web tools exist and don't spam approval (guarded in code)
-    for t in ("web_snapshot", "web_click", "web_type_into"):
-        assert t in REGISTRY and not REGISTRY[t]["dangerous"]
+    assert not REGISTRY["web_snapshot"]["dangerous"]
+    for t in ("web_click", "web_type_into", "delete_file"):
+        assert REGISTRY[t]["dangerous"]
     got = [s["function"]["name"] for s in SCHEMAS_FOR(["create_note", "web_read", "nope"])]
     assert got == ["create_note", "web_read"]                  # unknown dropped
     print("ok")

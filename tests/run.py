@@ -20,7 +20,7 @@ CHECKS = [
     [sys.executable, "phase2_mcp/page_snapshot.py"],
     [sys.executable, "phase2_mcp/chrome_bridge.py"],
     [sys.executable, "phase2_mcp/chrome_native.py"],
-    [sys.executable, "phase2_mcp/tab_router.py"],
+    [sys.executable, "phase2_mcp/session_state.py"],
     [sys.executable, "phase2_mcp/ax_tree.py"],
     [sys.executable, "phase2_mcp/micro_vision.py"],
     [sys.executable, "phase2_mcp/client.py"],

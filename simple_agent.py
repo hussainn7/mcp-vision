@@ -69,9 +69,18 @@ def shrink(img: Image.Image, screen_w: int) -> tuple[Image.Image, float]:
     return img, screen_w / img.width
 
 
+def _confirm(summary: str) -> bool:
+    from mcp_vision.overlay.hud import confirm_action
+    return confirm_action(summary)
+
+
 def act(a: dict, scale: float) -> str:
     """Execute one action dict. Returns a short result string."""
     kind = a["action"]
+    if kind == "done":
+        return "done"
+    if not _confirm(f"Legacy screen agent requests {kind}: {a.get('text', '')}"):
+        return "blocked: operator did not confirm input"
     x, y = int(a.get("x", 0) * scale), int(a.get("y", 0) * scale)
 
     if kind == "click":
@@ -103,6 +112,8 @@ def prelaunch(task: str) -> str | None:
     if not m:
         return None
     app = m.group(1).strip()
+    if not _confirm(f"Open application: {app}"):
+        return "blocked: operator did not confirm launch"
     subprocess.run(["open", "-a", app], check=False)
     time.sleep(1.5)
     return f"open_app {app}"
@@ -134,6 +145,7 @@ def run(task: str, max_steps: int | None = None) -> str:
             "\n".join(f"{i + 1}. {h}" for i, h in enumerate(history)) or "  (nothing yet)"
         )
         buf = cfg.output_dir / "_frame.png"
+        buf.parent.mkdir(parents=True, exist_ok=True)
         img.save(buf)
 
         reply = ollama.chat(
@@ -150,7 +162,7 @@ def run(task: str, max_steps: int | None = None) -> str:
         print(f"[{step + 1}] {a['action']}: {a['reason']}")
 
         if a["action"] == "done":
-            return a.get("text", "done")
+            return "unverified: model reported completion: " + a.get("text", "done")
 
         history.append(act(a, scale))
         time.sleep(cfg.loop_delay)
@@ -174,7 +186,7 @@ def demo():
     # prelaunch pulls the app name out of the leading open/launch clause
     # ponytail: leading verb only; mid-task switches use the open_app action.
     import unittest.mock as _mock
-    with _mock.patch("subprocess.run"), _mock.patch("time.sleep"):
+    with _mock.patch("subprocess.run"), _mock.patch("time.sleep"), _mock.patch.dict(prelaunch.__globals__, _confirm=lambda _: True):
         assert prelaunch("open TextEdit and type hello") == "open_app TextEdit"
         assert prelaunch("launch Safari, search weather") == "open_app Safari"
         assert prelaunch("open System Settings") == "open_app System Settings"

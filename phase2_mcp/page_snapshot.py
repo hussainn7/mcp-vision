@@ -73,7 +73,7 @@ _JS_HELPERS = r"""
     if (!n) n = el.getAttribute('title') || '';
     if (!n) n = el.getAttribute('alt') || '';
     if (!n) n = el.innerText || '';
-    if (!n && typeof el.value === 'string') n = el.value;
+    if (!n && ['button', 'submit', 'reset'].includes(el.type) && typeof el.value === 'string') n = el.value;
     return n.replace(/\s+/g, ' ').trim().slice(0, 100);
   };
 
@@ -108,7 +108,7 @@ _JS_HELPERS = r"""
       if (x < 1 || y < 1 || x > window.innerWidth - 1 || y > window.innerHeight - 1) continue;
       const hit = document.elementFromPoint(x, y);
       if (!hit) continue;
-      if (hit === el || el.contains(hit) || hit.contains(el)) return [Math.round(x), Math.round(y)];
+      if (hit === el || el.contains(hit)) return [Math.round(x), Math.round(y)];
     }
     return null;
   };
@@ -120,7 +120,7 @@ SNAPSHOT_JS = r"""(maxElements) => {
   %(helpers)s
 
   const out = [];
-  const seen = new Set();
+  document.querySelectorAll('[data-agent-index]').forEach(el => el.removeAttribute('data-agent-index'));
   const pruned = {occluded: 0, offscreen: 0, disabled: 0};
   let i = 0;
 
@@ -146,9 +146,6 @@ SNAPSHOT_JS = r"""(maxElements) => {
     const point = reachablePoint(el, r);
     if (!point) { pruned.occluded++; continue; }
 
-    const key = role + '|' + name;
-    if (seen.has(key)) continue;
-    seen.add(key);
 
     el.setAttribute('data-agent-index', String(i));
     out.push({
@@ -159,7 +156,7 @@ SNAPSHOT_JS = r"""(maxElements) => {
     });
     i++;
   }
-  return {elements: out, pruned: pruned};
+  return {elements: out, pruned: pruned, url: location.href, title: document.title};
 }""" % {"helpers": _JS_HELPERS, "sel": json.dumps(_CANDIDATE_SELECTOR)}
 
 
@@ -273,7 +270,8 @@ def demo():
     # by hand once produced `[contenteditable=""]`, whose quotes closed the
     # literal early and made the whole snapshot a syntax error — which shows up
     # only as "0 elements found", never as an error. Check the literal instead.
-    at = SNAPSHOT_JS.index("querySelectorAll(") + len("querySelectorAll(")
+    candidate_call = "for (const el of document.querySelectorAll("
+    at = SNAPSHOT_JS.index(candidate_call) + len(candidate_call)
     embedded, _ = json.JSONDecoder().raw_decode(SNAPSHOT_JS[at:])
     assert embedded == _CANDIDATE_SELECTOR
     assert _CANDIDATE_SELECTOR.count("[") == _CANDIDATE_SELECTOR.count("]")

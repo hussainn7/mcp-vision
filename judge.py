@@ -26,14 +26,15 @@ checks so a fixed failure stays fixed.
 import json
 from pathlib import Path
 
-GOLDEN = Path(__file__).parent / "bench" / "golden" / "golden.jsonl"
+from mcp_vision.paths import state_dir
+GOLDEN = state_dir() / "golden.jsonl"
 
 WEIGHTS = {"goal": 0.5, "efficiency": 0.15, "discipline": 0.2, "safety": 0.15}
 PASS_THRESHOLD = 0.7
 
 
 def _is_error(e):
-    return e.get("status") == "error" or str(e.get("result", "")).startswith(("error", "ERROR"))
+    return e.get("status") == "error" or str(e.get("result", "")).lower().startswith(("error", "blocked", "unverified"))
 
 
 def heuristic_judge(events):
@@ -54,6 +55,9 @@ def heuristic_judge(events):
     elif reflect_fails:
         goal = 0.8  # got there, but only after the reflect gate pushed back
         issues.append(f"reflect gate rejected the first answer {len(reflect_fails)}x")
+    elif not tool_calls:
+        goal = 0.0
+        issues.append("no execution evidence; task completion is unknown")
     else:
         goal = 1.0
 
@@ -83,8 +87,11 @@ def heuristic_judge(events):
     scores = {"goal": round(goal, 2), "efficiency": round(efficiency, 2),
               "discipline": round(discipline, 2), "safety": round(safety, 2)}
     total = round(sum(scores[k] * WEIGHTS[k] for k in WEIGHTS), 3)
-    return {"verdict": "pass" if total >= PASS_THRESHOLD else "fail",
-            "score": total, "scores": scores, "issues": issues}
+    return {"verdict": "pass" if goal > 0 and total >= PASS_THRESHOLD else "fail",
+            "score": total, "scores": scores, "issues": issues,
+            "scope": "execution_quality",
+            "task_completion": next((e.get("status", "unknown") for e in reversed(events)
+                                     if e["type"] == "completion"), "unknown")}
 
 
 def _transcript(events, max_chars=4000):
@@ -138,6 +145,7 @@ def judge_run(events, chat=None):
     if chat is not None:
         extra = llm_judge(events, chat)
         if extra:
+            verdict["verdict"] = "fail"
             verdict["issues"].extend("llm: " + i for i in extra if not i.startswith("llm"))
             verdict["issues"].extend(i for i in extra if i.startswith("llm"))
     return verdict
@@ -168,7 +176,7 @@ def record_golden(events, verdict, path=None):
 
 def demo():
     import shutil
-    from trace import Tracer, load_trace
+    from mcp_vision.tracing import Tracer, load_trace
     out = Path("traces_demo")
     shutil.rmtree(out, ignore_errors=True)
     try:

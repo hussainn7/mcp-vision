@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -54,9 +54,12 @@ class ScreenInspectionResult(BaseModel):
 
 
 class ActionResult(BaseModel):
+    """ok means dispatch succeeded, never that the user's task is complete."""
     ok: bool
     message: str
     element_id: int | None = None
     confirmed: bool = True
     policy: Policy = Policy.SAFE_READ
     extra: dict[str, Any] = Field(default_factory=dict)
+    verification: Literal["unknown", "unverified", "verified"] = "unknown"
+    task_complete: bool = False

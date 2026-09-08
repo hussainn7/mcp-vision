@@ -23,7 +23,24 @@ def test_chrome_profile_prompt_extraction():
     assert extract_profile_from_prompt("Check my Gmail using my personal Chrome profile") == "personal"
     assert extract_profile_from_prompt("Search on GitHub in work profile") == "work"
     assert extract_profile_from_prompt("Open calendar with school profile") == "school"
+    assert extract_profile_from_prompt("open youtube in my Work chrome") == "Work"
     assert extract_profile_from_prompt("Just search for laptops") is None
+    assert extract_profile_from_prompt("I work on github") is None
+
+
+def test_extract_matches_real_profile_name(tmp_path: Path):
+    import json
+    (tmp_path / "Local State").write_text(json.dumps({
+        "profile": {
+            "info_cache": {
+                "Default": {"name": "Personal", "user_name": "a@x.com"},
+                "Profile 1": {"name": "Work", "user_name": "b@co.com"},
+            }
+        }
+    }))
+    assert extract_profile_from_prompt("gmail on my Work chrome", tmp_path) == "Work"
+    assert extract_profile_from_prompt("use Profile 1", tmp_path) == "Profile 1"
+    assert extract_profile_from_prompt("open gmail in Profile 1 chrome", tmp_path) == "Profile 1"
 
 
 def test_chrome_profile_resolution_fallback():
@@ -38,6 +55,16 @@ def test_agent_profile_dir_not_system_chrome():
     assert not is_system_chrome_user_data_dir(profile_dir)
     assert profile_dir == get_agent_chrome_user_data_dir("personal")
     assert sub is None
+
+
+@pytest.mark.parametrize("system", [
+    Path.home() / "Library/Application Support/Google/Chrome",
+    Path.home() / ".config/google-chrome",
+    Path.home() / ".config/google-chrome-stable",
+    Path.home() / ".config/chromium",
+])
+def test_system_profile_paths_are_recognized_cross_platform(system: Path):
+    assert is_system_chrome_user_data_dir(system)
 
 
 def test_auth_detection_google_signin():

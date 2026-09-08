@@ -9,6 +9,21 @@ import click
 from mcp_vision.log import configure
 
 
+def agent_cli() -> None:
+    """Installed entry point for the optional provider-backed example agent."""
+    import agent
+    argv = sys.argv[1:]
+    if not argv or argv == ["--help"]:
+        click.echo('mac-agent [--as general] [--model local|claude|gpt|gemini] "task"')
+        return
+    spec, backend, tui, task, debug = agent._parse_argv(argv)
+    if not task:
+        raise click.UsageError("give a task")
+    from dashboard import Dashboard
+    click.echo(agent.run(task, spec, backend=backend,
+                         dashboard=Dashboard(task=task, enabled=tui), debug_state=debug))
+
+
 @click.group()
 def cli() -> None:
     """mcp-vision — screen perception and actuation over MCP."""
@@ -16,16 +31,27 @@ def cli() -> None:
 
 
 @cli.command()
-def serve() -> None:
+@click.option("--allow-browser-writes", is_flag=True, help="Allow routine browser input; risky actions still require local confirmation.")
+@click.option("--headed", is_flag=True, help="Show the isolated browser (requires a display on the executor).")
+@click.option("--origin", multiple=True, help="Restrict browser requests to these exact HTTP(S) origins. Repeat for dependencies.")
+def serve(allow_browser_writes: bool, headed: bool, origin: tuple[str, ...]) -> None:
     """Run the MCP server on stdio (stdout is JSON-RPC only)."""
     from mcp_vision.server import main
-    main()
+    main(allow_browser_writes=allow_browser_writes, headless=not headed, allowed_origins=origin)
+
+
+@cli.command()
+def demo() -> None:
+    """Exercise receipts in disposable Chromium, with no model or real accounts."""
+    import asyncio
+    from mcp_vision.demo import run_demo
+    sys.exit(0 if asyncio.run(run_demo()) else 1)
 
 
 @cli.command()
 @click.option("--command", default=None, help="Override the server executable written into host configs.")
 def install(command: str | None) -> None:
-    """Register mcp-vision in Claude Desktop and Cursor."""
+    """Register mcp-vision in Claude Desktop, Cursor, and Codex."""
     from mcp_vision.utils.config_sync import install_hosts
     paths = install_hosts(command)
     for p in paths:
@@ -40,11 +66,9 @@ def connect() -> None:
     cn.ensure_chrome()
     if sys.platform == "darwin":
         click.echo("Using your installed Chrome via AppleScript.")
-        click.echo("No DevTools attach — Google will not see webdriver / the automation infobar.")
+        click.echo("Experimental personal-profile access. Prefer serve for an isolated browser.")
         return
-    cn.get_relay()
-    click.echo(cn.install_hint())
-    click.echo("Leave this terminal open, then run the agent.")
+    raise click.ClickException("The legacy extension relay is experimental. Use mcp-vision serve for the isolated cross-platform browser.")
 
 
 @cli.command()

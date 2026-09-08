@@ -38,12 +38,13 @@ from phase2_mcp.playwright_tools import cleanup_playwright
 from dashboard import Dashboard
 from runtime import coerce_args, parse_subgoals, remaining_subgoals, stale_snapshot
 from tools import REGISTRY, SCHEMAS_FOR
-from trace import Tracer
+from mcp_vision.tracing import Tracer
 import skills as skill_lib
 
 ROOT = Path(__file__).parent
 SPECS = ROOT / "specialists.toml"
-MEM_DIR = ROOT / "memory"
+from mcp_vision.paths import state_dir
+MEM_DIR = state_dir() / "memory"
 
 
 # --- specialists -------------------------------------------------------------
@@ -68,7 +69,7 @@ def load_memory(name):
 
 
 def save_memory(name, mem):
-    MEM_DIR.mkdir(exist_ok=True)
+    MEM_DIR.mkdir(parents=True, exist_ok=True)
     mem = {k: v[-50:] for k, v in mem.items()}
     _mem_path(name).write_text(json.dumps(mem, indent=2))
 
@@ -112,13 +113,19 @@ def reflect(chat, task, answer):
 def approve(name, args):
     """HITL gate: terminal y/n before an irreversible action."""
     print(f"\n[approval needed] {name}({json.dumps(args)})")
-    return input("  run this? [y/N] ").strip().lower() in ("y", "yes")
+    try:
+        return input("  run this? [y/N] ").strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        return False
 
 
 # --- the loop ----------------------------------------------------------------
 
 def run(task, specialist="general", max_steps=None, approver=approve,
-        chat=None, backend=None, trace_dir=None, learn=True, dashboard=None):
+        chat=None, backend=None, trace_dir=None, learn=True, dashboard=None,
+        debug_state=False, completion_check=None):
+    from phase2_mcp.session_state import bind_task, format_debug, reject_unverified_answer, recovery_prompt
+    bind_task(task)
     specs = load_specialists()
     if specialist not in specs:
         return f"unknown specialist '{specialist}'. choose from: {', '.join(specs)}"
@@ -135,26 +142,26 @@ def run(task, specialist="general", max_steps=None, approver=approve,
     system = spec["prompt"] + memory_block(specialist) + skill_lib.skills_block(specialist, task)
     messages = [{"role": "system", "content": system}]
 
-    if spec.get("plan"):
-        with tr.span("plan") as s:
-            plan = make_plan(chat, spec["prompt"], task)
-            s["plan"] = plan
-        subgoals = parse_subgoals(plan)
-        print(f"Plan:\n{plan}\n")
-        messages.append({"role": "user", "content": f"Task: {task}\n\nPlan:\n{plan}\n\nExecute it, one tool call at a time."})
-    else:
-        messages.append({"role": "user", "content": task})
-
-    schemas = SCHEMAS_FOR(allowed)
-    reflected = False
     final, status = "hit max steps", "error"
-    subgoals = []
 
     # A cloud backend can fail mid-run (bad key, network blip, rate limit).
     # This must never lose the trace: whatever happened up to that point still
     # gets closed out, judged, and — if it's a real failure — added to the
     # golden regression set, exactly like any other bad run.
     try:
+        if spec.get("plan"):
+            with tr.span("plan") as s:
+                plan = make_plan(chat, spec["prompt"], task)
+                s["plan"] = plan
+            subgoals = parse_subgoals(plan)
+            print(f"Plan:\n{plan}\n")
+            messages.append({"role": "user", "content": f"Task: {task}\n\nPlan:\n{plan}\n\nExecute it, one tool call at a time."})
+        else:
+            messages.append({"role": "user", "content": task})
+
+        schemas = SCHEMAS_FOR(allowed)
+        subgoals = parse_subgoals(plan) if spec.get("plan") else []
+
         for _ in range(max_steps):
             n_tools = sum(1 for m in messages if m.get("role") == "tool")
             if n_tools > 6:
@@ -168,20 +175,22 @@ def run(task, specialist="general", max_steps=None, approver=approve,
 
             if not msg.get("tool_calls"):
                 answer = (msg.get("content") or "").strip()
-                if not reflected:  # Reflect/Critic: check the goal once before quitting
-                    reflected = True
-                    verdict = reflect(chat, task, answer)
-                    ok = verdict.lower().startswith("yes")
-                    tr.event("reflect", verdict=verdict, ok=ok)
-                    if not ok:
-                        print(f"  reflect: {verdict}")
-                        used = [e.get("tool") for e in tr.events
-                                if e["type"] == "tool_call" and e.get("status") != "error"]
-                        left = remaining_subgoals(subgoals, used) if subgoals else []
-                        extra = f" Remaining: {'; '.join(left)}." if left else ""
-                        messages.append({"role": "user", "content": f"Not fully done: {verdict}{extra} Keep going."})
-                        continue
-                record(specialist, "successes", f"{task} -> {answer[:120]}")
+                blocked = reject_unverified_answer(answer)
+                if blocked:
+                    print(f"  verify: {blocked}")
+                    messages.append({"role": "user", "content": blocked + " Keep going."})
+                    continue
+                verdict = reflect(chat, task, answer)
+                ok = verdict.lower().startswith("yes")
+                tr.event("reflect", verdict=verdict, ok=ok)
+                if not ok:
+                    print(f"  reflect: {verdict}")
+                    used = [e.get("tool") for e in tr.events
+                            if e["type"] == "tool_call" and e.get("status") != "error"]
+                    left = remaining_subgoals(subgoals, used) if subgoals else []
+                    extra = f" Remaining: {'; '.join(left)}." if left else ""
+                    messages.append({"role": "user", "content": f"Not fully done: {verdict}{extra} Keep going."})
+                    continue
                 final, status = answer, "ok"
                 break
 
@@ -217,12 +226,17 @@ def run(task, specialist="general", max_steps=None, approver=approve,
                     if stale_snapshot(result):
                         result = result.rstrip(".") + ". Take a fresh web_snapshot before retrying."
 
-                    if result.startswith("error:") or result.startswith("ERROR"):
+                    if result.lower().startswith(("error", "blocked", "unverified")):
+                        s["status"] = "error"
                         record(specialist, "failures", f"{name}: {result[:120]}")
                     elif entry["verify"]:  # eval gate: confirm it actually landed
-                        problem = entry["verify"](**args)
+                        try:
+                            problem = entry["verify"](**args)
+                        except Exception as e:
+                            problem = f"verification unavailable: {e}"
                         tr.event("verify", tool=name, ok=not problem, problem=problem or "")
                         if problem:
+                            s["status"] = "error"
                             result = f"error: action ran but verification failed: {problem}"
                             record(specialist, "failures", f"{name}: {problem}")
                     s["result"] = result
@@ -231,6 +245,11 @@ def run(task, specialist="general", max_steps=None, approver=approve,
                           confidence=0.9 if not str(result).lower().startswith("error") else 0.25,
                           status=s.get("status", "ok"))
                 print(f"     {result[:120]}")
+                hint = recovery_prompt()
+                if hint and hint not in result:
+                    result = str(result) + "\n[verify] " + hint
+                if debug_state:
+                    print(format_debug())
                 messages.append({"role": "tool", "tool_name": name, "tool_call_id": call_id, "content": result})
     except backends.BackendError as e:
         final, status = f"error: {e}", "error"
@@ -239,15 +258,29 @@ def run(task, specialist="general", max_steps=None, approver=approve,
         cleanup_playwright()
         tr.end(status=status, answer=final)
 
-        # score the run; failures become regression data, passes become skills
+        # A host-provided predicate is independent of the model's self-report.
+        completion = "unknown"
+        if completion_check is not None and status == "ok":
+            try:
+                completion = "verified" if completion_check() is True else "unverified"
+            except Exception:
+                completion = "unverified"
+        tr.event("completion", status=completion)
+        if completion == "verified":
+            record(specialist, "successes", f"{task} -> {final[:120]}")
+        # Execution quality is useful feedback, but is not proof of the goal.
         verdict = judge_run(tr.events)
         tr.event("judge", **verdict)
+        tr.export_otel()
         if verdict["verdict"] == "fail":
             record_golden(tr.events, verdict)
-        elif learn and status == "ok":
+        elif learn and status == "ok" and completion == "verified":
             skill_lib.learn(specialist, tr.events)
         print(f"  [judge] {verdict['verdict']} score={verdict['score']} · trace: {tr.path}")
         dash.summary()
+        if debug_state:
+            print()
+            print(format_debug())
 
     return final
 
@@ -282,6 +315,11 @@ def _parse_argv(argv):
     )
     specialist, backend, tui = None, None, False
     explicit_specialist = False
+    debug_state = False
+
+    if "--debug-state" in argv:
+        debug_state = True
+        argv = [a for a in argv if a != "--debug-state"]
 
     if "--list-profiles" in argv:
         base = Path(cfg.chrome_user_data_dir) if cfg.chrome_user_data_dir else get_default_chrome_user_data_dir()
@@ -292,8 +330,9 @@ def _parse_argv(argv):
             email_info = f" ({p['email']})" if p["email"] else ""
             print(f"  • {p['name']}{email_info}  [{dir_name}]")
         print("=" * 60)
-        print("Default: attach to running Chrome via chrome://inspect/#remote-debugging")
-        print("Isolated fallback: SCREEN_AGENT_CHROME_ISOLATED=true\n")
+        print("Default: whatever Chrome window is already open (your current profile).")
+        print("Pick one:  python agent.py --profile Work \"...\"")
+        print("Or just say it:  \"check gmail on my Work profile\"\n")
         sys.exit(0)
 
     if "--as" in argv:
@@ -339,7 +378,7 @@ def _parse_argv(argv):
         else:
             specialist = "general"
 
-    return specialist, backend, tui, task_str
+    return specialist, backend, tui, task_str, debug_state
 
 
 def scripted_chat(responses):
@@ -362,13 +401,14 @@ def demo():
             assert t in REGISTRY, f"{name}: unknown tool {t}"
         assert len(SCHEMAS_FOR(spec["tools"])) == len(spec["tools"])
 
-    assert _parse_argv(["--as", "google-ads", "hello", "world"]) == ("google-ads", None, False, "hello world")
-    assert _parse_argv(["just", "a", "task"]) == ("general", None, False, "just a task")
-    assert _parse_argv(["--model", "claude", "--as", "general", "hi"]) == ("general", "anthropic", False, "hi")
-    assert _parse_argv(["--model", "gpt", "hi"]) == ("general", "openai", False, "hi")
-    assert _parse_argv(["--profile", "Profile 1", "--as", "general", "hi"]) == ("general", None, False, "hi")
+    assert _parse_argv(["--as", "google-ads", "hello", "world"]) == ("google-ads", None, False, "hello world", False)
+    assert _parse_argv(["just", "a", "task"]) == ("general", None, False, "just a task", False)
+    assert _parse_argv(["--model", "claude", "--as", "general", "hi"]) == ("general", "anthropic", False, "hi", False)
+    assert _parse_argv(["--model", "gpt", "hi"]) == ("general", "openai", False, "hi", False)
+    assert _parse_argv(["--profile", "Profile 1", "--as", "general", "hi"]) == ("general", None, False, "hi", False)
     assert cfg.chrome_profile_directory == "Profile 1"
-    assert _parse_argv(["--tui", "--as", "general", "hi"]) == ("general", None, True, "hi")
+    assert _parse_argv(["--tui", "--as", "general", "hi"]) == ("general", None, True, "hi", False)
+    assert _parse_argv(["--debug-state", "--as", "general", "hi"])[4] is True
 
     import judge as judge_mod
     global MEM_DIR
@@ -391,10 +431,11 @@ def demo():
             {"content": "yes"},                                   # reflect verdict
         ])
         out = run("list the current directory", specialist="general",
-                  chat=chat, trace_dir=trace_dir, max_steps=4)
+                  chat=chat, trace_dir=trace_dir, max_steps=4,
+                  completion_check=lambda: True)
         assert out == "Listed the current directory."
 
-        from trace import load_trace
+        from mcp_vision.tracing import load_trace
         tfiles = sorted(trace_dir.glob("run_*.jsonl"), key=lambda p: p.stat().st_mtime)
         assert tfiles, "no trajectory written"
         events = load_trace(tfiles[-1])
@@ -476,12 +517,14 @@ if __name__ == "__main__":
     if argv and argv[0] == "--demo":
         demo()
     elif argv:
-        spec, model, tui, task = _parse_argv(argv)
+        spec, model, tui, task, debug_state = _parse_argv(argv)
         if not task:
             print("give a task, e.g. python agent.py --as web-researcher \"...\"")
         else:
+            if cfg.chrome_profile_directory:
+                print(f"  Chrome profile: {cfg.chrome_profile_directory}")
             dash = Dashboard(task=task, enabled=tui)
-            print(run(task, spec, backend=model, dashboard=dash))
+            print(run(task, spec, backend=model, dashboard=dash, debug_state=debug_state))
     else:
         print(f"Usage: python agent.py --as <specialist> [--model local|claude|gpt|gemini|nvidia] \"<task>\"")
         print(f"Specialists: {', '.join(load_specialists())}")

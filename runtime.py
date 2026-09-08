@@ -50,15 +50,14 @@ def is_ui_tool(name: str) -> bool:
     return name in UI_TOOLS
 
 
-def did_state_change(before, after, min_text_delta: int = 3) -> bool:
-    """True when a fingerprint shows the UI actually moved.
+def did_state_change(before, after, min_text_delta: int = 3) -> bool | None:
+    """Compare two fingerprints: changed, unchanged, or unknown.
 
     Fingerprints are dicts with optional url/title/scroll/n/text. A missing
-    side (None) is treated as "unknown, assume it changed" so we never block
-    a real click on a failed probe.
+    side is unknown, never evidence that an action was a no-op.
     """
     if not before or not after:
-        return True
+        return None
     if before.get("url") != after.get("url"):
         return True
     if before.get("title") != after.get("title"):
@@ -146,7 +145,7 @@ def demo():
     assert not did_state_change(a, dict(a))
     assert did_state_change(a, {**a, "url": "https://b.com"})
     assert did_state_change(a, {**a, "n": 12})
-    assert did_state_change(None, a)  # unknown -> don't block
+    assert did_state_change(None, a) is None
     assert not did_state_change(a, {**a, "text": "hello world!"})  # 1-char delta
     assert did_state_change(a, {**a, "text": "hello saved"})  # several chars moved
     assert did_state_change(a, {**a, "text": "a completely different page body here"})
