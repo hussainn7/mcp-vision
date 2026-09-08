@@ -4,12 +4,20 @@ from mcp_vision.browser import BrowserRuntime, Receipt, origin
 from mcp_vision.redaction import redact
 from mcp_vision.core.governor import Governor, classify
 from mcp_vision.core.models import Policy
+from runtime import did_state_change
 
 
 def test_receipts_do_not_infer_task_completion():
     for status in ("verified", "unverified", "blocked", "stale", "error"):
         assert Receipt(status=status, action="test", message="test").task_complete is False
     assert Receipt(status="error", action="click", message="timeout", executed=None).executed is None
+
+
+def test_missing_fingerprint_is_unknown():
+    fingerprint = {"url": "https://example.com", "title": "Example", "n": 1,
+                   "scroll": 0, "text": "hello"}
+    assert did_state_change(None, fingerprint) is None
+    assert did_state_change(fingerprint, None) is None
 
 
 def test_origin_normalization():

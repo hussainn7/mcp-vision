@@ -155,6 +155,28 @@ async def test_noop_click_is_not_success(pw):
         await browser.close()
 
 
+async def test_unavailable_fingerprint_is_inconclusive(pw):
+    """A failed state probe must not turn an uncertain click into a no-op."""
+    browser = await pw.chromium.launch(headless=True)
+    page = await browser.new_page()
+    await page.set_content("<button>Maybe</button>")
+    try:
+        mgr = await _mgr(page, browser, pw)
+        snap = await mgr.snapshot()
+        maybe = snap["elements"][0]
+
+        async def unavailable():
+            return None
+
+        mgr.fingerprint = unavailable
+        ok, how = await mgr.click_index(maybe["index"])
+        assert not ok
+        assert how.endswith("-unknown"), how
+        assert "noop" not in how
+    finally:
+        await browser.close()
+
+
 async def test_viewport_metrics(pw):
     from phase1_vision.coords import VIEWPORT_METRICS_JS, from_browser, css_to_screenshot
     browser = await pw.chromium.launch(headless=True)
@@ -190,6 +212,7 @@ async def main():
         test_modal_occlusion,
         test_shop_risky_and_cart,
         test_noop_click_is_not_success,
+        test_unavailable_fingerprint_is_inconclusive,
         test_viewport_metrics,
     ]
     failed = []
