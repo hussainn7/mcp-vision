@@ -45,6 +45,14 @@ _IDENTITY_NAME_RE = re.compile(
 )
 _AUTHED_HINTS = ("sign out", "log out", "your profile", "account menu", "signed in")
 _LOGGED_OUT_HINTS = ("sign in", "log in", "create account", "create an account")
+_IDENTITY_TASK_RE = re.compile(
+    r"\bmy\s+(?:[A-Za-z0-9._-]+\s+)?"
+    r"(?:account|profile|user\s*name|handle|login|identity)\b|"
+    r"\b(?:which|what)\s+account\b|"
+    r"\b(?:logged|signed)\s+in\b|"
+    r"\bwho\s+am\s+i\b",
+    re.I,
+)
 
 
 @dataclass
@@ -126,10 +134,7 @@ def identity_verified(host: str | None = None) -> str | None:
 
 def task_needs_identity(task: str | None = None) -> bool:
     t = (task if task is not None else STATE.task) or ""
-    tl = t.lower()
-    if re.search(r"\bmy\b", tl):
-        return True
-    return any(s in tl for s in ("which account", "logged in", "signed in", "who am i"))
+    return _IDENTITY_TASK_RE.search(t) is not None
 
 
 def _host(url: str) -> str:

@@ -14,6 +14,7 @@ from phase2_mcp.session_state import (
     observe_page,
     recovery_prompt,
     reject_unverified_answer,
+    task_needs_identity,
     user_supplied_destination,
     STATE,
 )
@@ -159,6 +160,14 @@ def test_unverified_answer_is_rejected():
     assert reject_unverified_answer("Your username is real-user") is None
     bind_task("summarize the top story on Hacker News")
     assert reject_unverified_answer("The top story is about widgets") is None
+
+
+def test_ordinary_possessive_does_not_require_identity():
+    assert not task_needs_identity("Summarize My Favorite Tools")
+
+
+def test_account_possessive_requires_identity():
+    assert task_needs_identity("Use my GitHub account")
 
 
 def test_recovery_prompt_after_guess():
