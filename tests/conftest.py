@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+collect_ignore = ["run_workflow_test.py"]
+
 import pytest
 
 from mcp_vision.core.actuate import RecordingActuator, set_actuator
