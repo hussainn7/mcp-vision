@@ -1,0 +1,8 @@
+{
+  "Navigate + Snapshot": true,
+  "Fill + Verify": true,
+  "Stale Rejection": true,
+  "Real Page (Wikipedia)": true,
+  "Origin Enforcement": true,
+  "Rapid Sequential Fills": true
+}
