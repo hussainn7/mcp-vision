@@ -64,6 +64,17 @@ def task(goal: str, url: str, success: str, mode: str) -> None:
 
 
 @cli.command()
+@click.option("--port", type=click.IntRange(0, 65535), default=7331, show_default=True)
+def studio(port: int) -> None:
+    """Open a local workspace for missions, host setup, and live browser evidence."""
+    from mcp_vision.studio import serve_studio
+    try:
+        serve_studio(port)
+    except OSError as exc:
+        raise click.ClickException(f"Cannot start Mission Control: {exc}. Try --port 7332.") from exc
+
+
+@cli.command()
 @click.option("--command", default=None, help="Override the server executable written into host configs.")
 def install(command: str | None) -> None:
     """Register mcp-vision in Claude Desktop, Cursor, and Codex."""

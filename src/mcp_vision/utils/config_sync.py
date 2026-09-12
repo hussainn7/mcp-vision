@@ -19,7 +19,7 @@ SERVER_NAME = "mcp-vision"
 def _entry(command: str | None = None) -> dict[str, object]:
     cmd = command or shutil.which("mcp-vision") or sys.executable
     if cmd.endswith("python") or cmd.endswith("python3") or "python" in Path(cmd).name:
-        return {"command": cmd, "args": ["-m", "mcp_vision.server"]}
+        return {"command": cmd, "args": ["-m", "mcp_vision.cli", "serve"]}
     return {"command": cmd, "args": ["serve"]}
 
 

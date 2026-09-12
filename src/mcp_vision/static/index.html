@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mission Control · MCP-Vision</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to workspace</a>
+  <aside class="sidebar">
+    <a class="brand" href="#workspace"><span class="brand-mark">✳</span><span>mcp<span class="brand-light">vision</span><small>THE LOCAL ACTION LAYER</small></span></a>
+    <div class="workspace-label"><span class="avatar">P</span><span>Personal workspace<small>On this computer</small></span><span class="local-dot"></span></div>
+    <p class="nav-label">WORKSPACE</p>
+    <nav aria-label="Main navigation">
+      <a href="#workspace" data-view="workspace" class="active"><span data-icon="grid"></span>Mission control<span class="nav-key">⌘</span></a>
+      <a href="#recipes" data-view="recipes"><span data-icon="layers"></span>Recipe library<span class="count">4</span></a>
+      <a href="#activity" data-view="activity"><span data-icon="activity"></span>Session activity<span id="activity-count" class="count">0</span></a>
+      <a href="#connections" data-view="connections"><span data-icon="plug"></span>Connections</a>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="local-card"><span class="local-dot"></span><strong>Local by design</strong><p>Your workspace stays here.<br>Your agent brings the model.</p></div>
+      <a class="source-link" href="https://github.com/hussainn7/mcp-vision" target="_blank" rel="noreferrer"><span data-icon="code"></span>Open source, open possibilities<span>↗</span></a>
+      <div class="version">MCP-VISION <span>DEVELOPMENT PREVIEW</span></div>
+    </div>
+  </aside>
+  <div class="app-shell">
+    <header class="topbar"><div>Workspace <span>/</span> <strong id="breadcrumb">Mission control</strong></div><div class="topbar-right"><span class="status-pill"><span class="local-dot"></span>Local workspace</span><a href="#connections">Connect your agent <span>↗</span></a></div></header>
+    <main id="main">
+      <section id="view-workspace" class="view">
+        <div class="hero">
+          <div><div class="eyebrow"><span></span> LESS CLICKING. MORE DOING.</div><h1>A little direction.<br><em>A lot done.</em></h1><p>Give your agent a mission. Let it work through the details.<br>Keep the evidence, and the final say.</p><div class="hero-tags"><span>Any MCP host</span><i>·</i><span>Your choice of model</span><i>·</i><span>Local execution</span></div></div>
+          <div class="orbit" aria-hidden="true"><div class="orbit-ring ring-one"></div><div class="orbit-ring ring-two"></div><div class="orbit-center">✳</div><div class="orbit-label label-task"><span>↗</span>Your intent</div><div class="orbit-label label-agent"><span>⌘</span>Your agent</div><div class="orbit-label label-action"><span>✓</span>Visible evidence</div><span class="orbit-dot dot-a"></span><span class="orbit-dot dot-b"></span></div>
+        </div>
+        <div class="work-grid">
+          <section class="composer panel">
+            <div class="panel-heading"><h2><span data-icon="spark"></span>What should we work on?</h2><span class="tiny-badge">NEW MISSION</span></div>
+            <form id="mission-form">
+              <label class="sr-only" for="goal">Your task</label><textarea id="goal" name="goal" rows="3" required minlength="3" maxlength="4000" placeholder="Research a topic, compare a few options, check my site…"></textarea>
+              <div class="field-row"><label for="url">Starting page <span>optional</span><input id="url" name="url" type="url" maxlength="2048" placeholder="https://your-starting-point.com"></label></div>
+              <details class="mission-options"><summary>Define a successful result <span>+</span></summary><label for="success" class="sr-only">Success criteria</label><textarea id="success" rows="2" maxlength="2000" placeholder="What should your agent verify before calling this done?"></textarea></details>
+              <div class="composer-footer"><label class="mode-select"><span data-icon="shield"></span><select id="mode" aria-label="Mission boundary"><option value="observe">Observe only</option><option value="draft">Prepare a draft</option></select></label><button class="primary" type="submit" id="prepare">Prepare mission <span>↗</span></button></div>
+            </form>
+            <div class="composer-note"><span data-icon="info"></span>Creates a task brief to run in your connected agent.</div>
+          </section>
+          <section class="demo-card panel">
+            <div class="demo-header"><span class="tiny-badge">THE PROOF IS IN THE DOING</span><span class="demo-spark">✳</span></div>
+            <h2>See it act.<br>See what happened.</h2><p>Try a real browser run. Prepare a draft, verify the result, and watch the runtime block a submission.</p>
+            <div class="mini-steps"><span>01 <b>Observe</b></span><i>→</i><span>02 <b>Act</b></span><i>→</i><span>03 <b>Verify</b></span></div>
+            <button class="dark-button" id="open-demo"><span data-icon="play"></span>Try the live demo<span>↗</span></button><small>Disposable browser · No API key needed</small>
+          </section>
+        </div>
+        <section class="recipes-section"><div class="section-heading"><div><h2>A good place to start</h2><p>Small missions. Useful outcomes. Make one yours.</p></div><a href="#recipes">Explore recipes <span>↗</span></a></div><div id="home-recipes" class="recipe-grid"></div></section>
+        <div class="bottom-note"><span data-icon="shield"></span><span>Prepared is not completed. Every action tells you what was actually observed.</span><span class="mono">INTENT → ACTION → EVIDENCE</span></div>
+      </section>
+      <section id="view-recipes" class="view" hidden><div class="page-intro"><div class="eyebrow">A HEAD START, NOT A BLACK BOX</div><h1>Your next useful thing.</h1><p>Editable task recipes for the agent you already use.</p></div><label class="search-field"><span data-icon="search"></span><input id="recipe-search" type="search" placeholder="Find a recipe…" aria-label="Find a recipe"></label><div id="all-recipes" class="recipe-grid"></div><p id="no-recipes" hidden>No recipes match. Try “research”, “draft”, or “build”.</p><div class="explain-panel"><h2>From a recipe to a real result</h2><p>Choose a recipe, add a starting page, and define success. Copy the brief into a connected MCP host. Your host plans and executes; MCP-Vision checks targets and returns action evidence.</p></div></section>
+      <section id="view-activity" class="view" hidden><div class="page-intro"><div class="eyebrow">A LITTLE ACCOUNTABILITY</div><h1>The work, with receipts.</h1><p>Prepared briefs and browser runs from this tab. Cleared when you reload.</p></div><div id="activity-list"></div></section>
+      <section id="view-connections" class="view" hidden><div class="page-intro"><div class="eyebrow">BRING YOUR OWN BRAIN</div><h1>Your favorite agent.<br>A new set of hands.</h1><p>Connect MCP-Vision once. Use your host's natural-language task interface.</p></div><div class="connection-layout"><section class="panel connection-panel"><div class="host-tabs" role="tablist" aria-label="Agent host"><button role="tab" aria-selected="true" data-host="cursor">Cursor</button><button role="tab" aria-selected="false" data-host="claude">Claude Desktop</button><button role="tab" aria-selected="false" data-host="claude-code">Claude Code</button><button role="tab" aria-selected="false" data-host="other">Other MCP host</button></div><h2 id="host-title"></h2><p id="host-help"></p><label class="toggle"><input type="checkbox" id="writes">Enable routine input in the isolated browser</label><p class="muted small">Detected submissions and sensitive actions still need local confirmation.</p><pre id="host-config" tabindex="0"></pre><button id="copy-config" class="primary">Copy configuration<span data-icon="copy"></span></button><p class="small muted">Configuration instructions only. This page does not detect or change your host setup.</p></section><aside class="explain-panel connection-notes"><span class="large-icon" data-icon="plug"></span><h2>One runtime.<br>Your model.</h2><p>The model in your MCP host handles planning. MCP-Vision gives it grounded browser tools and explicit evidence.</p><hr><p><strong>Browser first</strong><br>An isolated Chromium session. No personal cookies inherited.</p><p><strong>Desktop is experimental</strong><br>Native input requires local confirmation and OS permissions.</p><p><strong>You choose where data goes</strong><br>Cloud hosts may send observations to their model provider.</p></aside></div></section>
+    </main>
+    <footer>Built for the way you work.<span>MCP-Vision · MIT licensed · Made by Hussain</span></footer>
+  </div>
+  <dialog id="brief-dialog"><div class="dialog-head"><span class="eyebrow">YOUR MISSION, READY TO HAND OFF</span><button class="icon-button" data-close="brief-dialog" aria-label="Close mission brief">×</button></div><h2>Clear intent. Better execution.</h2><p class="muted">Copy this brief into your connected agent to start the task.</p><div id="brief-boundary" class="notice"></div><ol id="brief-steps"></ol><details><summary>View the full agent prompt</summary><pre id="brief-prompt" tabindex="0"></pre></details><div id="brief-missing" class="small muted"></div><div class="dialog-actions"><button class="secondary" id="export-brief">Export .md<span data-icon="download"></span></button><button class="primary" id="copy-brief">Copy task brief<span data-icon="copy"></span></button></div></dialog>
+  <dialog id="demo-dialog" class="wide-dialog"><div class="dialog-head"><span class="eyebrow">REAL BROWSER. REAL RECEIPTS.</span><button class="icon-button" data-close="demo-dialog" aria-label="Close live demo">×</button></div><h2>A small mission, end to end.</h2><p class="muted">A fixed workflow in a disposable browser. No model or external accounts.</p><form id="demo-form"><label for="demo-title">Give your draft a title</label><div class="demo-input-row"><input id="demo-title" required maxlength="200" value="Ideas worth building"><button type="submit" class="primary" id="run-demo">Run browser demo<span data-icon="play"></span></button></div></form><div id="demo-progress" role="status" hidden><span class="spinner"></span>Chromium is running the workflow. Waiting for observed results…</div><div id="demo-result"></div></dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body></html>
