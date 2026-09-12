@@ -1,7 +1,8 @@
 [project]
-name = "mcp-vision"
+name = "mcp-vision-runtime"
 version = "0.3.0"
 description = "Model-neutral computer-use runtime with grounded actions and explicit evidence"
+authors = [{name = "Hussain"}]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,6 +35,8 @@ screen-agent = "simple_agent:main"
 
 [project.urls]
 Homepage = "https://github.com/hussainn7/mcp-vision"
+Repository = "https://github.com/hussainn7/mcp-vision"
+Issues = "https://github.com/hussainn7/mcp-vision/issues"
 
 [build-system]
 requires = ["hatchling"]

@@ -17,15 +17,75 @@ HTML = '''<html><body>
 <button id="second" onclick="document.querySelector('#result').textContent='Second selected'">Choose</button>
 <form onsubmit="event.preventDefault();document.querySelector('#result').textContent='Submitted'">
 <button>Next</button></form><input type="password" aria-label="Credential">
+<label for="track">Track</label><select id="track"><option value="">Choose</option><option value="eng">Engineering</option></select>
+<label><input id="updates" type="checkbox"> Contact me</label>
+<label for="start-date">Start date</label><input id="start-date" type="date">
+<label><input id="day-shift" name="shift" type="radio" value="day"> Day shift</label>
+<label><input id="night-shift" name="shift" type="radio" value="night"> Night shift</label>
+<label for="resume">Resume</label><input id="resume" type="file">
 <div id="result"></div></body></html>'''
 
+JOB_HTML = '''<html><body>
+<section id="listing">
+  <h1>Runtime Engineer</h1><p>Build reliable open-source automation.</p>
+  <button onclick="show('basics')">Apply</button>
+</section>
+<section id="basics" hidden>
+  <h2>Basic information</h2>
+  <label for="full-name">Full name</label><input id="full-name">
+  <label for="email">Email</label><input id="email" type="email">
+  <p id="required-error"></p>
+  <button type="button" onclick="validateBasics()">Continue</button>
+</section>
+<section id="experience" hidden>
+  <h2>Experience</h2>
+  <label for="level">Level</label><select id="level">
+    <option value="">Choose</option><option value="senior">Senior</option>
+  </select>
+  <label for="summary">Experience summary</label><textarea id="summary"></textarea>
+  <label for="job-resume">Test resume</label><input id="job-resume" type="file">
+  <label><input id="certify" type="checkbox"> I certify this is disposable test data</label>
+  <button type="button" onclick="showReview()">Review</button>
+</section>
+<section id="review" hidden>
+  <h2>Review application</h2><pre id="review-data"></pre>
+  <form onsubmit="event.preventDefault();show('received')">
+    <button>Submit application</button>
+  </form>
+</section>
+<section id="received" hidden><h2>Application received</h2></section>
+<script>
+function show(id) {
+  for (const section of document.querySelectorAll('section')) section.hidden = section.id !== id;
+}
+function validateBasics() {
+  if (!document.querySelector('#full-name').value || !document.querySelector('#email').value) {
+    document.querySelector('#required-error').textContent = 'Complete required fields';
+    return;
+  }
+  show('experience');
+}
+function showReview() {
+  const file = document.querySelector('#job-resume').files[0];
+  document.querySelector('#review-data').textContent = [
+    document.querySelector('#full-name').value,
+    document.querySelector('#email').value,
+    document.querySelector('#level').value,
+    document.querySelector('#summary').value,
+    file ? file.name : 'No file',
+    document.querySelector('#certify').checked ? 'Certified' : 'Not certified'
+  ].join(' | ');
+  show('review');
+}
+</script></body></html>'''
 
-def run_case(fn):
+
+def run_case(fn, html=HTML):
     async def run():
         async with async_playwright() as p:
             browser = await p.chromium.launch()
             page = await browser.new_page()
-            await page.route("https://fixture.test/**", lambda route: route.fulfill(body=HTML, content_type="text/html"))
+            await page.route("https://fixture.test/**", lambda route: route.fulfill(body=html, content_type="text/html"))
             await page.goto("https://fixture.test/")
             runtime = BrowserRuntime(page=page, allow_writes=True)
             try:
@@ -103,6 +163,17 @@ def test_overlay_blocks_previously_observed_target():
     run_case(case)
 
 
+def test_disabled_target_is_not_clicked():
+    async def case(runtime, page):
+        snap = await runtime.snapshot()
+        await page.locator("#first").evaluate("el => { el.disabled = true; }")
+        result = await runtime.click(snap.snapshot_id, target(snap, "Choose"))
+        assert result.status == "stale" and result.executed is False
+        assert await page.locator("#result").inner_text() == ""
+
+    run_case(case)
+
+
 def test_default_readonly_and_unconfirmed_submission_and_password():
     async def case(runtime, page):
         runtime.allow_writes = False
@@ -116,6 +187,149 @@ def test_default_readonly_and_unconfirmed_submission_and_password():
         assert await page.input_value("input[type=password]") == ""
         assert await page.locator("#result").inner_text() == ""
     run_case(case)
+
+
+def test_form_controls_are_verified(tmp_path):
+    resume = tmp_path / "test-resume.txt"
+    resume.write_text("Disposable test resume. No personal data.")
+
+    async def case(runtime, page):
+        snap = await runtime.snapshot()
+        select = next(e for e in snap.elements if e["name"] == "Track" and e["role"] == "combobox")
+        assert {o["value"] for o in select["options"]} == {"", "eng"}
+        chosen = await runtime.select(snap.snapshot_id, select["index"], "eng")
+        assert chosen.status == "verified" and chosen.evidence["selected_value"] == "eng"
+        assert await page.input_value("#track") == "eng"
+
+        snap = await runtime.snapshot()
+        checkbox = next(e for e in snap.elements if e["role"] == "checkbox")
+        assert checkbox["checked"] is False
+        checked = await runtime.set_checked(snap.snapshot_id, checkbox["index"], True)
+        assert checked.status == "verified" and checked.evidence["checked"] is True
+        assert await page.is_checked("#updates")
+
+        snap = await runtime.snapshot()
+        date = await runtime.fill(snap.snapshot_id, target(snap, "Start date"), "2027-06-01")
+        assert date.status == "verified" and await page.input_value("#start-date") == "2027-06-01"
+
+        snap = await runtime.snapshot()
+        radio = next(e for e in snap.elements if e["name"] == "Night shift" and e["role"] == "radio")
+        selected = await runtime.set_checked(snap.snapshot_id, radio["index"], True)
+        assert selected.status == "verified" and await page.is_checked("#night-shift")
+        assert not await page.is_checked("#day-shift")
+
+        snap = await runtime.snapshot()
+        upload_index = target(snap, "Resume")
+        blocked = await runtime.upload(snap.snapshot_id, upload_index, str(resume))
+        assert blocked.status == "blocked" and await page.locator("#resume").evaluate("el => el.files.length") == 0
+
+        confirmations = []
+        runtime.governor = Governor(confirmer=lambda policy, summary: confirmations.append((policy, summary)) or True)
+        snap = await runtime.snapshot()
+        uploaded = await runtime.upload(snap.snapshot_id, target(snap, "Resume"), str(resume))
+        assert uploaded.status == "verified" and uploaded.evidence["file_name"] == resume.name
+        assert str(tmp_path) not in uploaded.model_dump_json()
+        assert len(confirmations) == 1
+        assert await page.locator("#resume").evaluate("el => el.files[0].name") == resume.name
+
+    run_case(case)
+
+
+def test_scroll_reveals_offscreen_control():
+    async def case(runtime, page):
+        await page.set_content("""<body style='margin:0;min-height:2400px'>
+          <p>Top</p><button style='position:absolute;top:1800px'
+          onclick="document.querySelector('#status').textContent='Reached'">Continue below</button>
+          <p id='status' style='position:absolute;top:1900px'>Waiting</p></body>""")
+        snap = await runtime.snapshot()
+        assert all(e["name"] != "Continue below" for e in snap.elements)
+        moved = await runtime.scroll(snap.snapshot_id, 1800)
+        assert moved.status == "verified" and moved.evidence["after_y"] > moved.evidence["before_y"]
+        assert (await runtime.scroll(snap.snapshot_id, 100)).status == "stale"
+        snap = await runtime.snapshot()
+        result = await runtime.click(snap.snapshot_id, target(snap, "Continue below"))
+        assert result.status == "unverified"
+        assert (await runtime.verify_text("Reached")).status == "verified"
+
+    run_case(case)
+
+
+def test_form_submit_asks_once_and_needs_separate_verification():
+    async def case(runtime, page):
+        confirmations = []
+        runtime.governor = Governor(confirmer=lambda policy, summary: confirmations.append((policy, summary)) or True)
+        snap = await runtime.snapshot()
+        receipt = await runtime.click(snap.snapshot_id, target(snap, "Next"))
+        assert receipt.status == "unverified" and receipt.task_complete is False
+        assert len(confirmations) == 1
+        assert confirmations[0][0].value == "RESTRICTED_ACTION"
+        assert (await runtime.verify_text("Submitted")).status == "verified"
+
+    run_case(case)
+
+
+def test_disposable_job_application_workflow(tmp_path):
+    resume = tmp_path / "test-resume.txt"
+    resume.write_text("Disposable test resume. No personal data.")
+
+    async def case(runtime, page):
+        confirmations = []
+
+        def confirm(policy, summary):
+            confirmations.append((policy, summary))
+            return summary.startswith("Upload")
+
+        runtime.governor = Governor(confirmer=confirm)
+
+        snap = await runtime.snapshot()
+        assert (await runtime.click(snap.snapshot_id, target(snap, "Apply"))).executed is True
+        assert (await runtime.verify_text("Basic information")).status == "verified"
+
+        snap = await runtime.snapshot()
+        assert (await runtime.click(snap.snapshot_id, target(snap, "Continue"))).executed is True
+        assert (await runtime.verify_text("Complete required fields")).status == "verified"
+
+        snap = await runtime.snapshot()
+        assert (await runtime.fill(snap.snapshot_id, target(snap, "Full name"), "Test Candidate")).status == "verified"
+        snap = await runtime.snapshot()
+        assert (await runtime.fill(snap.snapshot_id, target(snap, "Email"), "candidate@example.invalid")).status == "verified"
+        snap = await runtime.snapshot()
+        assert (await runtime.click(snap.snapshot_id, target(snap, "Continue"))).executed is True
+        assert (await runtime.verify_text("Experience")).status == "verified"
+
+        snap = await runtime.snapshot()
+        assert (await runtime.select(snap.snapshot_id, target(snap, "Level"), "senior")).status == "verified"
+        snap = await runtime.snapshot()
+        assert (await runtime.fill(
+            snap.snapshot_id, target(snap, "Experience summary"), "Five years testing agent runtimes."
+        )).status == "verified"
+        snap = await runtime.snapshot()
+        assert (await runtime.upload(snap.snapshot_id, target(snap, "Test resume"), str(resume))).status == "verified"
+        snap = await runtime.snapshot()
+        checkbox = next(e for e in snap.elements if e["role"] == "checkbox")
+        assert (await runtime.set_checked(snap.snapshot_id, checkbox["index"], True)).status == "verified"
+        snap = await runtime.snapshot()
+        assert (await runtime.click(snap.snapshot_id, target(snap, "Review"))).executed is True
+
+        review = await page.locator("#review-data").inner_text()
+        assert review == (
+            "Test Candidate | candidate@example.invalid | senior | "
+            "Five years testing agent runtimes. | test-resume.txt | Certified"
+        )
+
+        snap = await runtime.snapshot()
+        blocked = await runtime.click(snap.snapshot_id, target(snap, "Submit application"))
+        assert blocked.status == "blocked" and blocked.executed is False
+        assert await page.locator("#received").is_hidden()
+
+        runtime.governor = Governor(confirmer=lambda policy, summary: confirmations.append((policy, summary)) or True)
+        snap = await runtime.snapshot()
+        submitted = await runtime.click(snap.snapshot_id, target(snap, "Submit application"))
+        assert submitted.status == "unverified" and submitted.task_complete is False
+        assert (await runtime.verify_text("Application received")).status == "verified"
+        assert len(confirmations) == 3
+
+    run_case(case, JOB_HTML)
 
 
 def test_revalidate_after_human_confirmation():

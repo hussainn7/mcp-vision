@@ -11,6 +11,7 @@ import hashlib
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -52,7 +53,11 @@ class Target:
 _STATE_JS = r"""el => ({
   connected: el.isConnected && el.ownerDocument === document,
   html: el.outerHTML,
+  tag: el.tagName.toLowerCase(), type: (el.type || '').toLowerCase(),
   value: el.value, checked: el.checked, selectedIndex: el.selectedIndex,
+  options: el.options ? Array.from(el.options).map(o => ({
+    value: o.value, label: o.textContent.trim(), disabled: o.disabled
+  })) : [],
   labels: el.labels ? Array.from(el.labels).map(n => n.textContent) : [],
   labelledBy: (el.getAttribute('aria-labelledby') || '').split(/\s+/)
     .map(id => document.getElementById(id)?.textContent || ''),
@@ -169,6 +174,13 @@ class BrowserRuntime:
                 if not state["connected"]:
                     await handle.dispose()
                     continue
+                if state["tag"] == "select":
+                    rec["value"] = state["value"]
+                    rec["options"] = state["options"]
+                elif state["type"] in {"checkbox", "radio"}:
+                    rec["checked"] = bool(state["checked"])
+                elif state["type"] == "file":
+                    rec["input_type"] = "file"
                 self._targets[rec["index"]] = Target(handle, _signature(state), rec)
                 records.append(rec)
             text = await self.page.locator("body").inner_text(timeout=5000)
@@ -178,12 +190,16 @@ class BrowserRuntime:
             self._observed_at = time.monotonic()
             return self._snapshot
 
-    async def _target(self, snapshot_id, index):
+    async def _current_snapshot(self, snapshot_id):
         if (not self._snapshot or snapshot_id != self._snapshot.snapshot_id
                 or time.monotonic() - self._observed_at > self.snapshot_ttl
                 or self.page.url != self._snapshot.url):
             raise ValueError("snapshot expired or page changed; call browser_snapshot again")
         self._check_url(self.page.url)
+        return self._snapshot
+
+    async def _target(self, snapshot_id, index):
+        await self._current_snapshot(snapshot_id)
         target = self._targets.get(index)
         if not target or _signature(await target.handle.evaluate(_STATE_JS)) != target.signature:
             raise ValueError("target changed; call browser_snapshot again")
@@ -208,8 +224,11 @@ class BrowserRuntime:
                 target = await self._target(snapshot_id, index)
                 # Form submission is semantic, even when the label is "Next".
                 submits = await target.handle.evaluate("el => !!el.form && ['submit','image'].includes(el.type)")
-                if not self._allow("click_element", target) or (submits and not self.governor.allow(
-                        Policy.RESTRICTED_ACTION, "Submit this form")):
+                allowed = self.allow_writes and (
+                    self.governor.allow(Policy.RESTRICTED_ACTION, "Submit this form")
+                    if submits else self._allow("click_element", target)
+                )
+                if not allowed:
                     return Receipt(status="blocked", action="click", message="Write policy or confirmation denied the action.")
                 # Approval can take time: revalidate the exact same target.
                 await self._target(snapshot_id, index)
@@ -223,6 +242,122 @@ class BrowserRuntime:
                 return Receipt(status="stale", action="click", message=redact(str(e)))
             except Exception as e:
                 return Receipt(status="error", action="click", executed=executed, message=redact(str(e)))
+            finally:
+                await self._invalidate()
+
+    async def select(self, snapshot_id: str, index: int, value: str) -> Receipt:
+        async with self._lock:
+            executed = False
+            try:
+                target = await self._target(snapshot_id, index)
+                if await target.handle.evaluate("el => el.tagName.toLowerCase()") != "select":
+                    raise TypeError("target is not a select control")
+                if not self._allow("select_option", target, value):
+                    return Receipt(status="blocked", action="select", message="Write policy or confirmation denied the action.")
+                await self._target(snapshot_id, index)
+                executed = None
+                await target.handle.select_option(value=value, timeout=5000)
+                executed = True
+                actual = await target.handle.evaluate("el => el.value")
+                matches = actual == value
+                return Receipt(status="verified" if matches else "unverified", action="select", executed=True,
+                    message="Selected value read back." if matches else "Control did not retain the selected value.",
+                    evidence={"value_matches": matches, "selected_value": actual})
+            except ValueError as e:
+                return Receipt(status="stale", action="select", message=redact(str(e)))
+            except Exception as e:
+                return Receipt(status="error", action="select", executed=executed, message=redact(str(e)))
+            finally:
+                await self._invalidate()
+
+    async def set_checked(self, snapshot_id: str, index: int, checked: bool) -> Receipt:
+        async with self._lock:
+            executed = False
+            try:
+                target = await self._target(snapshot_id, index)
+                input_type = await target.handle.evaluate("el => (el.type || '').toLowerCase()")
+                if input_type not in {"checkbox", "radio"}:
+                    raise TypeError("target is not a checkbox or radio control")
+                if not self._allow("set_checked", target):
+                    return Receipt(status="blocked", action="set_checked", message="Write policy or confirmation denied the action.")
+                await self._target(snapshot_id, index)
+                executed = None
+                await target.handle.set_checked(checked, timeout=5000)
+                executed = True
+                actual = bool(await target.handle.evaluate("el => el.checked"))
+                matches = actual is checked
+                return Receipt(status="verified" if matches else "unverified", action="set_checked", executed=True,
+                    message="Checked state read back." if matches else "Control did not retain the requested checked state.",
+                    evidence={"checked_matches": matches, "checked": actual})
+            except ValueError as e:
+                return Receipt(status="stale", action="set_checked", message=redact(str(e)))
+            except Exception as e:
+                return Receipt(status="error", action="set_checked", executed=executed, message=redact(str(e)))
+            finally:
+                await self._invalidate()
+
+    async def upload(self, snapshot_id: str, index: int, path: str) -> Receipt:
+        async with self._lock:
+            executed = False
+            try:
+                target = await self._target(snapshot_id, index)
+                input_type = await target.handle.evaluate("el => (el.type || '').toLowerCase()")
+                if input_type != "file":
+                    raise TypeError("target is not a file input")
+                requested = Path(path).expanduser()
+                summary = f"Upload {requested.name or 'local file'} to {target.record['name'] or 'file input'}"
+                if not self.allow_writes or not self.governor.allow(Policy.RESTRICTED_ACTION, summary):
+                    return Receipt(status="blocked", action="upload", message="Write policy or confirmation denied the action.")
+                try:
+                    file = requested.resolve(strict=True)
+                    if not file.is_file():
+                        raise OSError
+                    if file.stat().st_size > 10 * 1024 * 1024:
+                        return Receipt(status="error", action="upload", message="upload file exceeds 10 MiB")
+                except OSError:
+                    return Receipt(status="error", action="upload", message="upload file is unavailable")
+                await self._target(snapshot_id, index)
+                executed = None
+                await target.handle.set_input_files(str(file), timeout=5000)
+                executed = True
+                uploaded = await target.handle.evaluate(
+                    "el => Array.from(el.files || []).map(f => ({name: f.name, size: f.size}))")
+                matches = len(uploaded) == 1 and uploaded[0]["name"] == file.name
+                return Receipt(status="verified" if matches else "unverified", action="upload", executed=True,
+                    message="Selected file read back." if matches else "File input did not retain the selected file.",
+                    evidence={"file_matches": matches, "file_name": file.name,
+                              "bytes": uploaded[0]["size"] if uploaded else None})
+            except ValueError as e:
+                return Receipt(status="stale", action="upload", executed=executed, message=redact(str(e)))
+            except Exception as e:
+                return Receipt(status="error", action="upload", executed=executed, message=redact(str(e)))
+            finally:
+                await self._invalidate()
+
+    async def scroll(self, snapshot_id: str, delta_y: int) -> Receipt:
+        async with self._lock:
+            executed = False
+            if not isinstance(delta_y, int) or isinstance(delta_y, bool) or delta_y == 0 or abs(delta_y) > 10000:
+                return Receipt(status="error", action="scroll",
+                               message="delta_y must be a non-zero integer between -10000 and 10000")
+            try:
+                await self._current_snapshot(snapshot_id)
+                executed = None
+                position = await self.page.evaluate("""delta => {
+                    const before = Math.round(window.scrollY || 0);
+                    window.scrollBy(0, delta);
+                    return {before, after: Math.round(window.scrollY || 0)};
+                }""", delta_y)
+                executed = True
+                changed = position["before"] != position["after"]
+                return Receipt(status="verified" if changed else "unverified", action="scroll", executed=True,
+                    message="Scroll position changed." if changed else "Scroll reached a page boundary.",
+                    evidence={"before_y": position["before"], "after_y": position["after"],
+                              "requested_delta_y": delta_y})
+            except ValueError as e:
+                return Receipt(status="stale", action="scroll", executed=executed, message=redact(str(e)))
+            except Exception as e:
+                return Receipt(status="error", action="scroll", executed=executed, message=redact(str(e)))
             finally:
                 await self._invalidate()
 

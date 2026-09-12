@@ -23,15 +23,17 @@ Your agent + your model
 
 ## Try it
 
-Python 3.12+ is required. Install from this checkout (these changes are not yet a published package):
+Python 3.12+ and [uv](https://docs.astral.sh/uv/) are required. Install the development preview directly from GitHub:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-python -m pip install .
-python -m playwright install chromium
+uv tool install git+https://github.com/hussainn7/mcp-vision.git
+uv tool run --from playwright playwright install chromium
 mcp-vision demo
 ```
+
+The future PyPI distribution is named `mcp-vision-runtime`; the `mcp-vision` distribution on PyPI belongs to an unrelated project. The installed command remains `mcp-vision`.
+
+For checkout development, use `python -m pip install .` in a virtual environment, followed by `python -m playwright install chromium`.
 
 On a Linux test server, use `python -m playwright install --with-deps chromium` to install browser system dependencies. Run the demo on the computer/server that should execute browser actions. No model download, GPU, API key, or personal browser profile is needed. It fills a disposable draft, clicks Preview, and verifies the resulting text.
 
@@ -39,7 +41,7 @@ The demo deliberately reports the click as `unverified`: dispatch is not proof o
 
 ## Connect your agent
 
-Register the installed executable with Claude Desktop, Cursor, and Codex (when their local clients are installed):
+Register the installed executable with Claude Desktop, Claude Code, Cursor, and Codex (when their local clients are installed):
 
 ```bash
 mcp-vision install
@@ -84,6 +86,10 @@ Ask your agent: “Inspect the page, use the returned snapshot ID and control in
 | `browser_snapshot()` | Read text and numbered controls with a snapshot ID |
 | `browser_click(snapshot_id, index)` | Revalidate and click an exact observed control |
 | `browser_fill(snapshot_id, index, text)` | Fill and read back a field value |
+| `browser_select(snapshot_id, index, value)` | Select an option value and read it back |
+| `browser_set_checked(snapshot_id, index, checked)` | Set and verify a checkbox or radio control |
+| `browser_upload(snapshot_id, index, path)` | Confirm, upload, and verify one local file up to 10 MiB |
+| `browser_scroll(snapshot_id, delta_y)` | Scroll from a fresh observation and report the resulting position |
 | `browser_verify_text(text)` | Observe a visible-text predicate |
 | `browser_screenshot()` | Return PNG pixels to the host |
 | `inspect_screen()` / `screen_image()` | Inspect desktop regions / return display pixels |

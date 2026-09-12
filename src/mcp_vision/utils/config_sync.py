@@ -41,6 +41,10 @@ def codex_config_path() -> Path:
     return Path.home() / ".codex" / "config.toml"
 
 
+def claude_code_config_path() -> Path:
+    return Path.home() / ".claude.json"
+
+
 def _merge(path: Path, command: str | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, object] = {}
@@ -86,12 +90,40 @@ def _install_codex(command: str | None = None) -> Path | None:
     return codex_config_path()
 
 
+def _install_claude_code(command: str | None = None) -> Path | None:
+    """Register the server at user scope when Claude Code is installed."""
+    claude = shutil.which("claude")
+    if not claude:
+        log.info("Claude Code CLI not found; skipping Claude Code registration")
+        return None
+    existing = subprocess.run(
+        [claude, "mcp", "get", SERVER_NAME],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if existing.returncode != 0:
+        entry = _entry(command)
+        subprocess.run(
+            [claude, "mcp", "add", "--scope", "user", SERVER_NAME, "--",
+             str(entry["command"]), *[str(arg) for arg in entry["args"]]],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        log.info("registered %s with Claude Code", SERVER_NAME)
+    return claude_code_config_path()
+
+
 def install_hosts(command: str | None = None) -> list[Path]:
-    """Idempotently install for Claude Desktop, Cursor, and Codex when present."""
+    """Idempotently install for Claude, Cursor, and Codex when present."""
     paths = [
         _merge(claude_config_path(), command),
         _merge(cursor_config_path(), command),
     ]
+    claude_code_path = _install_claude_code(command)
+    if claude_code_path:
+        paths.append(claude_code_path)
     codex_path = _install_codex(command)
     if codex_path:
         paths.append(codex_path)

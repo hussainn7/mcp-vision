@@ -40,6 +40,35 @@ def test_registers_codex_with_official_cli(tmp_path: Path, monkeypatch) -> None:
                          "/opt/mcp-vision", "serve"]
 
 
+def test_registers_claude_code_at_user_scope(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    config = tmp_path / "claude.json"
+    monkeypatch.setattr(config_sync, "claude_code_config_path", lambda: config)
+    monkeypatch.setattr(config_sync.shutil, "which", lambda name: "/bin/claude" if name == "claude" else None)
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=1 if "get" in args else 0)
+
+    monkeypatch.setattr(config_sync.subprocess, "run", run)
+    assert config_sync._install_claude_code("/opt/mcp-vision") == config
+    assert calls[-1] == ["/bin/claude", "mcp", "add", "--scope", "user",
+                         "mcp-vision", "--", "/opt/mcp-vision", "serve"]
+
+
+def test_existing_claude_code_registration_is_left_intact(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config_sync.shutil, "which", lambda _name: "/bin/claude")
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(config_sync.subprocess, "run", run)
+    assert config_sync._install_claude_code("/new/path") == config_sync.claude_code_config_path()
+    assert len(calls) == 1 and calls[0][2] == "get"
+
+
 def test_existing_codex_registration_is_left_intact(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(config_sync.shutil, "which", lambda _name: "/bin/codex")
     calls = []

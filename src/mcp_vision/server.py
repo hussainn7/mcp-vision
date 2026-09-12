@@ -240,6 +240,26 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=()) -> An
         return await browser.fill(snapshot_id, index, text)
 
     @mcp.tool()
+    async def browser_select(snapshot_id: str, index: int, value: str) -> Receipt:
+        """Select an option value and read it back. Requires operator-enabled writes."""
+        return await browser.select(snapshot_id, index, value)
+
+    @mcp.tool()
+    async def browser_set_checked(snapshot_id: str, index: int, checked: bool) -> Receipt:
+        """Set a checkbox or radio control and read its state back. Requires operator-enabled writes."""
+        return await browser.set_checked(snapshot_id, index, checked)
+
+    @mcp.tool()
+    async def browser_upload(snapshot_id: str, index: int, path: str) -> Receipt:
+        """Upload one local file up to 10 MiB. Always requires local operator confirmation."""
+        return await browser.upload(snapshot_id, index, path)
+
+    @mcp.tool()
+    async def browser_scroll(snapshot_id: str, delta_y: int) -> Receipt:
+        """Scroll the current page from a fresh snapshot and report the observed position."""
+        return await browser.scroll(snapshot_id, delta_y)
+
+    @mcp.tool()
     async def browser_verify_text(text: str) -> Receipt:
         """Check a visible-text predicate. This observation does not prove the whole task succeeded."""
         return await browser.verify_text(text)
