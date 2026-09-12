@@ -31,6 +31,7 @@ function element(tag, className, text) {
 }
 let toastTimer;
 function toast(message) {
+  (document.querySelector("dialog[open]") || document.body).append($("toast"));
   $("toast").textContent = message;
   $("toast").hidden = false;
   clearTimeout(toastTimer);
@@ -168,7 +169,7 @@ function renderDemo(result) {
     row.append(head, element("p", "", receipt.message), details); receipts.append(row);
   });
   const screenshot = element("img", "demo-screenshot"); screenshot.src = "data:image/png;base64," + result.screenshot; screenshot.alt = "Actual Chromium screenshot after the demo, showing the retained draft and Preview ready.";
-  preview.append(screenshot, element("p", "small muted", "Captured from the real browser after execution. The draft was retained; the form was not submitted."));
+  preview.append(screenshot, element("p", "small muted", result.checks.draft_retained && result.checks.form_unsubmitted ? "Captured from the real browser after execution. The draft was retained; the form was not submitted." : "Captured after execution. One or more final checks failed; inspect the receipts before drawing conclusions."));
   const exportButton = element("button", "secondary", "Export action receipts ↓");
   exportButton.addEventListener("click", () => { const {screenshot, ...report} = result; download("mcp-vision-receipts.json", JSON.stringify(report, null, 2), "application/json"); });
   preview.append(exportButton); grid.append(receipts, preview);

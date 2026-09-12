@@ -41,6 +41,34 @@ The demo deliberately reports the click as `unverified`: dispatch is not proof o
 
 ## Connect your agent
 
+### Mission Control
+
+Run `mcp-vision studio`, then open [the local workspace](http://127.0.0.1:7331).
+Pick a recipe, describe your task, and define a successful result. Copy the generated
+brief into your connected agent. Cursor, Claude Desktop, Claude Code, and generic
+MCP connection instructions are available in the workspace.
+
+The live demo runs a real, disposable Chromium workflow and displays six action
+receipts plus a screenshot. It checks field retention, rejects an old observation,
+verifies a preview, and blocks submission. No API key or model is required.
+
+Mission Control prepares briefs; it does not autonomously execute arbitrary tasks.
+Your MCP host supplies the planning and model. Session activity is held in the tab
+and cleared on reload. The workspace binds only to loopback and loads no remote assets.
+
+For a terminal handoff:
+
+```bash
+mcp-vision task "Compare these options" --url https://example.com --success "A sourced comparison table"
+```
+
+Hosts supporting MCP prompts can request `mission`. For browser input, the new
+`browser_act(action, name, role, text)` tool refreshes the observation and resolves an
+exact, unique control name before calling the existing action gates. Duplicate or
+missing matches block; use snapshot IDs and indices to disambiguate.
+
+### Register a host
+
 Register the installed executable with Claude Desktop, Claude Code, Cursor, and Codex (when their local clients are installed):
 
 ```bash
