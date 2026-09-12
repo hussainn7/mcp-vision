@@ -267,6 +267,25 @@ class BrowserRuntime:
             except Exception as e:
                 return Receipt(status="error", action="verify_text", message=redact(str(e)))
 
+    async def act(self, action: Literal["click", "fill"], name: str, role: str = "", text: str = "") -> Receipt:
+        """Refresh and resolve an exact unique name, then use the normal freshness gate."""
+        if action not in {"click", "fill"} or not name.strip():
+            return Receipt(status="error", action=str(action), message="Choose click or fill and a non-empty exact control name.")
+        try:
+            snap = await self.snapshot()
+            matches = [e for e in snap.elements if e["name"] == name and (not role or e["role"] == role)]
+            if len(matches) != 1:
+                return Receipt(status="blocked", action=action,
+                    message=f"Expected one exact target; found {len(matches)}. Inspect and use snapshot_id/index to disambiguate.",
+                    evidence={"matches": len(matches)})
+            index = matches[0]["index"]
+            # The existing gate catches concurrent observations or page changes.
+            if action == "fill":
+                return await self.fill(snap.snapshot_id, index, text)
+            return await self.click(snap.snapshot_id, index)
+        except Exception as e:
+            return Receipt(status="error", action=action, message=redact(str(e)))
+
     async def screenshot(self) -> bytes:
         async with self._lock:
             await self._ensure()

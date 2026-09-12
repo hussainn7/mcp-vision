@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from functools import wraps
 from threading import RLock
 import time
@@ -207,6 +207,17 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=()) -> An
     mcp.tool()(click_element)
     mcp.tool()(type_text)
     mcp.tool()(press_key_combination)
+
+    @mcp.prompt()
+    def mission(goal: str, url: str = "", success: str = "", mode: Literal["observe", "draft"] = "observe") -> str:
+        """Turn a user task into an evidence-driven workflow. No model call or action is made."""
+        from mcp_vision.missions import Mission, brief
+        return brief(Mission(goal=goal, url=url, success=success, mode=mode))["prompt"]
+
+    @mcp.tool()
+    async def browser_act(action: Literal["click", "fill"], name: str, role: str = "", text: str = "") -> Receipt:
+        """Refresh, match an exact unique observed control name, then click/fill. Ambiguity blocks; never guesses. Normal write policy applies."""
+        return await browser.act(action, name, role, text)
 
     @mcp.tool()
     async def browser_navigate(url: str) -> Receipt:

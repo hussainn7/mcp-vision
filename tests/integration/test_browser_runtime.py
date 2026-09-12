@@ -53,6 +53,22 @@ def test_fill_reads_back_and_consumes_snapshot():
     run_case(case)
 
 
+def test_named_action_resolves_unique_target_and_blocks_ambiguity():
+    async def case(runtime, page):
+        receipt = await runtime.act("fill", "Issue title", "textbox", "A grounded draft")
+        assert receipt.status == "verified" and receipt.evidence["value_matches"]
+        assert await page.input_value("#title") == "A grounded draft"
+        duplicate = await runtime.act("click", "Choose", "button")
+        assert duplicate.status == "blocked" and duplicate.evidence["matches"] == 2
+        assert not duplicate.executed and await page.locator("#result").inner_text() == ""
+        assert (await runtime.act("click", "Missing")).status == "blocked"
+        assert (await runtime.act("click", "Next", "button")).status == "blocked"
+        runtime.allow_writes = False
+        assert (await runtime.act("fill", "Issue title", "textbox", "no")).status == "blocked"
+        assert await page.input_value("#title") == "A grounded draft"
+    run_case(case)
+
+
 def test_duplicate_names_remain_distinct_and_click_is_not_completion():
     async def case(runtime, page):
         snap = await runtime.snapshot()

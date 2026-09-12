@@ -49,6 +49,21 @@ def demo() -> None:
 
 
 @cli.command()
+@click.argument("goal")
+@click.option("--url", default="", help="Starting HTTP(S) page.")
+@click.option("--success", default="", help="What an observed successful result looks like.")
+@click.option("--mode", type=click.Choice(["observe", "draft"]), default="observe")
+def task(goal: str, url: str, success: str, mode: str) -> None:
+    """Prepare a portable task prompt for your connected MCP host."""
+    from pydantic import ValidationError
+    from mcp_vision.missions import Mission, brief
+    try:
+        click.echo(brief(Mission(goal=goal, url=url, success=success, mode=mode))["prompt"])
+    except ValidationError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+
+@cli.command()
 @click.option("--command", default=None, help="Override the server executable written into host configs.")
 def install(command: str | None) -> None:
     """Register mcp-vision in Claude Desktop, Cursor, and Codex."""
