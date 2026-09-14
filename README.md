@@ -43,6 +43,11 @@ returned list. Call `browser_snapshot()` to inspect that tab. Use
 `browser_open_tab(url)` for new destinations so unrelated tabs are preserved.
 All existing action checks and confirmation gates still apply.
 
+Run `mcp-vision connect` to check the connection. On macOS, restricted actions
+show a native **Allow once / Deny** dialog, including the target site. The dialog
+defaults to Deny and expires; it works without an interactive terminal or the
+optional Qt overlay. Approval is followed by another target freshness check.
+
 Live-mode origin restrictions gate tool destinations; they do not intercept
 background traffic in your existing profile. Remote endpoints are rejected.
 Without `--browser live`, the isolated browser remains available for testing.

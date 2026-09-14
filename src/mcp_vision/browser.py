@@ -215,7 +215,7 @@ class BrowserRuntime:
         element = ScreenElement(id=rec["index"], label=rec["name"], role=rec["role"],
                                 bbox=box, cx=rec["cx"], cy=rec["cy"])
         policy = classify(action, element=element, text=text)
-        return self.governor.allow(policy, f'{action}: {rec["role"]} {rec["name"]}')
+        return self.governor.allow(policy, f'{action}: {rec["role"]} {rec["name"]}\nSite: {origin(self.page.url)}')
 
     async def click(self, snapshot_id: str, index: int) -> Receipt:
         async with self._lock:
@@ -225,7 +225,8 @@ class BrowserRuntime:
                 # Form submission is semantic, even when the label is "Next".
                 submits = await target.handle.evaluate("el => !!el.form && ['submit','image'].includes(el.type)")
                 allowed = self.allow_writes and (
-                    self.governor.allow(Policy.RESTRICTED_ACTION, "Submit this form")
+                    self.governor.allow(Policy.RESTRICTED_ACTION,
+                                        f'Submit this form: {target.record["name"]}\nSite: {origin(self.page.url)}')
                     if submits else self._allow("click_element", target)
                 )
                 if not allowed:

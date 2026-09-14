@@ -13,6 +13,11 @@ from a model-capable host. Task briefs and disposable demos alone do not meet it
   of a successful personal-account task.
 - Unit checks cover missing setup, loopback endpoint restrictions, MCP tool
   registration, and disconnect ownership.
+- macOS now uses a native, bounded Allow once / Deny dialog even with piped MCP
+  stdin. A harmless live display test received an explicit Allow once response;
+  no browser action followed. Cancellation and timeout paths are covered by tests.
+  A second live test expired and returned denied. The complete suite passed
+  132 tests after these changes.
 
 ## Still required
 

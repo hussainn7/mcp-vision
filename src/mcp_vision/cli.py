@@ -92,15 +92,22 @@ def install(command: str | None) -> None:
 
 @cli.command()
 def connect() -> None:
-    """Use your real Chrome without the automation banner (no CDP)."""
-    from phase2_mcp import chrome_native as cn
+    """Check the existing Chrome connection without changing browser settings."""
+    import asyncio
+    from mcp_vision.live_browser import LiveBrowserRuntime
 
-    cn.ensure_chrome()
-    if sys.platform == "darwin":
-        click.echo("Using your installed Chrome via AppleScript.")
-        click.echo("Experimental personal-profile access. Prefer serve for an isolated browser.")
-        return
-    raise click.ClickException("The legacy extension relay is experimental. Use mcp-vision serve for the isolated cross-platform browser.")
+    async def check():
+        runtime = LiveBrowserRuntime()
+        try:
+            return await runtime.tabs()
+        finally:
+            await runtime.close()
+
+    result = asyncio.run(check())
+    if not result["connected"]:
+        raise click.ClickException(result["error"])
+    click.echo(f'Connected to existing Chrome: {len(result["tabs"])} accessible tab(s).')
+    click.echo("Use mcp-vision serve --browser live in your MCP host. Chrome stays open.")
 
 
 @cli.command()

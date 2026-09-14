@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import sys
+import subprocess
+import math
 from typing import Callable
 
 from mcp_vision.core.models import BoundingBox
@@ -49,6 +51,28 @@ def _tty_confirm(prompt: str, timeout_s: float) -> bool:
     except EOFError:
         return False
     return line in {"y", "yes", " "}
+
+
+_MAC_DIALOG = '''on run argv
+    activate
+    set answer to display dialog (item 1 of argv) with title "MCP-Vision needs permission" buttons {"Deny", "Allow once"} default button "Deny" cancel button "Deny" with icon caution giving up after (item 2 of argv as integer)
+    if gave up of answer then return "denied"
+    if button returned of answer is "Allow once" then return "allowed"
+    return "denied"
+end run'''
+
+
+def _mac_confirm(prompt: str, timeout_s: float) -> bool:
+    """A separate native dialog works even when MCP stdin is a pipe."""
+    timeout = max(1, min(120, math.ceil(timeout_s)))
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", _MAC_DIALOG, prompt, str(timeout)],
+            capture_output=True, text=True, timeout=timeout + 3,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "allowed"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _qt_confirm(prompt: str, bbox: BoundingBox | None, timeout_s: float) -> bool:
@@ -111,6 +135,8 @@ def confirm_action(
     if _impl is not None:
         return _impl(prompt, bbox, timeout_s)
     if _has_display():
+        if sys.platform == "darwin":
+            return _mac_confirm(prompt, timeout_s)
         try:
             import PySide6  # noqa: F401
             return _qt_confirm(prompt, bbox, timeout_s)
