@@ -62,9 +62,24 @@ _MAC_DIALOG = '''on run argv
 end run'''
 
 
+def _mac_notify(prompt: str) -> None:
+    """Bounce the user even when the host is buried under other windows."""
+    text = prompt.replace("\\", "\\\\").replace('"', '\\"')[:180]
+    try:
+        subprocess.run(
+            ["osascript", "-e",
+             f'display notification "{text}" with title "MCP-Vision needs permission" '
+             f'sound name "Sosumi"'],
+            capture_output=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _mac_confirm(prompt: str, timeout_s: float) -> bool:
     """A separate native dialog works even when MCP stdin is a pipe."""
     timeout = max(1, min(120, math.ceil(timeout_s)))
+    _mac_notify(prompt)
     try:
         result = subprocess.run(
             ["osascript", "-e", _MAC_DIALOG, prompt, str(timeout)],

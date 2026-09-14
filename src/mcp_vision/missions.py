@@ -26,6 +26,22 @@ RECIPES = [
      "description": "Fill in the details and stop before the final send.",
      "goal": "Prepare a draft in the form on this page using the details I provide. Read back the fields and stop before submitting.",
      "success": "The intended fields retain their values and the form remains unsubmitted.", "mode": "draft"},
+    {"id": "email", "name": "Check email", "category": "Everyday work", "icon": "mail",
+     "description": "Scan inbox in your existing Chrome tab. Never send.",
+     "goal": "Using my existing Chrome session, open or select my email tab, list recent unread or important messages with subject and sender, and summarize what needs a reply. Do not open compose, do not send, do not delete.",
+     "success": "A short list of recent messages with subjects and what action I should take next. Inbox unchanged; no send.", "mode": "observe"},
+    {"id": "ebay", "name": "Research on eBay", "category": "Research", "icon": "search",
+     "description": "Compare listings without buying.",
+     "goal": "Search eBay for the product I name. Compare the top listings by price, condition, shipping, and seller rating. Stop before Buy It Now, Add to cart, or checkout.",
+     "success": "A comparison of several listings with prices and source links. No purchase action taken.", "mode": "observe"},
+    {"id": "flights", "name": "Find flights to SF", "category": "Travel", "icon": "flight",
+     "description": "Search flights for my dates. Stop before booking.",
+     "goal": "Find flights to San Francisco for the dates I provide. Compare a few options by price, duration, and stops. Stop before selecting seats, entering payment, or booking.",
+     "success": "A short list of flight options with airline, times, price, and source URL. No booking started.", "mode": "observe"},
+    {"id": "icollege", "name": "GSU iCollege this week", "category": "School", "icon": "school",
+     "description": "Use your logged-in Chrome tab for weekly work.",
+     "goal": "Using my existing Chrome session on GSU iCollege (icollege.gsu.edu), list what is due or needs attention this week across my courses. Do not submit assignments or post to discussions.",
+     "success": "A checklist of due items with course names and dates when visible. No submissions made.", "mode": "observe"},
 ]
 
 

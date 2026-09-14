@@ -52,8 +52,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._local():
             return
         if self.path == "/api/info":
-            self._reply(200, {"recipes": RECIPES, "server": _entry(), "execution": "host",
-                              "demo": "isolated-chromium"})
+            self._reply(200, {"recipes": RECIPES, "server": _entry(browser_mode="live"),
+                              "execution": "host", "demo": "isolated-chromium"})
             return
         assets = {"/": ("index.html", "text/html; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),

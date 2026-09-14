@@ -17,9 +17,15 @@ def test_read_is_safe() -> None:
 
 
 def test_password_and_delete_are_restricted() -> None:
+    from mcp_vision.core.governor import danger_url
     assert classify("click_element", element=_el("Password", "textbox")) is Policy.RESTRICTED_ACTION
     assert classify("click_element", element=_el("Delete account")) is Policy.RESTRICTED_ACTION
     assert classify("click_element", element=_el("Buy now")) is Policy.RESTRICTED_ACTION
+    assert classify("click_element", element=_el("Book flight")) is Policy.RESTRICTED_ACTION
+    assert classify("click_element", element=_el("Compose")) is Policy.RESTRICTED_ACTION
+    assert danger_url("https://shop.example/checkout")
+    assert danger_url("https://mail.google.com/mail/u/0/#compose")
+    assert classify("click_element", element=_el("Next"), url="https://pay.example/cart") is Policy.RESTRICTED_ACTION
 
 
 def test_routine_click_and_save() -> None:

@@ -91,12 +91,13 @@ def origin(url: str) -> str:
 
 class BrowserRuntime:
     def __init__(self, *, page=None, allow_writes=False, allowed_origins=(),
-                 governor=None, headless=True, snapshot_ttl=30):
+                 governor=None, headless=True, snapshot_ttl=30, channel=None):
         self.page = page
         self.allow_writes = allow_writes
         self.allowed_origins = frozenset(origin(x) for x in allowed_origins)
         self.governor = governor or Governor()
         self.headless = headless
+        self.channel = channel
         self.snapshot_ttl = snapshot_ttl
         self._playwright = self._browser = self._context = None
         self._snapshot = None
@@ -115,8 +116,16 @@ class BrowserRuntime:
         from playwright.async_api import async_playwright
         self._playwright = await async_playwright().start()
         try:
-            self._browser = await self._playwright.chromium.launch(headless=self.headless)
-            self._context = await self._browser.new_context(accept_downloads=False, service_workers="block")
+            launch = {"headless": self.headless, "args": ["--disable-blink-features=AutomationControlled"]}
+            if self.channel:
+                launch["channel"] = self.channel
+            self._browser = await self._playwright.chromium.launch(**launch)
+            self._context = await self._browser.new_context(
+                accept_downloads=False, service_workers="block",
+                viewport={"width": 1280, "height": 900},
+                user_agent=("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+            )
             if self.allowed_origins:
                 async def scoped_route(route):
                     try:
@@ -214,8 +223,9 @@ class BrowserRuntime:
         box = BoundingBox(x=rec["x"], y=rec["y"], w=rec["w"], h=rec["h"])
         element = ScreenElement(id=rec["index"], label=rec["name"], role=rec["role"],
                                 bbox=box, cx=rec["cx"], cy=rec["cy"])
-        policy = classify(action, element=element, text=text)
-        return self.governor.allow(policy, f'{action}: {rec["role"]} {rec["name"]}\nSite: {origin(self.page.url)}')
+        page_url = self.page.url if self.page else ""
+        policy = classify(action, element=element, text=text, url=page_url)
+        return self.governor.allow(policy, f'{action}: {rec["role"]} {rec["name"]}\nSite: {origin(page_url)}')
 
     async def click(self, snapshot_id: str, index: int) -> Receipt:
         async with self._lock:

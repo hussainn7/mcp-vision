@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 
 from mcp_vision.core.models import Policy, ScreenElement
 from mcp_vision.log import get_logger
@@ -13,8 +14,17 @@ SAFE_READ_ACTIONS = frozenset({"inspect_screen"})
 ROUTINE_ACTIONS = frozenset({"click_element", "type_text", "press_key_combination"})
 
 _RESTRICTED_LABEL = re.compile(
-    r"\b(password|passwd|pin|ssn|delete|trash|remove|rm|wipe|destroy|uninstall|format|"
-    r"buy|purchase|checkout|pay|send|submit|publish|post|confirm|terminal|iterm|sudo|root)\b",
+    r"\b(password|passwd|pin|ssn|cvv|cvc|delete|trash|remove|rm|wipe|destroy|uninstall|format|"
+    r"buy|purchase|checkout|pay|payment|send|submit|publish|post|confirm|book|booking|reserve|"
+    r"order|transfer|wire|authorize|subscribe|compose|place\s+order|complete\s+purchase|add\s+to\s+cart|"
+    r"terminal|iterm|sudo|root)\b",
+    re.I,
+)
+_DANGER_PATH = re.compile(
+    r"(/(checkout|cart|payment|billing|purchase|buy|order/confirm|place.?order|compose)(/|$|\?#?)|"
+    r"mail\.google\.com/.+#?compose|"
+    r"checkout\.stripe|"
+    r"paypal\.com/(cgi-bin/webscr|checkout))",
     re.I,
 )
 _RESTRICTED_KEYS = {
@@ -27,14 +37,27 @@ _RESTRICTED_KEYS = {
 }
 
 
+def danger_url(url: str) -> bool:
+    """True when the page itself is a high-stakes surface (pay/send/book)."""
+    try:
+        parts = urlsplit(url)
+    except Exception:
+        return False
+    blob = f"{parts.netloc}{parts.path}?{parts.query}#{parts.fragment}"
+    return bool(_DANGER_PATH.search(blob))
+
+
 def classify(
     action: str,
     element: ScreenElement | None = None,
     keys: list[str] | None = None,
     text: str = "",
+    url: str = "",
 ) -> Policy:
     if action in SAFE_READ_ACTIONS:
         return Policy.SAFE_READ
+    if url and danger_url(url) and action not in SAFE_READ_ACTIONS:
+        return Policy.RESTRICTED_ACTION
     blob = " ".join([
         (element.label if element else ""),
         (element.text if element else ""),

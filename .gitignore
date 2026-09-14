@@ -19,6 +19,8 @@ weights/icon_caption_florence/model.safetensors
 outputs/*.png
 outputs/*.jpg
 outputs/elements_*.json
+outputs/real_tasks/
+outputs/workflow_test/
 
 # Environment config
 .env
