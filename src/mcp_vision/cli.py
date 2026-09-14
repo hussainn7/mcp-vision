@@ -181,14 +181,86 @@ def connect(driver: str, wait: bool) -> None:
         click.echo("CDP driver shows Chrome's automation banner. Prefer --driver native when possible.")
 
 
+@cli.command()
+@click.option("--host", type=click.Choice(["cursor", "claude-desktop", "antigravity"]), default="cursor",
+              show_default=True)
+@click.option("--skip-playwright", is_flag=True, help="Skip Chromium download.")
+def setup(host: str, skip_playwright: bool) -> None:
+    """One-shot setup: wire your MCP host for live Chrome and check the connection."""
+    import shutil
+    import subprocess
+    from mcp_vision.utils.config_sync import install_host
+
+    if not skip_playwright:
+        click.echo("installing Chromium for demos…")
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False)
+
+    which = shutil.which("mcp-vision")
+    path = install_host(host, which, browser_mode="live", allow_writes=True)
+    click.echo(f"wired {host}: {path}")
+
+    try:
+        import asyncio
+        from mcp_vision.native_browser import NativeBrowserRuntime
+
+        async def check():
+            rt = NativeBrowserRuntime()
+            try:
+                return await rt.tabs()
+            finally:
+                await rt.close()
+
+        result = asyncio.run(check())
+        if result.get("connected"):
+            click.echo(f'Chrome ok ({result.get("driver")}): {len(result.get("tabs", []))} tab(s)')
+        else:
+            click.echo("Open Google Chrome, then run: mcp-vision connect")
+    except Exception:
+        click.echo("Open Google Chrome, then run: mcp-vision connect")
+
+    click.echo("")
+    click.echo('Try:  mcp-vision ask "flights to SFO from ATL next month"')
+    click.echo("Or ask Cursor/Claude after refreshing MCP.")
+
+
+@cli.command()
+@click.argument("query")
+@click.option("--model", "backend", default="local", show_default=True,
+              help="Summarizer backend: local (Ollama), anthropic, openai, gemini, nvidia, or none.")
+@click.option("--isolated", is_flag=True, help="Use disposable Chromium instead of your Chrome.")
+def ask(query: str, backend: str, isolated: bool) -> None:
+    """Run a query in Chrome and print a clean answer (summarizer runs on success)."""
+    import asyncio
+    from mcp_vision.ask import run_ask
+    be = None if backend in {"none", "off", "heuristic"} else backend
+    result = asyncio.run(run_ask(query, backend=be, live=not isolated))
+    if result.get("title"):
+        click.echo(f'# {result["title"]}')
+        click.echo(result.get("url", ""))
+        click.echo("")
+    click.echo(result.get("summary") or "(no summary)")
+    sys.exit(0 if result.get("ok") else 1)
+
+
 @cli.command("probe")
 @click.option("--live/--isolated", default=False, help="Prefer existing Chrome when available.")
 @click.option("--headed/--headless", default=True, show_default=True, help="Show the browser window.")
-def probe(live: bool, headed: bool) -> None:
+@click.option("--summarize/--no-summarize", default=True, show_default=True,
+              help="On success, run a second AI pass to clean up the report.")
+def probe(live: bool, headed: bool, summarize: bool) -> None:
     """Run real public-site tasks and barrier checks. Keeps personal content out of logs."""
     import asyncio
+    from pathlib import Path
     from mcp_vision.real_tasks import run_probe
-    sys.exit(0 if asyncio.run(run_probe(prefer_live=live, headed=headed)) else 1)
+    ok = asyncio.run(run_probe(prefer_live=live, headed=headed))
+    if ok and summarize:
+        report = Path("outputs/real_tasks/results.json")
+        evidence = report.read_text() if report.exists() else ""
+        from mcp_vision.summarize import summarize as clean
+        click.echo("")
+        click.echo(clean("Summarize these mcp-vision probe results for a human.",
+                         evidence, backend="local", ok=True))
+    sys.exit(0 if ok else 1)
 
 
 @cli.command()
