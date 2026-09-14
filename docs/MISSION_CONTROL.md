@@ -26,3 +26,18 @@ planner, model subscription, or cloud service before that path is proven useful.
 
 Run `mcp-vision studio` to review the workspace. No external host configuration
 was installed or modified during UI testing.
+
+## Follow-up validation, September 14, 2026
+
+- Current main: 117 Python tests passed, including real Chromium contracts and
+  local-server request checks.
+- Computer use in the in-app browser: prepared a task brief, confirmed copy
+  feedback inside the dialog, and ran the live demo. All six expected receipts
+  and both final checks passed. The narrow layout was also inspected visually.
+- The missing temporary browser installation was restored before the live run.
+- The original mission commits are on main and the temporary
+  `codex/mission-control` branch is deleted. No push was made during this check.
+
+Keep the next milestone small: run a user-selected task through a connected MCP
+host and measure whether it reaches the explicit success criteria. The workspace
+and deterministic demo are validated; arbitrary autonomous tasks are not.
