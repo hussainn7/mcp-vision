@@ -34,9 +34,13 @@ async def _shot(runtime, name: str) -> None:
 
 
 async def _runtime(prefer_live: bool, headed: bool):
-    if prefer_live and websocket_endpoint():
-        return LiveBrowserRuntime(allow_writes=True, governor=Governor(confirmer=_deny)), "live"
-    # System Chrome when headed; Playwright's build is fine for headless CI.
+    if prefer_live:
+        import sys
+        if sys.platform == "darwin":
+            from mcp_vision.native_browser import NativeBrowserRuntime
+            return NativeBrowserRuntime(allow_writes=True, governor=Governor(confirmer=_deny)), "live"
+        if websocket_endpoint():
+            return LiveBrowserRuntime(allow_writes=True, governor=Governor(confirmer=_deny)), "live"
     channel = "chrome" if headed else None
     return (BrowserRuntime(allow_writes=True, headless=not headed, channel=channel,
                            governor=Governor(confirmer=_deny)), "isolated")
@@ -127,17 +131,30 @@ async def task_barrier_form(runtime) -> dict:
     await runtime._ensure()
     page = runtime.page
     runtime.allowed_origins = frozenset()
-    await page.route("https://barrier.mcp-vision.test/**",
-                     lambda r: r.fulfill(body=html, content_type="text/html"))
-    await page.goto("https://barrier.mcp-vision.test/compose", wait_until="domcontentloaded")
+    if hasattr(page, "route"):
+        await page.route("https://barrier.mcp-vision.test/**",
+                         lambda r: r.fulfill(body=html, content_type="text/html"))
+        await page.goto("https://barrier.mcp-vision.test/compose", wait_until="domcontentloaded")
+        page_url = page.url
+    else:
+        # Native Chrome: inject the fixture page without CDP routing.
+        payload = json.dumps(html)
+        await runtime._run(runtime._eval, f"""(() => {{
+          document.open(); document.write({payload}); document.close();
+          history.replaceState({{}}, '', 'https://barrier.mcp-vision.test/compose');
+          return location.href;
+        }})()""")
+        if runtime._current:
+            runtime._current.url = "https://barrier.mcp-vision.test/compose"
+        page_url = "https://barrier.mcp-vision.test/compose"
     snap = await runtime.snapshot()
     send = next(e for e in snap.elements if e["name"].lower() == "send")
     buy = next(e for e in snap.elements if "buy" in e["name"].lower())
     send_r = await runtime.click(snap.snapshot_id, send["index"])
     snap = await runtime.snapshot()
     buy_r = await runtime.click(snap.snapshot_id, buy["index"])
-    ok = send_r.status == "blocked" and buy_r.status == "blocked" and danger_url(page.url)
-    return {"id": name, "ok": ok, "detail": f"send={send_r.status} buy={buy_r.status} danger_url={danger_url(page.url)}"}
+    ok = send_r.status == "blocked" and buy_r.status == "blocked" and danger_url(page_url)
+    return {"id": name, "ok": ok, "detail": f"send={send_r.status} buy={buy_r.status} danger_url={danger_url(page_url)}"}
 
 
 async def task_live_tabs(runtime, mode: str) -> dict:
@@ -243,6 +260,8 @@ async def task_icollege(runtime, mode: str) -> dict:
 async def run_probe(*, prefer_live: bool = False, headed: bool = False) -> bool:
     OUT.mkdir(parents=True, exist_ok=True)
     set_forced_result(False)  # never pop dialogs during automated probes
+    from mcp_vision.challenge import set_forced_challenge_result
+    set_forced_challenge_result(True)  # captcha pauses auto-continue in probes
     runtime, mode = await _runtime(prefer_live, headed)
     results = []
     try:
@@ -255,6 +274,11 @@ async def run_probe(*, prefer_live: bool = False, headed: bool = False) -> bool:
                 # Prefer a fresh tab so we do not clobber the user's current page.
                 opened = await runtime.open_tab("https://example.com")
                 results.append({"id": "open_tab", "ok": opened.status == "verified", "detail": opened.message})
+                if opened.status != "verified":
+                    (OUT / "results.json").write_text(json.dumps(
+                        {"mode": mode, "results": results, "passed": 0, "total": len(results)}, indent=2) + "\n")
+                    print(json.dumps({"mode": mode, "results": results}, indent=2))
+                    return False
         results.append(await task_barrier_form(runtime))
         results.append(await task_ebay(runtime))
         results.append(await task_flights(runtime))
@@ -263,6 +287,8 @@ async def run_probe(*, prefer_live: bool = False, headed: bool = False) -> bool:
         results.append(await task_icollege(runtime, mode))
     finally:
         set_forced_result(None)
+        from mcp_vision.challenge import set_forced_challenge_result
+        set_forced_challenge_result(None)
         await runtime.close()
 
     report = {"mode": mode, "results": results, "passed": sum(1 for r in results if r["ok"]),

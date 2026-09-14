@@ -6,10 +6,11 @@ Computer use runtime for agents. Your model, your host — this handles the brow
 pip install -e .
 python -m playwright install chromium
 mcp-vision install --host cursor --allow-browser-writes
+mcp-vision connect
 ```
 
-Then in Chrome 144+: open `chrome://inspect/#remote-debugging`, turn on Remote debugging, Allow the prompt.
-Check with `mcp-vision connect --wait`.
+Live mode defaults to the **native** driver (AppleScript). Chrome does **not** show
+“controlled by automated test software.” No remote-debugging toggle needed.
 
 ## Connect your agent
 
@@ -27,26 +28,34 @@ Or print a portable entry:
 mcp-vision config --allow-browser-writes
 ```
 
-For Claude Code: `claude mcp add --transport stdio mcp-vision -- mcp-vision serve --browser live --allow-browser-writes`
+For Claude Code: `claude mcp add --transport stdio mcp-vision -- mcp-vision serve --browser live --driver native --allow-browser-writes`
 
 Works with Cursor, Claude Desktop, Claude Code, Antigravity, Codex, and any local MCP host (including ones backed by Ollama). The host plans; MCP-Vision observes and acts.
 
 ### Use your existing Chrome tabs
 
-`serve --browser live` attaches to the Chrome you already have open. Cookies, extensions, and tabs stay. Ending the MCP session disconnects the driver without closing Chrome.
+`serve --browser live` (default `--driver native`) uses your real Chrome via AppleScript.
+Cookies, extensions, and tabs stay. No CDP, no automation banner. Ending the MCP
+session does not close Chrome.
 
 ```
 browser_tabs() → browser_use_tab(tab_id, expected_url) → browser_snapshot()
 browser_open_tab(url)   # new tab in the same profile
 ```
 
-Restricted actions (buy, send, checkout, book, form submit, …) show a macOS **Allow once / Deny** dialog plus a notification. Deny is the default. Danger pages like `/checkout` and compose views escalate every write to confirmation.
+If a CAPTCHA / bot check appears, you get a notification and a dialog — solve it in
+Chrome, then click **I solved it**. We do not bypass captchas.
+
+Restricted actions (buy, send, checkout, book, form submit, …) show a macOS
+**Allow once / Deny** dialog. Deny is the default.
+
+Optional escape hatch: `--driver cdp` if you need Playwright CDP (shows the banner).
 
 ### Prove it on real sites
 
 ```bash
 mcp-vision probe              # eBay + flights + send/buy barriers (isolated Chromium)
-mcp-vision probe --live       # same, plus email/iCollege if Chrome debugging is on
+mcp-vision probe --live       # same against your real Chrome (native)
 mcp-vision demo               # short receipt demo, no accounts
 ```
 

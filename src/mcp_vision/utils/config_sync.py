@@ -17,7 +17,8 @@ log = get_logger("mcp_vision.config_sync")
 SERVER_NAME = "mcp-vision"
 
 
-def _entry(command: str | None = None, *, browser_mode: str | None = None, allow_writes: bool = False) -> dict[str, object]:
+def _entry(command: str | None = None, *, browser_mode: str | None = None, allow_writes: bool = False,
+           live_driver: str | None = None) -> dict[str, object]:
     cmd = command or shutil.which("mcp-vision") or sys.executable
     if cmd.endswith("python") or cmd.endswith("python3") or "python" in Path(cmd).name:
         args = ["-m", "mcp_vision.cli", "serve"]
@@ -27,6 +28,11 @@ def _entry(command: str | None = None, *, browser_mode: str | None = None, allow
         if browser_mode not in {"live", "isolated"}:
             raise ValueError("browser_mode must be live or isolated")
         args += ["--browser", browser_mode]
+        if browser_mode == "live":
+            driver = live_driver or "native"
+            if driver not in {"native", "cdp"}:
+                raise ValueError("live_driver must be native or cdp")
+            args += ["--driver", driver]
     if allow_writes:
         args += ["--allow-browser-writes"]
     return {"command": cmd, "args": args}

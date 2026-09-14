@@ -54,7 +54,7 @@ _AUTH_URL_PATTERNS = [
 _AUTH_TEXT_PATTERNS = [
     (re.compile(r"sign in (?:to continue|with your google|to gmail)", re.I), "Google", "sign_in"),
     (re.compile(r"two-factor authentication|enter verification code|2-step verification", re.I), "Security", "2fa"),
-    (re.compile(r"verify you are human|checking your browser|hcaptcha|recaptcha|security check", re.I), "Bot Detection", "captcha"),
+    (re.compile(r"verify you are human|checking your browser before accessing|attention required|hcaptcha|recaptcha", re.I), "Bot Detection", "captcha"),
     (re.compile(r"sign in to (?:github|linkedin|slack|amazon|your account)", re.I), "Service", "sign_in"),
     (re.compile(r"please sign in|please log in|enter your password|username and password", re.I), "Service", "password"),
 ]

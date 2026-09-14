@@ -36,15 +36,20 @@ def cli() -> None:
 @click.option("--headed", is_flag=True, help="Show the isolated browser (requires a display on the executor).")
 @click.option("--origin", multiple=True, help="Restrict browser requests to these exact HTTP(S) origins. Repeat for dependencies.")
 @click.option("--browser", "browser_mode", type=click.Choice(["isolated", "live"]), default="isolated", show_default=True,
-              help="Use isolated Chromium or attach to your existing, operator-approved Chrome session.")
-@click.option("--cdp-endpoint", default=None, help="Optional loopback endpoint for live Chrome; otherwise discover Chrome's local endpoint.")
-def serve(allow_browser_writes: bool, headed: bool, origin: tuple[str, ...], browser_mode: str, cdp_endpoint: str | None) -> None:
+              help="Use isolated Chromium or attach to your existing Chrome session.")
+@click.option("--driver", "live_driver", type=click.Choice(["native", "cdp"]), default="native", show_default=True,
+              help="live mode: native AppleScript (no automation banner) or CDP (shows banner).")
+@click.option("--cdp-endpoint", default=None, help="Optional loopback endpoint for --driver cdp.")
+def serve(allow_browser_writes: bool, headed: bool, origin: tuple[str, ...], browser_mode: str,
+          live_driver: str, cdp_endpoint: str | None) -> None:
     """Run the MCP server on stdio (stdout is JSON-RPC only)."""
     from mcp_vision.server import main
     if cdp_endpoint and browser_mode != "live":
         raise click.UsageError("--cdp-endpoint requires --browser live")
+    if cdp_endpoint:
+        live_driver = "cdp"
     main(allow_browser_writes=allow_browser_writes, headless=not headed, allowed_origins=origin,
-         browser_mode=browser_mode, cdp_endpoint=cdp_endpoint)
+         browser_mode=browser_mode, cdp_endpoint=cdp_endpoint, live_driver=live_driver)
 
 
 @cli.command()
@@ -121,35 +126,59 @@ def host_config(browser_mode: str, allow_browser_writes: bool) -> None:
 
 
 @cli.command()
-@click.option("--wait/--no-wait", default=False, help="Open chrome://inspect/#remote-debugging and wait for Allow.")
-def connect(wait: bool) -> None:
-    """Check the existing Chrome connection without changing browser settings."""
+@click.option("--driver", type=click.Choice(["native", "cdp"]), default="native", show_default=True)
+@click.option("--wait/--no-wait", default=False, help="For cdp: open remote-debugging and wait for Allow.")
+def connect(driver: str, wait: bool) -> None:
+    """Check the existing Chrome connection. Native driver avoids the automation banner."""
     import asyncio
-    from mcp_vision.live_browser import LiveBrowserRuntime
-    from phase2_mcp.chrome_bridge import request_live_session, websocket_endpoint
 
-    if wait and not websocket_endpoint():
-        click.echo("Opening Chrome's remote debugging page. Enable it and click Allow when prompted.")
-        if not request_live_session():
-            raise click.ClickException("Timed out waiting for Chrome remote debugging.")
+    if driver == "cdp":
+        from mcp_vision.live_browser import LiveBrowserRuntime
+        from phase2_mcp.chrome_bridge import request_live_session, websocket_endpoint
+        if wait and not websocket_endpoint():
+            click.echo("Opening Chrome's remote debugging page. Enable it and click Allow when prompted.")
+            if not request_live_session():
+                raise click.ClickException("Timed out waiting for Chrome remote debugging.")
 
-    async def check():
-        runtime = LiveBrowserRuntime()
-        try:
-            return await runtime.tabs()
-        finally:
-            await runtime.close()
+        async def check_cdp():
+            runtime = LiveBrowserRuntime()
+            try:
+                return await runtime.tabs()
+            finally:
+                await runtime.close()
 
-    result = asyncio.run(check())
-    if not result["connected"]:
-        raise click.ClickException(
-            f'{result.get("error", "not connected")}\n'
-            "Enable Remote debugging at chrome://inspect/#remote-debugging, then retry: mcp-vision connect --wait"
-        )
-    click.echo(f'Connected to existing Chrome: {len(result["tabs"])} accessible tab(s).')
+        result = asyncio.run(check_cdp())
+        if not result["connected"]:
+            raise click.ClickException(
+                f'{result.get("error", "not connected")}\n'
+                "Enable Remote debugging at chrome://inspect/#remote-debugging, then retry: "
+                "mcp-vision connect --driver cdp --wait"
+            )
+    else:
+        from mcp_vision.native_browser import NativeBrowserRuntime
+
+        async def check_native():
+            runtime = NativeBrowserRuntime()
+            try:
+                return await runtime.tabs()
+            finally:
+                await runtime.close()
+
+        result = asyncio.run(check_native())
+        if not result["connected"]:
+            raise click.ClickException(
+                f'{result.get("error", "not connected")}\n'
+                "Open Google Chrome, then retry. On first use Chrome may ask to allow JavaScript from Apple Events."
+            )
+
+    click.echo(f'Connected to existing Chrome ({result.get("driver", driver)}): '
+               f'{len(result["tabs"])} accessible tab(s).')
     for tab in result["tabs"][:12]:
         click.echo(f'  [{tab["tab_id"]}] {tab["title"][:60]}  {tab["url"][:80]}')
-    click.echo("Use mcp-vision serve --browser live in your MCP host. Chrome stays open.")
+    if driver == "native":
+        click.echo("Native driver: no automation banner. Use: mcp-vision serve --browser live")
+    else:
+        click.echo("CDP driver shows Chrome's automation banner. Prefer --driver native when possible.")
 
 
 @cli.command("probe")

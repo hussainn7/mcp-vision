@@ -68,9 +68,11 @@ def test_apple_events_pref_patch(tmp_path: Path):
 
 def test_ax_flatten_and_badges():
     from phase2_mcp.chrome_native import _parse_tab_lines
-    tabs = _parse_tab_lines("1\t1\thttps://github.com/x\tGitHub\n1\t2\thttps://mail.google.com/mail\tInbox\n")
+    tabs = _parse_tab_lines("1|||1|||https://github.com/x|||GitHub\n1|||2|||https://mail.google.com/mail|||Inbox\n")
     assert tabs[1]["title"] == "Inbox"
     assert match_tab(tabs, "gmail") == 1
+    # still accept classic tab-separated fixtures
+    assert _parse_tab_lines("1\t1\thttps://x\tT")[0]["url"] == "https://x"
     nodes = [
         {"ignored": True, "role": {"value": "button"}, "name": {"value": "x"}},
         {"role": {"value": "button"}, "name": {"value": "Compose"}, "backendDOMNodeId": 1},

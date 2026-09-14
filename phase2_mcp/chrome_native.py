@@ -232,7 +232,7 @@ tell application "Google Chrome"
     repeat with w in windows
         set ti to 1
         repeat with t in tabs of w
-            set out to out & wi & tab & ti & tab & (URL of t) & tab & (title of t) & linefeed
+            set out to out & wi & "|||" & ti & "|||" & (URL of t) & "|||" & (title of t) & linefeed
             set ti to ti + 1
         end repeat
         set wi to wi + 1
@@ -254,7 +254,12 @@ end tell
 def _parse_tab_lines(raw: str) -> list[dict]:
     tabs = []
     for line in (raw or "").splitlines():
-        parts = line.split("\t", 3)
+        if "|||" in line:
+            parts = line.split("|||", 3)
+        else:
+            parts = line.split("\t", 3)
+            if len(parts) < 4 and "tab" in line:
+                parts = line.split("tab", 3)
         if len(parts) < 4:
             continue
         try:
@@ -579,7 +584,7 @@ def install_hint() -> str:
 
 
 def demo():
-    raw = "1\t1\thttps://github.com/x\tGitHub\n1\t2\thttps://mail.google.com/mail\tInbox\n"
+    raw = "1|||1|||https://github.com/x|||GitHub\n1|||2|||https://mail.google.com/mail|||Inbox\n"
     tabs = _parse_tab_lines(raw)
     assert len(tabs) == 2 and tabs[1]["url"].startswith("https://mail.google.com")
     assert match_tab(tabs, "gmail") == 1

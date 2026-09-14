@@ -24,7 +24,8 @@ def test_selected_host_keeps_other_servers_and_sets_live_options(tmp_path):
     config_sync.install_host("antigravity", "/opt/venv/bin/python", config_path=path, allow_writes=True)
     data = json.loads(path.read_text())
     assert data["theme"] == "dark" and data["mcpServers"]["other"] == {"command": "other"}
-    assert data["mcpServers"]["mcp-vision"]["args"] == ["-m", "mcp_vision.cli", "serve", "--browser", "live", "--allow-browser-writes"]
+    assert data["mcpServers"]["mcp-vision"]["args"] == [
+        "-m", "mcp_vision.cli", "serve", "--browser", "live", "--driver", "native", "--allow-browser-writes"]
 
 
 def test_config_cli_and_targeted_install(tmp_path):
@@ -37,7 +38,9 @@ def test_config_cli_and_targeted_install(tmp_path):
     target = tmp_path / "cursor.json"
     installed = runner.invoke(cli, ["install", "--host", "cursor", "--config-path", str(target)])
     assert installed.exit_code == 0 and target.exists()
-    assert json.loads(target.read_text())["mcpServers"]["mcp-vision"]["args"][-2:] == ["--browser", "live"]
+    args = json.loads(target.read_text())["mcpServers"]["mcp-vision"]["args"]
+    assert args[args.index("--browser") + 1] == "live"
+    assert args[args.index("--driver") + 1] == "native"
 
 
 def test_merges_without_clobber(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

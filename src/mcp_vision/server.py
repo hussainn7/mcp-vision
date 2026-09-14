@@ -187,7 +187,8 @@ def _invalidate_screen() -> None:
     _last = _last_frame = None
 
 
-def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), browser_mode="isolated", cdp_endpoint=None) -> Any:
+def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), browser_mode="isolated",
+         cdp_endpoint=None, live_driver="native") -> Any:
     try:
         from fastmcp import FastMCP
     except ImportError:
@@ -195,8 +196,12 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), brows
     options = dict(allow_writes=allow_browser_writes, headless=headless,
                    allowed_origins=allowed_origins, governor=_governor)
     if browser_mode == "live":
-        from mcp_vision.live_browser import LiveBrowserRuntime
-        browser = LiveBrowserRuntime(endpoint=cdp_endpoint, **options)
+        if live_driver == "cdp" or cdp_endpoint:
+            from mcp_vision.live_browser import LiveBrowserRuntime
+            browser = LiveBrowserRuntime(endpoint=cdp_endpoint, **options)
+        else:
+            from mcp_vision.native_browser import NativeBrowserRuntime
+            browser = NativeBrowserRuntime(**options)
     elif browser_mode == "isolated":
         if cdp_endpoint:
             raise ValueError("cdp_endpoint requires browser_mode=live")
@@ -213,9 +218,12 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), brows
 
     instructions = RUNTIME_INSTRUCTIONS
     if browser_mode == "live":
-        instructions += (" You are connected to the user's existing Chrome profile. First call browser_tabs, "
+        driver = "cdp" if live_driver == "cdp" or cdp_endpoint else "native"
+        instructions += (" You are connected to the user's existing Chrome profile"
+                         f" via the {driver} driver. First call browser_tabs, "
                          "then browser_use_tab with the exact listed tab_id and URL. Never guess a tab or "
                          "overwrite an unrelated tab. Use browser_open_tab for a new destination. "
+                         "If a CAPTCHA appears, stop and tell the user to solve it in Chrome. "
                          "Origin restrictions gate tool destinations, not all background requests in existing tabs.")
     mcp = FastMCP("mcp-vision", instructions=instructions, lifespan=lifespan)
     mcp.tool()(inspect_screen)
