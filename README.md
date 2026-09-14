@@ -2,22 +2,37 @@
 
 Computer use for agents — your Chrome, your model.
 
+Needs **Python 3.12+** (macOS `/usr/bin/python3` is often 3.9 and will fail).
+
 ## Install (one liner)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hussainn7/mcp-vision/main/scripts/install.sh | bash
 ```
 
-Or:
+That script installs [`uv`](https://github.com/astral-sh/uv) if needed, fetches Python 3.12,
+and puts `mcp-vision` on `~/.local/bin`.
+
+### Manual
 
 ```bash
-pip install "git+https://github.com/hussainn7/mcp-vision.git"
+# if you don't have 3.12 yet:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv python install 3.12
+
+uv tool install "git+https://github.com/hussainn7/mcp-vision.git" --python 3.12
+export PATH="$HOME/.local/bin:$PATH"
 mcp-vision setup
 ```
 
-Devs working from a clone:
+Do **not** use stock `pip3` on macOS if it reports 3.9.
+
+### Devs (clone)
 
 ```bash
+cd mcp-vision
+python3.12 -m venv .venv   # or: uv venv --python 3.12
+source .venv/bin/activate
 pip install -e .
 mcp-vision setup
 ```
