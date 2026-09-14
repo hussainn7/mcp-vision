@@ -34,10 +34,16 @@ def cli() -> None:
 @click.option("--allow-browser-writes", is_flag=True, help="Allow routine browser input; risky actions still require local confirmation.")
 @click.option("--headed", is_flag=True, help="Show the isolated browser (requires a display on the executor).")
 @click.option("--origin", multiple=True, help="Restrict browser requests to these exact HTTP(S) origins. Repeat for dependencies.")
-def serve(allow_browser_writes: bool, headed: bool, origin: tuple[str, ...]) -> None:
+@click.option("--browser", "browser_mode", type=click.Choice(["isolated", "live"]), default="isolated", show_default=True,
+              help="Use isolated Chromium or attach to your existing, operator-approved Chrome session.")
+@click.option("--cdp-endpoint", default=None, help="Optional loopback endpoint for live Chrome; otherwise discover Chrome's local endpoint.")
+def serve(allow_browser_writes: bool, headed: bool, origin: tuple[str, ...], browser_mode: str, cdp_endpoint: str | None) -> None:
     """Run the MCP server on stdio (stdout is JSON-RPC only)."""
     from mcp_vision.server import main
-    main(allow_browser_writes=allow_browser_writes, headless=not headed, allowed_origins=origin)
+    if cdp_endpoint and browser_mode != "live":
+        raise click.UsageError("--cdp-endpoint requires --browser live")
+    main(allow_browser_writes=allow_browser_writes, headless=not headed, allowed_origins=origin,
+         browser_mode=browser_mode, cdp_endpoint=cdp_endpoint)
 
 
 @cli.command()

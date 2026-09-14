@@ -26,6 +26,27 @@ For Claude Code: `claude mcp add --transport stdio mcp-vision -- mcp-vision serv
 
 Add `--allow-browser-writes` to enable clicking/typing. Add `--origin https://example.com` to restrict to specific sites.
 
+### Use your existing Chrome tabs
+
+Run the local server with `mcp-vision serve --browser live`. In your host config,
+use `"args": ["serve", "--browser", "live", "--allow-browser-writes"]`.
+Use the absolute path to your installed executable if your host cannot find it.
+
+In Chrome 144+, enable Remote debugging at `chrome://inspect/#remote-debugging`
+and approve Chrome's connection prompt. This grants the runtime access to your
+existing profile. It keeps cookies, extensions, and tabs; it does not restart
+Chrome, copy your profile, or create an isolated session. Ending the MCP session
+disconnects the driver without closing Chrome or your tabs.
+
+Start with `browser_tabs()`, then `browser_use_tab(tab_id, expected_url)` from the
+returned list. Call `browser_snapshot()` to inspect that tab. Use
+`browser_open_tab(url)` for new destinations so unrelated tabs are preserved.
+All existing action checks and confirmation gates still apply.
+
+Live-mode origin restrictions gate tool destinations; they do not intercept
+background traffic in your existing profile. Remote endpoints are rejected.
+Without `--browser live`, the isolated browser remains available for testing.
+
 ## Prompt for your agent
 
 Copy this into your agent or system prompt:

@@ -132,6 +132,7 @@ renderActivity();
 function connectionConfig() {
   if (!serverEntry) return;
   const entry = {...serverEntry, args: [...serverEntry.args]};
+  entry.args.push("--browser", $("browser-session").value);
   if ($("writes").checked) entry.args.push("--allow-browser-writes");
   const hosts = {
     cursor: ["Connect to Cursor", "Add this server entry to ~/.cursor/mcp.json, keeping your other servers. Then enable it in Cursor's MCP settings."],
@@ -147,6 +148,7 @@ function connectionConfig() {
 }
 document.querySelectorAll("[data-host]").forEach(button => button.addEventListener("click", () => { selectedHost = button.dataset.host; connectionConfig(); }));
 $("writes").addEventListener("change", connectionConfig);
+$("browser-session").addEventListener("change", connectionConfig);
 $("copy-config").addEventListener("click", () => copy($("host-config").textContent));
 $("open-demo").addEventListener("click", () => $("demo-dialog").showModal());
 $("demo-form").addEventListener("submit", async event => {

@@ -187,13 +187,22 @@ def _invalidate_screen() -> None:
     _last = _last_frame = None
 
 
-def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=()) -> Any:
+def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), browser_mode="isolated", cdp_endpoint=None) -> Any:
     try:
         from fastmcp import FastMCP
     except ImportError:
         from mcp.server.fastmcp import FastMCP
-    browser = BrowserRuntime(allow_writes=allow_browser_writes, headless=headless,
-                             allowed_origins=allowed_origins, governor=_governor)
+    options = dict(allow_writes=allow_browser_writes, headless=headless,
+                   allowed_origins=allowed_origins, governor=_governor)
+    if browser_mode == "live":
+        from mcp_vision.live_browser import LiveBrowserRuntime
+        browser = LiveBrowserRuntime(endpoint=cdp_endpoint, **options)
+    elif browser_mode == "isolated":
+        if cdp_endpoint:
+            raise ValueError("cdp_endpoint requires browser_mode=live")
+        browser = BrowserRuntime(**options)
+    else:
+        raise ValueError("browser_mode must be live or isolated")
 
     @asynccontextmanager
     async def lifespan(_server):
@@ -202,11 +211,33 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=()) -> An
         finally:
             await browser.close()
 
-    mcp = FastMCP("mcp-vision", instructions=RUNTIME_INSTRUCTIONS, lifespan=lifespan)
+    instructions = RUNTIME_INSTRUCTIONS
+    if browser_mode == "live":
+        instructions += (" You are connected to the user's existing Chrome profile. First call browser_tabs, "
+                         "then browser_use_tab with the exact listed tab_id and URL. Never guess a tab or "
+                         "overwrite an unrelated tab. Use browser_open_tab for a new destination. "
+                         "Origin restrictions gate tool destinations, not all background requests in existing tabs.")
+    mcp = FastMCP("mcp-vision", instructions=instructions, lifespan=lifespan)
     mcp.tool()(inspect_screen)
     mcp.tool()(click_element)
     mcp.tool()(type_text)
     mcp.tool()(press_key_combination)
+
+    if browser_mode == "live":
+        @mcp.tool()
+        async def browser_tabs() -> dict:
+            """List existing HTTP(S) Chrome tabs. Preserves cookies, extensions, and windows."""
+            return await browser.tabs()
+
+        @mcp.tool()
+        async def browser_use_tab(tab_id: str, expected_url: str) -> Receipt:
+            """Select an exact tab from browser_tabs. Reject a closed tab or a changed URL."""
+            return await browser.use_tab(tab_id, expected_url)
+
+        @mcp.tool()
+        async def browser_open_tab(url: str) -> Receipt:
+            """Open a new tab in the existing Chrome profile without overwriting unrelated work."""
+            return await browser.open_tab(url)
 
     @mcp.prompt()
     def mission(goal: str, url: str = "", success: str = "", mode: Literal["observe", "draft"] = "observe") -> str:
@@ -221,7 +252,7 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=()) -> An
 
     @mcp.tool()
     async def browser_navigate(url: str) -> Receipt:
-        """Open HTTP(S) in this server's isolated browser. Does not use your personal profile."""
+        """Navigate the selected tab to HTTP(S). In live mode select a tab first; prefer browser_open_tab for unrelated work."""
         return await browser.navigate(url)
 
     @mcp.tool()
