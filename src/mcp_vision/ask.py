@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import re
-from urllib.parse import quote_plus
 
 from mcp_vision.core.governor import Governor
+from mcp_vision.plan import plan_url
 from mcp_vision.summarize import summarize
 
 
@@ -13,22 +12,8 @@ def _deny(*_a, **_k) -> bool:
     return False
 
 
-def _search_url(query: str) -> str:
-    q = query.strip()
-    low = q.lower()
-    if re.search(r"\bflight|flights|sfo|airport|round.?trip\b", low):
-        return ("https://www.google.com/travel/flights?q=" + quote_plus(q) + "&curr=USD")
-    if re.search(r"\bebay|buy used|listing\b", low):
-        return "https://www.ebay.com/sch/i.html?_nkw=" + quote_plus(q)
-    if re.search(r"\bemail|gmail|inbox\b", low):
-        return "https://mail.google.com/"
-    if re.search(r"\bicollege|d2l|gsu\b", low):
-        return "https://icollege.gsu.edu/"
-    return "https://www.google.com/search?q=" + quote_plus(q)
-
-
 async def run_ask(query: str, *, backend: str | None = "local", live: bool = True) -> dict:
-    """Open a tab for the query, read the page, summarize if we got real content."""
+    """Plan a destination, open/reuse a tab, read the page, summarize on success."""
     from mcp_vision.native_browser import NativeBrowserRuntime
     from mcp_vision.browser import BrowserRuntime
 
@@ -44,24 +29,41 @@ async def run_ask(query: str, *, backend: str | None = "local", live: bool = Tru
         runtime = BrowserRuntime(allow_writes=False, governor=gov, headless=True)
         mode = "isolated"
 
-    url = _search_url(query)
     evidence = ""
     title = ""
-    final_url = url
+    final_url = ""
     ok = False
+    plan = {"url": "", "reason": "", "source": ""}
     try:
+        open_tabs = []
         if mode == "live-native":
             tabs = await runtime.tabs()
             if not tabs.get("connected"):
                 return {"ok": False, "mode": mode, "summary": tabs.get("error") or "Chrome not connected",
-                        "evidence": ""}
-            opened = await runtime.open_tab(url)
-            if opened.status != "verified":
-                return {"ok": False, "mode": mode, "summary": opened.message, "evidence": ""}
+                        "evidence": "", "plan": plan}
+            open_tabs = tabs.get("tabs") or []
+
+        plan = plan_url(query, backend=backend, open_tabs=open_tabs)
+        url = plan["url"]
+
+        if mode == "live-native":
+            if plan.get("tab_id") and plan.get("expected_url"):
+                used = await runtime.use_tab(plan["tab_id"], plan["expected_url"])
+                if used.status != "verified":
+                    opened = await runtime.open_tab(url)
+                    if opened.status != "verified":
+                        return {"ok": False, "mode": mode, "summary": opened.message,
+                                "evidence": "", "plan": plan}
+            else:
+                opened = await runtime.open_tab(url)
+                if opened.status != "verified":
+                    return {"ok": False, "mode": mode, "summary": opened.message,
+                            "evidence": "", "plan": plan}
         else:
             rec = await runtime.navigate(url)
             if rec.status != "verified":
-                return {"ok": False, "mode": mode, "summary": rec.message, "evidence": ""}
+                return {"ok": False, "mode": mode, "summary": rec.message,
+                        "evidence": "", "plan": plan}
 
         snap = None
         for _ in range(8):
@@ -70,14 +72,18 @@ async def run_ask(query: str, *, backend: str | None = "local", live: bool = Tru
                 break
             await asyncio.sleep(0.8)
         if not snap:
-            return {"ok": False, "mode": mode, "summary": "No page content", "evidence": ""}
+            return {"ok": False, "mode": mode, "summary": "No page content",
+                    "evidence": "", "plan": plan}
 
         title = snap.title
         final_url = snap.url
-        evidence = f"TITLE: {snap.title}\nURL: {snap.url}\n\n{snap.text[:8000]}"
-        ok = len(snap.text or "") > 200
+        evidence = (
+            f"PLAN: {plan.get('reason')} ({plan.get('source')})\n"
+            f"TITLE: {snap.title}\nURL: {snap.url}\n\n{snap.text[:8000]}"
+        )
+        ok = len(snap.text or "") > 120
         summary = summarize(query, evidence, backend=backend, ok=ok)
         return {"ok": ok, "mode": mode, "title": title, "url": final_url,
-                "summary": summary, "evidence": evidence}
+                "summary": summary, "evidence": evidence, "plan": plan}
     finally:
         await runtime.close()

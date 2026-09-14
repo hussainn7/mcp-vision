@@ -237,6 +237,8 @@ def ask(query: str, backend: str, isolated: bool) -> None:
     if result.get("title"):
         click.echo(f'# {result["title"]}')
         click.echo(result.get("url", ""))
+        if result.get("plan"):
+            click.echo(f'(plan: {result["plan"].get("reason")})')
         click.echo("")
     click.echo(result.get("summary") or "(no summary)")
     sys.exit(0 if result.get("ok") else 1)
