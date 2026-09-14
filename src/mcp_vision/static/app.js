@@ -138,6 +138,7 @@ function connectionConfig() {
     cursor: ["Connect to Cursor", "Add this server entry to ~/.cursor/mcp.json, keeping your other servers. Then enable it in Cursor's MCP settings."],
     claude: ["Connect to Claude Desktop", "Open Settings → Developer → Edit Config. Merge this server entry with your existing mcpServers, then restart Claude Desktop."],
     "claude-code": ["Connect to Claude Code", "Run this command in a macOS or Linux terminal, then check the connection with /mcp in Claude Code."],
+    antigravity: ["Connect to Antigravity", "Open MCP Servers → Manage MCP Servers → View raw config. Merge this entry into mcpServers, then refresh. The current global location is ~/.gemini/config/mcp_config.json; use the location shown by your installed version."],
     other: ["Connect any local MCP host", "Use this stdio configuration in your host's MCP settings. Your host must run locally on the computer that will perform the actions."]
   };
   $("host-title").textContent = hosts[selectedHost][0]; $("host-help").textContent = hosts[selectedHost][1];

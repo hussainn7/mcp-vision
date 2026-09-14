@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import click
 
@@ -82,19 +83,55 @@ def studio(port: int) -> None:
 
 @cli.command()
 @click.option("--command", default=None, help="Override the server executable written into host configs.")
-def install(command: str | None) -> None:
+@click.option("--host", type=click.Choice(["cursor", "claude-desktop", "antigravity"]), default=None,
+              help="Update only this host. Omit for the legacy multi-host registration.")
+@click.option("--browser", "browser_mode", type=click.Choice(["live", "isolated"]), default="live", show_default=True)
+@click.option("--allow-browser-writes", is_flag=True, help="Enable routine input; sensitive actions still require approval.")
+@click.option("--config-path", type=click.Path(path_type=Path), default=None,
+              help="Use a custom JSON config location for the selected host.")
+def install(command: str | None, host: str | None, browser_mode: str, allow_browser_writes: bool, config_path) -> None:
     """Register mcp-vision in Claude Desktop, Cursor, and Codex."""
-    from mcp_vision.utils.config_sync import install_hosts
+    from mcp_vision.utils.config_sync import install_hosts, install_host
+    if host:
+        try:
+            path = install_host(host, command, browser_mode=browser_mode, allow_writes=allow_browser_writes,
+                                config_path=config_path)
+        except (ValueError, OSError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"updated {path}")
+        click.echo("Restart or refresh your host's MCP connection, then ask it to list browser tabs.")
+        return
+    if config_path or allow_browser_writes or browser_mode != "live":
+        raise click.UsageError("Select --host when setting browser options or a config path.")
+    click.echo("Legacy registration uses isolated Chromium. Use --host to configure existing Chrome.")
     paths = install_hosts(command)
     for p in paths:
         click.echo(f"updated {p}")
 
 
+@cli.command("config")
+@click.option("--browser", "browser_mode", type=click.Choice(["live", "isolated"]), default="live")
+@click.option("--allow-browser-writes", is_flag=True)
+def host_config(browser_mode: str, allow_browser_writes: bool) -> None:
+    """Print a portable MCP entry without changing any host settings."""
+    import json
+    from mcp_vision.utils.config_sync import _entry
+    click.echo(json.dumps({"mcpServers": {"mcp-vision": _entry(browser_mode=browser_mode,
+                      allow_writes=allow_browser_writes)}}, indent=2))
+
+
 @cli.command()
-def connect() -> None:
+@click.option("--wait/--no-wait", default=False, help="Open chrome://inspect/#remote-debugging and wait for Allow.")
+def connect(wait: bool) -> None:
     """Check the existing Chrome connection without changing browser settings."""
     import asyncio
     from mcp_vision.live_browser import LiveBrowserRuntime
+    from phase2_mcp.chrome_bridge import request_live_session, websocket_endpoint
+
+    if wait and not websocket_endpoint():
+        click.echo("Opening Chrome's remote debugging page. Enable it and click Allow when prompted.")
+        if not request_live_session():
+            raise click.ClickException("Timed out waiting for Chrome remote debugging.")
 
     async def check():
         runtime = LiveBrowserRuntime()
@@ -105,9 +142,24 @@ def connect() -> None:
 
     result = asyncio.run(check())
     if not result["connected"]:
-        raise click.ClickException(result["error"])
+        raise click.ClickException(
+            f'{result.get("error", "not connected")}\n'
+            "Enable Remote debugging at chrome://inspect/#remote-debugging, then retry: mcp-vision connect --wait"
+        )
     click.echo(f'Connected to existing Chrome: {len(result["tabs"])} accessible tab(s).')
+    for tab in result["tabs"][:12]:
+        click.echo(f'  [{tab["tab_id"]}] {tab["title"][:60]}  {tab["url"][:80]}')
     click.echo("Use mcp-vision serve --browser live in your MCP host. Chrome stays open.")
+
+
+@cli.command("probe")
+@click.option("--live/--isolated", default=False, help="Prefer existing Chrome when available.")
+@click.option("--headed/--headless", default=True, show_default=True, help="Show the browser window.")
+def probe(live: bool, headed: bool) -> None:
+    """Run real public-site tasks and barrier checks. Keeps personal content out of logs."""
+    import asyncio
+    from mcp_vision.real_tasks import run_probe
+    sys.exit(0 if asyncio.run(run_probe(prefer_live=live, headed=headed)) else 1)
 
 
 @cli.command()

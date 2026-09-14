@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from mcp_vision.log import get_logger
@@ -16,11 +17,19 @@ log = get_logger("mcp_vision.config_sync")
 SERVER_NAME = "mcp-vision"
 
 
-def _entry(command: str | None = None) -> dict[str, object]:
+def _entry(command: str | None = None, *, browser_mode: str | None = None, allow_writes: bool = False) -> dict[str, object]:
     cmd = command or shutil.which("mcp-vision") or sys.executable
     if cmd.endswith("python") or cmd.endswith("python3") or "python" in Path(cmd).name:
-        return {"command": cmd, "args": ["-m", "mcp_vision.cli", "serve"]}
-    return {"command": cmd, "args": ["serve"]}
+        args = ["-m", "mcp_vision.cli", "serve"]
+    else:
+        args = ["serve"]
+    if browser_mode is not None:
+        if browser_mode not in {"live", "isolated"}:
+            raise ValueError("browser_mode must be live or isolated")
+        args += ["--browser", browser_mode]
+    if allow_writes:
+        args += ["--allow-browser-writes"]
+    return {"command": cmd, "args": args}
 
 
 def claude_config_path() -> Path:
@@ -45,24 +54,50 @@ def claude_code_config_path() -> Path:
     return Path.home() / ".claude.json"
 
 
-def _merge(path: Path, command: str | None = None) -> Path:
+def _merge(path: Path, command: str | None = None, *, browser_mode=None, allow_writes=False) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, object] = {}
     if path.exists():
         try:
             data = json.loads(path.read_text())
-        except json.JSONDecodeError:
-            log.warning("invalid JSON at %s; starting fresh backup", path)
-            path.rename(path.with_suffix(path.suffix + ".bak"))
-            data = {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in {path}; left unchanged. Repair it before installing.") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected a JSON object in {path}; left unchanged.")
     servers = data.get("mcpServers")
-    if not isinstance(servers, dict):
+    if "mcpServers" not in data:
         servers = {}
         data["mcpServers"] = servers
-    servers[SERVER_NAME] = _entry(command)
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    elif not isinstance(servers, dict):
+        raise ValueError(f"mcpServers must be an object in {path}; left unchanged.")
+    servers[SERVER_NAME] = _entry(command, browser_mode=browser_mode, allow_writes=allow_writes)
+    content = json.dumps(data, indent=2) + "\n"
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".mcp-vision-", delete=False) as out:
+            temp = Path(out.name)
+            out.write(content)
+            out.flush()
+            os.fsync(out.fileno())
+        if path.exists():
+            temp.chmod(path.stat().st_mode & 0o777)
+        temp.replace(path)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
     log.info("wrote %s into %s", SERVER_NAME, path)
     return path
+
+
+def install_host(host: str, command: str | None = None, *, browser_mode="live", allow_writes=False,
+                 config_path: Path | None = None) -> Path:
+    """Only update the host selected by the operator."""
+    paths = {"cursor": cursor_config_path, "claude-desktop": claude_config_path,
+             "antigravity": lambda: Path.home() / ".gemini/config/mcp_config.json"}
+    if host not in paths:
+        raise ValueError("Choose cursor, claude-desktop, or antigravity.")
+    path = config_path if config_path is not None else paths[host]()
+    return _merge(path, command, browser_mode=browser_mode, allow_writes=allow_writes)
 
 
 def _install_codex(command: str | None = None) -> Path | None:
