@@ -1,5 +1,6 @@
 from mcp_vision.challenge import page_has_captcha, set_forced_challenge_result, wait_for_user_challenge
 from phase2_mcp.auth_detector import AuthChallenge
+from mcp_vision.native_browser import _same_url, _tab_locator
 
 
 def test_captcha_detection():
@@ -42,3 +43,10 @@ def test_install_entry_sets_native_driver():
     assert args[-4:] == ["--browser", "live", "--driver", "native"] or (
         "--driver" in args and args[args.index("--driver") + 1] == "native"
     )
+
+
+def test_native_tab_binding_is_exact_and_locator_is_typed():
+    assert _same_url("https://example.com", "https://example.com/")
+    assert not _same_url("https://example.com", "https://evil.test/?next=https://example.com")
+    assert _tab_locator("1|||12") == (1, 12)
+    assert _tab_locator("done") is None

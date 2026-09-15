@@ -281,9 +281,11 @@ def _osa_activate(window: int, tab: int) -> str:
     return _osa(
         '''
         tell application "Google Chrome"
-            set index of window (item 1 of argv as integer) to 1
-            set active tab index of window 1 to (item 2 of argv as integer)
+            set targetWindow to window (item 1 of argv as integer)
+            set index of targetWindow to 1
+            set active tab index of targetWindow to (item 2 of argv as integer)
             activate
+            return URL of active tab of targetWindow
         end tell
         ''',
         str(window), str(tab),
@@ -295,11 +297,12 @@ def _osa_new_tab(url: str) -> str:
         '''
         tell application "Google Chrome"
             if (count of windows) is 0 then make new window
-            tell window 1
-                set t to make new tab with properties {URL:item 1 of argv}
-                set active tab index to (index of t)
-            end tell
+            set targetWindow to window 1
+            make new tab at end of tabs of targetWindow with properties {URL:item 1 of argv}
+            set newIndex to count of tabs of targetWindow
+            set active tab index of targetWindow to newIndex
             activate
+            return "1|||" & newIndex
         end tell
         ''',
         url,

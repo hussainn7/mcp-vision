@@ -7,6 +7,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from mcp_vision.browser import BrowserRuntime, BrowserSnapshot, Receipt, origin
 from mcp_vision.core.governor import classify
@@ -59,10 +60,36 @@ def _sig(rec: dict) -> str:
     return hashlib.sha256(json.dumps(blob, sort_keys=True).encode()).hexdigest()
 
 
+def _same_url(left: str, right: str) -> bool:
+    """Strict tab binding with only a trailing-root-slash tolerance.
+
+    Substring matching can bind an agent to the wrong tab when the expected URL
+    appears inside a query parameter on an unrelated page.
+    """
+    try:
+        a, b = urlsplit(left), urlsplit(right)
+        return (
+            a.scheme.lower(), a.netloc.lower(), a.path.rstrip("/") or "/", a.query, a.fragment
+        ) == (
+            b.scheme.lower(), b.netloc.lower(), b.path.rstrip("/") or "/", b.query, b.fragment
+        )
+    except Exception:
+        return left.rstrip("/") == right.rstrip("/")
+
+
+def _tab_locator(value: str) -> tuple[int, int] | None:
+    try:
+        window, tab = (value or "").strip().split("|||", 1)
+        return int(window), int(tab)
+    except (TypeError, ValueError):
+        return None
+
+
 class NativeBrowserRuntime(BrowserRuntime):
     """AppleScript/JS path. Same MCP surface as live CDP, without DevTools attach."""
 
-    def __init__(self, **options):
+    def __init__(self, *, pause_for_challenges=True, **options):
+        self.pause_for_challenges = pause_for_challenges
         super().__init__(**options)
         self._tabs: dict[str, _Tab] = {}
         self._current: _Tab | None = None
@@ -122,15 +149,12 @@ class NativeBrowserRuntime(BrowserRuntime):
                 if target is None or target.url != expected_url:
                     return Receipt(status="stale", action="use_tab",
                                    message="Tab closed or URL changed. List tabs again.")
-                await self._run(_osa_activate, target.window, target.tab)
+                here = await self._run(_osa_activate, target.window, target.tab)
                 # Confirm the front tab actually matches — indices can shift after new tabs.
-                try:
-                    here = await self._run(self._eval, "location.href")
-                except Exception:
-                    here = ""
-                if expected_url.rstrip("/") not in (here or "").rstrip("/") and (here or "") != expected_url:
+                if not _same_url(expected_url, here or ""):
                     return Receipt(status="stale", action="use_tab",
-                                   message="Tab focus did not stick. List tabs again.")
+                                   message="Tab moved, closed, or changed URL. List tabs again.",
+                                   evidence={"expected_url": expected_url, "observed_url": here or ""})
                 target.url = here or target.url
                 self._current = target
                 self.page = _PageRef(self)
@@ -146,17 +170,25 @@ class NativeBrowserRuntime(BrowserRuntime):
             try:
                 self._check_url(url)
                 await self._run(ensure_chrome)
-                await self._run(_osa_new_tab, url)
+                locator = _tab_locator(await self._run(_osa_new_tab, url))
+                if locator is None:
+                    raise RuntimeError("Chrome did not return the new tab identity.")
                 await asyncio.sleep(0.6)
                 tabs = await self._run(_osa_tabs)
                 if not tabs:
                     raise RuntimeError("Chrome has no tabs after open.")
-                row = tabs[0]  # new tab is activated in window 1
-                # Prefer the one matching url among recently listed
-                for t in tabs:
-                    if url.rstrip("/") in (t.get("url") or ""):
-                        row = t
-                        break
+                row = next((t for t in tabs
+                            if (t["window"], t["tab"]) == locator), None)
+                if row is None:
+                    raise RuntimeError("New Chrome tab moved or closed before it could be bound.")
+                active_url = await self._run(_osa_activate, row["window"], row["tab"])
+                # The requested URL may already have redirected between the tab
+                # listing and activation (Gmail does this routinely). The stable
+                # window/tab locator proves which tab is active; require only an
+                # observable web URL here and let the next snapshot verify origin.
+                if urlsplit(active_url or "").scheme not in {"http", "https"}:
+                    raise RuntimeError("New Chrome tab did not expose a web URL.")
+                row["url"] = active_url or row["url"]
                 key = uuid.uuid4().hex[:12]
                 tab = _Tab(window=row["window"], tab=row["tab"], url=row["url"],
                            title=row["title"], key=key)
@@ -166,7 +198,8 @@ class NativeBrowserRuntime(BrowserRuntime):
                 await self._invalidate()
                 return Receipt(status="verified", action="open_tab", executed=True,
                                message="Opened a tab in the existing Chrome profile (native).",
-                               evidence={"tab_id": key, "url": tab.url, "driver": "native"})
+                               evidence={"tab_id": key, "requested_url": url,
+                                         "url": tab.url, "driver": "native"})
             except Exception as exc:
                 return Receipt(status="error", action="open_tab", message=redact(str(exc)))
 
@@ -205,6 +238,8 @@ class NativeBrowserRuntime(BrowserRuntime):
         return data.get("url") or "", data.get("title") or "", data.get("text") or ""
 
     async def _maybe_pause_for_challenge(self, elements=None) -> dict | None:
+        if not self.pause_for_challenges:
+            return None
         from mcp_vision.challenge import wait_for_user_challenge
         url, title, text = await self._page_blob()
         challenge = detect_auth_challenge(url=url, title=title, text=text, elements=elements)
@@ -241,7 +276,9 @@ class NativeBrowserRuntime(BrowserRuntime):
                 self._current.title = title
             self._snapshot = BrowserSnapshot(
                 snapshot_id=uuid.uuid4().hex, url=url, title=title, text=text[:12000],
-                elements=records, pruned=data.get("pruned") or {}, source="dom-accessibility-native")
+                elements=records, pruned=data.get("pruned") or {},
+                facts=data.get("facts") or [], identity=data.get("identity") or {},
+                source="dom-accessibility-native")
             self._observed_at = time.monotonic()
             challenge = detect_auth_challenge(url=url, title=title, text=text, elements=records)
             if challenge and challenge.challenge_type == "captcha":
@@ -265,17 +302,37 @@ class NativeBrowserRuntime(BrowserRuntime):
         target = self._native_targets.get(index)
         if not target:
             raise ValueError("target missing; call browser_snapshot again")
-        # Re-check reachable signature lightly
+        rec = target.record
+        # Re-check semantics, geometry, and the browser-verified click point.
+        # Reactive pages can reuse the same DOM node for a different control.
         probe = await self._run(self._eval, f'''(() => {{
           const el = document.querySelector('[data-agent-index="{index}"]');
           if (!el) return null;
           const r = el.getBoundingClientRect();
-          return JSON.stringify({{index:{index}, role: el.getAttribute('role') || el.tagName.toLowerCase(),
-            name: (el.getAttribute('aria-label') || el.innerText || '').trim().slice(0,100),
-            x:r.x,y:r.y,w:r.width,h:r.height}});
+          const tag = el.tagName.toLowerCase();
+          const type = (el.getAttribute('type') || 'text').toLowerCase();
+          const implicit = tag === 'a' ? (el.hasAttribute('href') ? 'link' : '') :
+            (tag === 'button' || tag === 'summary') ? 'button' : tag === 'select' ? 'combobox' :
+            tag === 'textarea' ? 'textbox' : tag === 'input' ?
+              (type === 'checkbox' ? 'checkbox' : type === 'radio' ? 'radio' :
+               type === 'range' ? 'slider' : ['submit','button','reset','image'].includes(type) ? 'button' : 'textbox') : '';
+          const labels = el.labels ? Array.from(el.labels).map(n => n.innerText || '').join(' ') : '';
+          const labelled = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean)
+            .map(id => document.getElementById(id)?.innerText || '').join(' ');
+          const name = (labelled || el.getAttribute('aria-label') || labels ||
+            el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('alt') ||
+            el.innerText || (['button','submit','reset'].includes(type) ? el.value : '') || '')
+            .replace(/\\s+/g, ' ').trim().slice(0,100);
+          const hit = document.elementFromPoint({int(rec.get('cx', 0))}, {int(rec.get('cy', 0))});
+          return JSON.stringify({{index:{index}, role:(el.getAttribute('role') || implicit).toLowerCase(),
+            name, x:Math.round(r.x),y:Math.round(r.y),w:Math.round(r.width),h:Math.round(r.height),
+            reachable: !!hit && (hit === el || el.contains(hit))}});
         }})()''')
         if not probe or probe == "null":
             raise ValueError("target changed; call browser_snapshot again")
+        live = json.loads(probe)
+        if not live.pop("reachable", False) or _sig(live) != target.signature:
+            raise ValueError("target changed or became covered; call browser_snapshot again")
         return target
 
     async def click(self, snapshot_id: str, index: int) -> Receipt:
