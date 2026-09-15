@@ -90,11 +90,13 @@ def studio(port: int) -> None:
 @click.option("--port", type=click.IntRange(1024, 65535), default=7331, show_default=True)
 @click.option("--model", "provider", default=None,
               help="Provider for contextual answers: local, anthropic, openai, gemini, or nvidia.")
-def ui(port: int, provider: str | None) -> None:
+@click.option("--driver", "live_driver", type=click.Choice(["native", "cdp"]), default="native")
+@click.option("--cdp-endpoint", default=None, help="Existing Chrome debugging endpoint; enables file attachment.")
+def ui(port: int, provider: str | None, live_driver: str, cdp_endpoint: str | None) -> None:
     """Run the macOS contextual popup. Invoke it anywhere with Option-Space."""
     from mcp_vision.macos_ui import run_contextual_ui
     try:
-        run_contextual_ui(port=port, provider=provider)
+        run_contextual_ui(port=port, provider=provider, live_driver=live_driver, cdp_endpoint=cdp_endpoint)
     except (OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
 

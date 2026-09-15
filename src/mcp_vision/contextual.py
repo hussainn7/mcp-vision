@@ -25,6 +25,9 @@ def infer_capability(request: str) -> Capability:
 
 def package_context(context: Context) -> dict:
     target = context.clicked_element or context.focused_element if context.source == "chrome" else context.focused_element
+    if target:
+        target = target.model_copy(update={"attributes": {k: str(v)[:500] for k, v in target.attributes.items()
+                     if k in {"id", "role", "aria-label", "title", "placeholder", "type", "href", "required"}}})
     nearby = context.dom_context if context.source == "chrome" else context.accessibility_context
     data = {"target": target.model_dump(exclude_none=True) if target else {},
             "nearby": nearby, "selection": context.selected_text[:4000],

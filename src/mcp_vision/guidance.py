@@ -18,8 +18,9 @@ def resolve_target(elements, name, role=''):
 def overlay_script(index, label='Next step', duration=8000):
     return '''(() => {
       window.__mcpVisionHighlight?.();
-      const target = document.querySelector('[data-agent-index="INDEX"]');
+      let target = document.querySelector('[data-agent-index="INDEX"]');
       if (!target) return false;
+      const identity = {id: target.id, tag: target.tagName, name: target.getAttribute('aria-label') || target.textContent.trim()};
       const host = document.createElement('div');
       host.style.cssText = 'position:fixed;inset:0;pointer-events:none!important;z-index:2147483647';
       const shadow = host.attachShadow({mode:'closed'});
@@ -33,7 +34,15 @@ def overlay_script(index, label='Next step', duration=8000):
       const clean = () => { ended = true; cancelAnimationFrame(frame); host.remove(); };
       window.__mcpVisionHighlight = clean;
       const update = () => {
-        if (ended || !target.isConnected) { clean(); return; }
+        if (ended) return;
+        if (!target.isConnected) {
+          const matches = identity.id ? [document.getElementById(identity.id)].filter(Boolean) :
+            Array.from(document.getElementsByTagName(identity.tag)).filter(el =>
+              (el.getAttribute('aria-label') || el.textContent.trim()) === identity.name && identity.name);
+          if (matches.length !== 1 || matches[0].tagName !== identity.tag ||
+              (matches[0].getAttribute('aria-label') || matches[0].textContent.trim()) !== identity.name) { clean(); return; }
+          target = matches[0];
+        }
         const r = target.getBoundingClientRect();
         ring.style.left = (r.x-3)+'px'; ring.style.top = (r.y-3)+'px';
         ring.style.width = (r.width+6)+'px'; ring.style.height = (r.height+6)+'px';

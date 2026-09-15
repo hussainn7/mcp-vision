@@ -95,9 +95,17 @@ class ContextTask:
         self.max_steps = min(max_steps, 40)
         self.events = []
         self.verified = []
+        self.bound_url = context.url
+        self._loop = None
+        self._cancel_signal = None
 
     def cancel(self):
         self.cancelled.set()
+        if self._loop and self._cancel_signal:
+            try:
+                self._loop.call_soon_threadsafe(self._cancel_signal.set)
+            except RuntimeError:
+                pass
 
     def emit(self, message):
         self.events.append(message)
@@ -110,23 +118,52 @@ class ContextTask:
         if self.cancelled.is_set():
             raise asyncio.CancelledError()
 
-    async def observe(self):
+    async def reason(self, fn, *args, **kwargs):
+        import concurrent.futures
+        future = concurrent.futures.Future()
+        def work():
+            try:
+                result = fn(*args, **kwargs)
+                if not future.cancelled():
+                    future.set_result(result)
+            except Exception as exc:
+                if not future.cancelled():
+                    future.set_exception(exc)
+        threading.Thread(target=work, daemon=True).start()
+        planned = asyncio.wrap_future(future)
+        cancelled = asyncio.create_task(self._cancel_signal.wait())
+        try:
+            await asyncio.wait([planned, cancelled], return_when=asyncio.FIRST_COMPLETED)
+            self.check_cancel()
+            return await planned
+        finally:
+            cancelled.cancel()
+            if not planned.done():
+                planned.cancel()
+
+    async def observe(self, *, allow_navigation=False):
         self.check_cancel()
         snapshot = await self.backend.snapshot()
         self.check_cancel()
-        if self.context.url and snapshot.url != self.context.url:
-            raise PermissionError('The original page changed. Invoke MCP-Vision on the intended page again.')
+        if self.bound_url and snapshot.url != self.bound_url:
+            from mcp_vision.browser import origin
+            if allow_navigation and not self.constraints.stay_on_page and origin(snapshot.url) == origin(self.bound_url):
+                self.bound_url = snapshot.url
+            else:
+                raise PermissionError('The original page changed. Invoke MCP-Vision on the intended page again.')
         if snapshot.identity.get('status') == 'required':
             raise PermissionError('Sign in to continue, then invoke MCP-Vision again.')
         return snapshot
 
     async def run(self):
         keep_guide = False
+        self._loop = asyncio.get_running_loop()
+        self._cancel_signal = asyncio.Event()
         try:
             self.check_cancel()
             self.emit('Reading current context…')
             if self.mode == 'ask':
-                result = await asyncio.to_thread(answer_context, self.context, provider=self.provider, history=self.history)
+                result = await self.reason(answer_context, self.context, provider=self.provider, history=self.history)
                 self.check_cancel()
                 return {**result, 'state': 'answered'}
             if self.constraints.show_only:
@@ -151,7 +188,7 @@ class ContextTask:
                            'context': package_context(self.context), 'constraints': asdict(self.constraints),
                            'source': source, 'observation': snapshot.model_dump(),
                            'verified': self.verified[-24:], 'feedback': feedback}
-                proposal = await asyncio.to_thread(planner, payload)
+                proposal = await self.reason(planner, payload)
                 self.check_cancel()
                 step = proposal if isinstance(proposal, Step) else Step.model_validate(proposal)
                 if step.action in {'input', 'review'}:
@@ -160,6 +197,16 @@ class ContextTask:
                     final = await self.observe()
                     missing = [e['name'] for e in final.elements if e.get('required') and
                                (e.get('valid') is False or not (e.get('value') or e.get('checked') or e.get('files')))]
+                    changed = []
+                    for verified in self.verified:
+                        if verified['action'] in {'fill', 'select', 'set_checked', 'upload'}:
+                            current = resolve_target(final.elements, verified['name'], verified.get('role', ''))
+                            if current is None:
+                                changed.append(verified['name'])
+                            elif verified['action'] in {'fill', 'select'} and current.get('value') != verified['value']:
+                                changed.append(verified['name'])
+                    if changed:
+                        return self.result('input', 'Review these fields again; they changed or are no longer visible: ' + ', '.join(changed))
                     suffix = '\nNeeds your input: ' + ', '.join(missing) if missing else ''
                     return self.result('review', (step.message or 'Ready for your review.') + suffix +
                                        ('\nStopped before submission.' if self.constraints.no_submit else ''))
@@ -193,13 +240,13 @@ class ContextTask:
                 self.check_cancel()
                 receipt = await self.dispatch(step, snapshot, target)
                 self.emit('Checking the resulting state…')
-                after = await self.observe()
+                after = await self.observe(allow_navigation=step.action == "click")
                 success = self.verify(step, target, snapshot, after)
                 self.check_cancel()
                 if receipt.status == 'blocked':
                     return self.result('input', 'The action requires approval or is unavailable under the current policy. ' + receipt.message)
                 if success and receipt.executed is not False:
-                    self.verified.append({'action': step.action, 'name': step.name, 'value': step.value})
+                    self.verified.append({'action': step.action, 'name': step.name, 'role': step.role, 'value': step.value})
                     failures = 0
                     feedback = 'Previous action verified against the new observation.'
                 else:
@@ -218,7 +265,7 @@ class ContextTask:
             from mcp_vision.redaction import redact
             return self.result('error', 'Stopped: ' + redact(str(exc))[:500])
         finally:
-            if self.backend and hasattr(self.backend, 'clear_highlight') and (not keep_guide or self.cancelled.is_set()):
+            if self.mode != 'ask' and self.backend and hasattr(self.backend, 'clear_highlight') and (not keep_guide or self.cancelled.is_set()):
                 try:
                     await self.backend.clear_highlight()
                 except Exception:

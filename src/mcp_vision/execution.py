@@ -48,7 +48,7 @@ def create_execution_backend(*, browser_mode: str, live_driver: str = "native",
 
 
 async def bind_context_backend(context, *, mode, live_driver='native', cdp_endpoint=None,
-                               indicator=None, factory=create_execution_backend):
+                               indicator=None, source_path=None, factory=create_execution_backend):
     if mode == 'ask':
         return None
     if context.source == 'macos' and not context.url:
@@ -59,7 +59,7 @@ async def bind_context_backend(context, *, mode, live_driver='native', cdp_endpo
     if not context.url:
         raise ValueError('Invoke on a browser page to select an execution target.')
     backend = factory(browser_mode='live', live_driver=live_driver, cdp_endpoint=cdp_endpoint,
-                      allow_writes=mode == 'act')
+                      allow_writes=mode == 'act', governor=task_governor(source_path))
     try:
         listing = await backend.tabs()
         matches = [tab for tab in listing.get('tabs', []) if tab['url'] == context.url]
@@ -72,3 +72,12 @@ async def bind_context_backend(context, *, mode, live_driver='native', cdp_endpo
     except Exception:
         await backend.close()
         raise
+
+
+def task_governor(source_path=None):
+    from pathlib import Path
+    from mcp_vision.core.governor import Governor
+    if not source_path:
+        return Governor()
+    prefix = f"Upload {Path(source_path).name} to "
+    return Governor(confirmer=lambda policy, summary: summary.startswith(prefix))
