@@ -4,12 +4,15 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 
 from pydantic import ValidationError
 
 from mcp_vision.missions import Mission, RECIPES, brief
+from mcp_vision.context import Context
+from mcp_vision.contextual import answer_context
 from mcp_vision.redaction import redact
 from mcp_vision.utils.config_sync import _entry
 
@@ -17,9 +20,35 @@ from mcp_vision.utils.config_sync import _entry
 class StudioServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port=7331):
+    def __init__(self, port=7331, *, invocation_handler=None, provider=None):
         super().__init__(("127.0.0.1", port), Handler)
         self.demo_lock = threading.Lock()
+        self.context_lock = threading.Lock()
+        self.contexts = OrderedDict()
+        self.invocation_handler = invocation_handler
+        self.provider = provider
+
+    def accept_context(self, context: Context) -> Context:
+        with self.context_lock:
+            self.contexts[context.context_id] = context
+            while len(self.contexts) > 24:
+                self.contexts.popitem(last=False)
+        if self.invocation_handler:
+            self.invocation_handler(context)
+        return context
+
+    def get_context(self, context_id: str = "") -> Context | None:
+        with self.context_lock:
+            if context_id:
+                return self.contexts.get(context_id)
+            return next(reversed(self.contexts.values()), None) if self.contexts else None
+
+    def answer(self, request: str, context_id: str = "") -> dict[str, str]:
+        context = self.get_context(context_id)
+        if context is None:
+            context = self.accept_context(Context(source="api"))
+        context = context.model_copy(update={"user_request": request.strip()})
+        return answer_context(context, provider=self.provider)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -35,6 +64,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        origin = self.headers.get("Origin", "")
+        if origin.startswith("chrome-extension://") and self.path == "/api/context":
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         self.end_headers()
         self.wfile.write(body)
@@ -43,17 +76,42 @@ class Handler(BaseHTTPRequestHandler):
         port = self.server.server_port
         hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
         host = self.headers.get("Host", "")
-        if host not in hosts or self.headers.get("Origin", f"http://{host}") != f"http://{host}":
+        origin = self.headers.get("Origin", f"http://{host}")
+        extension = (origin.startswith("chrome-extension://") and self.path == "/api/context"
+                     and self.headers.get("X-MCP-Vision") == "chrome-extension")
+        requested_headers = self.headers.get("Access-Control-Request-Headers", "").lower()
+        preflight = (self.command == "OPTIONS" and origin.startswith("chrome-extension://")
+                     and self.path == "/api/context" and "x-mcp-vision" in requested_headers)
+        if host not in hosts or (origin != f"http://{host}" and not extension and not preflight):
             self._reply(403, {"error": "Open Mission Control from its local URL."})
             return False
         return True
+
+    def do_OPTIONS(self):
+        if not self._local():
+            return
+        if self.path != "/api/context":
+            self._reply(404, {"error": "Not found"})
+            return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", ""))
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-MCP-Vision")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
 
     def do_GET(self):
         if not self._local():
             return
         if self.path == "/api/info":
             self._reply(200, {"recipes": RECIPES, "server": _entry(browser_mode="live"),
-                              "execution": "host", "demo": "isolated-chromium"})
+                              "execution": "host", "demo": "isolated-chromium",
+                              "contextual": True})
+            return
+        if self.path == "/api/status":
+            latest = self.server.get_context()
+            self._reply(200, {"runtime": "ready", "contextual": True,
+                              "latestContext": latest.context_id if latest else None})
             return
         assets = {"/": ("index.html", "text/html; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -68,7 +126,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._local():
             return
-        if self.headers.get("X-MCP-Vision") != "studio" or self.headers.get("Content-Type") != "application/json":
+        marker = self.headers.get("X-MCP-Vision")
+        if marker not in {"studio", "chrome-extension", "contextual-ui"} or not self.headers.get("Content-Type", "").startswith("application/json"):
             self._reply(403, {"error": "Use the local Mission Control interface."})
             return
         try:
@@ -79,7 +138,15 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
-            if self.path == "/api/brief":
+            if self.path == "/api/context":
+                context = self.server.accept_context(Context.model_validate(data))
+                self._reply(202, {"ok": True, "contextId": context.context_id})
+            elif self.path == "/api/ask":
+                request = data.get("request", "")
+                if not isinstance(request, str) or not request.strip() or len(request) > 12000:
+                    raise ValueError("Give MCP-Vision a request between 1 and 12000 characters.")
+                self._reply(200, self.server.answer(request, str(data.get("contextId", ""))))
+            elif self.path == "/api/brief":
                 self._reply(200, brief(Mission(**data)))
             elif self.path == "/api/demo":
                 title = data.get("title", "My first mission")
@@ -102,8 +169,8 @@ class Handler(BaseHTTPRequestHandler):
                               "help": "Install Chromium with: python -m playwright install chromium"})
 
 
-def serve_studio(port=7331):
-    with StudioServer(port) as server:
+def serve_studio(port=7331, *, invocation_handler=None, provider=None):
+    with StudioServer(port, invocation_handler=invocation_handler, provider=provider) as server:
         print(f"Mission Control → http://127.0.0.1:{server.server_port}", flush=True)
         print("Local workspace. Press Ctrl+C to stop.", flush=True)
         try:
