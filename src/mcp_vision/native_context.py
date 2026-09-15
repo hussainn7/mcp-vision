@@ -7,6 +7,12 @@ from mcp_vision.browser import BrowserSnapshot
 from mcp_vision.context import ContextBounds, ContextElement
 
 
+def role_label(role: str) -> str:
+    import re
+    text = (role or '').removeprefix('AX').strip()
+    return re.sub(r'(?<!^)(?=[A-Z])', ' ', text).strip()
+
+
 def describe_ax(api, element):
     from mcp_vision.macos_ui import _ax_copy
     get = lambda key: _ax_copy(api, element, key)
@@ -39,7 +45,8 @@ def nearby_ax(api, root, limit=60):
         box = desc.bounds
         if box and box.width > 0 and box.height > 0 and (desc.name or desc.value):
             index = len(records)
-            records.append({'index': index, 'name': desc.name, 'role': desc.role, 'value': desc.value,
+            name = desc.name.strip() or desc.value.strip()[:80] or role_label(desc.role)
+            records.append({'index': index, 'name': name, 'role': desc.role, 'value': desc.value,
                             'x': box.x, 'y': box.y, 'w': box.width, 'h': box.height})
             handles[index] = element
         if depth < 5:

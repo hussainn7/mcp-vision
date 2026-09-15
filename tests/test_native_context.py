@@ -38,3 +38,10 @@ def test_native_hierarchy_is_bounded_and_retains_handles():
     records, handles = nearby_ax(AX, root, 18)
     assert len(records) == len(handles) == 18
     assert handles[1]['AXTitle'] == records[1]['name']
+
+
+def test_nameless_ax_control_gets_usable_label():
+    root = element('', AXRole='AXTextArea', AXValue='Draft note', AXChildren=[])
+    records, handles = nearby_ax(AX, root, 5)
+    assert records[0]['name'] in {'Draft note', 'Text Area'}
+    assert handles[0]['AXValue'] == 'Draft note'
