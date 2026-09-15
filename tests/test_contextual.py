@@ -25,7 +25,10 @@ def test_shared_context_is_bounded_and_compact():
 def test_capability_is_inferred_without_forcing_a_choice():
     assert infer_capability("What does this error mean?") == "ask"
     assert infer_capability("Where do I change this setting?") == "guide"
+    assert infer_capability("Which button do I press next?") == "guide"
     assert infer_capability("Fill this application but don't submit") == "act"
+    assert infer_capability("Show me how to export") == "guide"
+    assert infer_capability("Turn this off") == "act"
 
 
 def test_context_only_answer_always_returns_in_popup_shape():

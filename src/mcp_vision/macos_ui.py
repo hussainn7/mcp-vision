@@ -19,6 +19,18 @@ def _ax_copy(api: Any, element: Any, attribute: str) -> Any:
         return None
 
 
+def _ax_trusted(api) -> bool:
+    if bool(api.AXIsProcessTrusted()):
+        return True
+    # After a fresh grant, the flag can lag; a successful system-wide read means we are trusted.
+    try:
+        system = api.AXUIElementCreateSystemWide()
+        focused = _ax_copy(api, system, api.kAXFocusedApplicationAttribute)
+        return focused is not None
+    except Exception:
+        return False
+
+
 def capture_native_context() -> Context:
     """Collect what's under the cursor (not the MCP-Vision popup / IDE)."""
     if sys.platform != "darwin":
@@ -27,14 +39,15 @@ def capture_native_context() -> Context:
     import ApplicationServices as AX
 
     cursor = NSEvent.mouseLocation()
-    trusted = bool(AX.AXIsProcessTrusted())
+    trusted = _ax_trusted(AX)
     front = NSWorkspace.sharedWorkspace().frontmostApplication()
     context = Context(
         source="macos",
         source_application=str(front.localizedName() or "") if front else "",
         cursor_position=Point(x=float(cursor.x), y=float(cursor.y)),
         accessibility_context={"permission": "granted" if trusted else "required",
-                               "bundle_id": str(front.bundleIdentifier() or "") if front else ""},
+                               "bundle_id": str(front.bundleIdentifier() or "") if front else "",
+                               "app_path": "/Applications/MCP-Vision.app"},
         identity=IdentityState(status="unknown"),
     )
     if not trusted:
@@ -325,11 +338,11 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             from Foundation import NSDictionary, NSNumber
             options = NSDictionary.dictionaryWithObject_forKey_(
                 NSNumber.numberWithBool_(True), AX.kAXTrustedCheckOptionPrompt)
-            trusted = bool(AX.AXIsProcessTrustedWithOptions(options))
+            trusted = bool(AX.AXIsProcessTrustedWithOptions(options)) or _ax_trusted(AX)
             if trusted:
-                self.status.setStringValue_("Ready · ⌥Space or ⌃⌥Space · or click MV in the menu bar")
+                self.status.setStringValue_("Ready · ⌥Space / ⌃⌥Space · or menu bar MV")
             else:
-                self.status.setStringValue_("Enable Accessibility for MCP-Vision, then use ⌥Space or menu bar MV")
+                self.status.setStringValue_("Enable /Applications/MCP-Vision.app in Accessibility")
                 AppKit.NSWorkspace.sharedWorkspace().openURL_(
                     AppKit.NSURL.URLWithString_(
                         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"))
@@ -351,8 +364,11 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.hide_indicator()
             permission = context.accessibility_context.get("permission", "unknown")
             where = context.source_application or context.title or "screen"
-            suffix = "Accessibility ready" if permission == "granted" else "Accessibility permission needed"
-            self.status.setStringValue_(f"{where} · {suffix} · ⌥Space over the target")
+            if permission == "granted":
+                suffix = "Accessibility ready"
+            else:
+                suffix = "Add /Applications/MCP-Vision.app in Accessibility, then toggle it on"
+            self.status.setStringValue_(f"{where} · {suffix}")
             self.input.setStringValue_("")
             self.response.setString_("")
             mouse = AppKit.NSEvent.mouseLocation()
@@ -478,7 +494,13 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             task = ContextTask(context, mode=mode, provider=selected_provider, source_path=self.source_path,
                                history=self.history, progress=lambda message: AppHelper.callAfter(self.show_progress, message))
             self.task = task
-            self.response.setString_("Reading current context…")
+            auto = self.modes.selectedSegment() == 0
+            label = {"ask": "Asking", "guide": "Guiding", "act": "Acting"}.get(task.mode, "Working")
+            self.response.setString_(f"{'Auto → ' if auto else ''}{label}…")
+            self.status.setStringValue_(f"{'Auto → ' if auto else ''}{task.mode.capitalize()} · reading context…")
+            # Mirror the inferred Auto choice on the segment control so it's obvious.
+            if auto:
+                self.modes.setSelectedSegment_({"ask": 1, "guide": 2, "act": 3}[task.mode])
             self.input.setEnabled_(False)
             self.send.setEnabled_(False)
             self.choose_button.setEnabled_(False)

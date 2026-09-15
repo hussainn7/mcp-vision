@@ -22,3 +22,4 @@ def test_search_requests_route_to_act():
     assert infer_capability("Search for flights in SF") == "act"
     assert infer_capability("Find hotels near me") == "act"
     assert infer_capability("What does this error mean?") == "ask"
+    assert infer_capability("How do I enable this?") == "guide"
