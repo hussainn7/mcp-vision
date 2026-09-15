@@ -111,7 +111,7 @@ def _best_tab(open_tabs: list[dict], host: str, *, personal: bool) -> dict | Non
     for tab in open_tabs or []:
         url = tab.get("url") or ""
         h = _host(url)
-        if not h or (host not in h and h not in host):
+        if not h or h != host:
             continue
         path = urlsplit(url).path or "/"
         score = 10
@@ -146,7 +146,7 @@ def plan_url(query: str, *, backend: str | None = "local",
     research = bool(_RESEARCH.search(low))
     product = product_mention(q)
 
-    planned = plan_with_model(q, backend)
+    planned = None if product or research or _FLIGHT.search(low) else plan_with_model(q, backend)
     if planned:
         host = _host(planned["url"])
         tab = _best_tab(open_tabs, host, personal=personal) if host else None

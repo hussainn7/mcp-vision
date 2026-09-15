@@ -5,11 +5,15 @@ import asyncio
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from mcp_vision.browser import BrowserRuntime
 from mcp_vision.core.governor import Governor, danger_url
 from mcp_vision.live_browser import LiveBrowserRuntime
 from mcp_vision.overlay.hud import set_forced_result
+from mcp_vision.redaction import redact
+from phase2_mcp.auth_detector import detect_auth_challenge
+from phase2_mcp.session_state import VERIFIED, discover_identity
 from phase2_mcp.chrome_bridge import websocket_endpoint
 
 OUT = Path.cwd() / "outputs" / "real_tasks"
@@ -20,6 +24,7 @@ def _deny(_policy, _summary) -> bool:
 
 
 def _scrub(text: str, limit: int = 400) -> str:
+    text = redact(text)
     text = re.sub(r"[\w.+-]+@[\w.-]+\.\w+", "[email]", text)
     text = re.sub(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b", "[phone]", text)
     return " ".join(text.split())[:limit]
@@ -79,7 +84,6 @@ async def task_ebay(runtime) -> dict:
             tested += 1
             if (await runtime.click(snap.snapshot_id, match["index"])).status == "blocked":
                 blocked += 1
-        from urllib.parse import urlsplit
         ok = "error page" not in snap.title.lower() and (len(prices) >= 1 or len(snap.elements) > 10)
         last = _scrub(
             f"host={urlsplit(url).hostname} elements={len(snap.elements)} "
@@ -194,6 +198,10 @@ async def task_email_observe(runtime, mode: str) -> dict:
             return {"id": name, "ok": False, "detail": used.message}
     snap = await runtime.snapshot()
     await _shot(runtime, name)
+    host = (urlsplit(snap.url).hostname or "").lower()
+    challenge = detect_auth_challenge(snap.url, snap.title, snap.text, snap.elements)
+    identity = discover_identity(snap.url, snap.title, snap.text, snap.elements)
+    identity_verified = bool((snap.identity or {}).get("value")) or identity.source == VERIFIED
     compose = [e for e in snap.elements if re.search(r"\b(compose|send|new message)\b", e["name"], re.I)]
     blocked = tested = 0
     for el in compose[:2]:
@@ -204,9 +212,40 @@ async def task_email_observe(runtime, mode: str) -> dict:
         tested += 1
         if (await runtime.click(snap.snapshot_id, match["index"])).status == "blocked":
             blocked += 1
-    ok = len(snap.text) > 40
+    ok = (len(snap.text) > 40 and challenge is None
+          and any(site in host for site in ("mail.google", "outlook.live", "outlook.office")))
     return {"id": name, "ok": ok, "detail": _scrub(
-        f"readable={ok} compose_blocked={blocked}/{tested} title={snap.title}"
+        f"readable={len(snap.text) > 40} correct_origin={ok or host.startswith(('mail.google', 'outlook.'))} "
+        f"auth_required={challenge is not None} identity_verified={identity_verified} "
+        f"compose_blocked={blocked}/{tested} title={snap.title}"
+    )}
+
+
+async def task_github_observe(runtime, mode: str) -> dict:
+    name = "github_check"
+    if mode != "live":
+        return {"id": name, "ok": True, "detail": "skipped until live Chrome (needs cookies)"}
+    listed = await runtime.tabs()
+    tabs = listed.get("tabs", [])
+    github = next((t for t in tabs if (urlsplit(t["url"]).hostname or "").lower() == "github.com"), None)
+    if github:
+        used = await runtime.use_tab(github["tab_id"], github["url"])
+        if used.status != "verified":
+            return {"id": name, "ok": False, "detail": used.message}
+    else:
+        opened = await runtime.open_tab("https://github.com/")
+        if opened.status != "verified":
+            return {"id": name, "ok": False, "detail": opened.message}
+    snap = await runtime.snapshot()
+    await _shot(runtime, name)
+    host = (urlsplit(snap.url).hostname or "").lower()
+    challenge = detect_auth_challenge(snap.url, snap.title, snap.text, snap.elements)
+    identity = discover_identity(snap.url, snap.title, snap.text, snap.elements)
+    identity_verified = bool((snap.identity or {}).get("value")) or identity.source == VERIFIED
+    ok = host == "github.com" and len(snap.text) > 40 and challenge is None
+    return {"id": name, "ok": ok, "detail": _scrub(
+        f"readable={len(snap.text) > 40} correct_origin={host == 'github.com'} "
+        f"auth_required={challenge is not None} identity_verified={identity_verified} title={snap.title}"
     )}
 
 
@@ -218,12 +257,12 @@ async def task_icollege(runtime, mode: str) -> dict:
     tabs = listed.get("tabs", [])
 
     def score(tab):
-        u = tab["url"].lower()
-        if "gastate.view.usg.edu" in u or "d2l" in u:
+        host = (urlsplit(tab["url"]).hostname or "").lower()
+        if "gastate.view.usg.edu" in host or "d2l" in host:
             return 0
-        if "icollege.gsu.edu" in u:
+        if "icollege.gsu.edu" in host:
             return 1
-        if "gsu.edu" in u and "idp." not in u:
+        if host.endswith("gsu.edu") and not host.startswith("idp."):
             return 2
         return 99
 
@@ -238,6 +277,8 @@ async def task_icollege(runtime, mode: str) -> dict:
             return {"id": name, "ok": False, "detail": opened.message}
     snap = await runtime.snapshot()
     await _shot(runtime, name)
+    host = (urlsplit(snap.url).hostname or "").lower()
+    challenge = detect_auth_challenge(snap.url, snap.title, snap.text, snap.elements)
     submit = [e for e in snap.elements if re.search(r"\b(submit|post|publish)\b", e["name"], re.I)]
     blocked = tested = 0
     for el in submit[:2]:
@@ -248,12 +289,11 @@ async def task_icollege(runtime, mode: str) -> dict:
         tested += 1
         if (await runtime.click(snap.snapshot_id, match["index"])).status == "blocked":
             blocked += 1
-    ok = len(snap.text) > 40 and "login" not in snap.title.lower()
-    # Login wall is still a successful connect proof when SSO tab was selected earlier.
-    if "login" in snap.title.lower() and ranked:
-        ok = len(snap.text) > 40
+    correct_origin = any(site in host for site in ("icollege.gsu.edu", "gastate.view.usg.edu", "d2l"))
+    ok = len(snap.text) > 40 and correct_origin and challenge is None
     return {"id": name, "ok": ok, "detail": _scrub(
-        f"readable={len(snap.text) > 40} submit_blocked={blocked}/{tested} title={snap.title}"
+        f"readable={len(snap.text) > 40} correct_origin={correct_origin} "
+        f"auth_required={challenge is not None} submit_blocked={blocked}/{tested} title={snap.title}"
     )}
 
 
@@ -283,6 +323,7 @@ async def run_probe(*, prefer_live: bool = False, headed: bool = False) -> bool:
         results.append(await task_ebay(runtime))
         results.append(await task_flights(runtime))
         results.append(await task_live_tabs(runtime, mode))
+        results.append(await task_github_observe(runtime, mode))
         results.append(await task_email_observe(runtime, mode))
         results.append(await task_icollege(runtime, mode))
     finally:

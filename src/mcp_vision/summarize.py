@@ -59,7 +59,17 @@ def summarize(query: str, evidence: str, *, backend: str | None = "local",
     evidence = (evidence or "")[:12000]
     query = (query or "").strip() or "summarize this"
     if not ok:
-        return "Task did not succeed.\n" + _heuristic(query, evidence)
+        return "Task did not succeed: required answer evidence is missing."
+
+    if "\nANSWER:\n" in evidence and evidence.startswith("URL: https"):
+        source, answer = evidence.split("\nANSWER:\n", 1)
+        return answer + " — " + source.removeprefix("URL: ")
+
+    from mcp_vision.controller import answer_lines
+    grounded = answer_lines(query, evidence)
+    if grounded:
+        source = re.search(r"^URL: (https?://\S+)", evidence, re.M)
+        return "\n".join(grounded) + (f" — {source[1]}" if source else "")
 
     use_model = backend not in {None, "", "none", "off", "heuristic"}
     if use_model:

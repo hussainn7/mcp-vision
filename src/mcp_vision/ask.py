@@ -1,11 +1,9 @@
-"""Simple natural-language query against your existing Chrome."""
+"""Natural-language browser missions against your existing Chrome."""
 from __future__ import annotations
 
-import asyncio
-
-from mcp_vision.core.governor import Governor
+from mcp_vision.core.governor import Governor, danger_url
 from mcp_vision.plan import plan_url
-from mcp_vision.summarize import summarize
+from mcp_vision.controller import compile_mission, run_controller
 
 
 def _deny(*_a, **_k) -> bool:
@@ -13,14 +11,14 @@ def _deny(*_a, **_k) -> bool:
 
 
 async def run_ask(query: str, *, backend: str | None = "local", live: bool = True) -> dict:
-    """Plan a destination, open/reuse a tab, read the page, summarize on success."""
+    """Open a destination and pursue a bounded, evidence-driven mission."""
     from mcp_vision.native_browser import NativeBrowserRuntime
     from mcp_vision.browser import BrowserRuntime
 
     gov = Governor(confirmer=_deny)
     if live:
         try:
-            runtime = NativeBrowserRuntime(allow_writes=False, governor=gov)
+            runtime = NativeBrowserRuntime(allow_writes=False, governor=gov, pause_for_challenges=False)
             mode = "live-native"
         except Exception:
             runtime = BrowserRuntime(allow_writes=False, governor=gov, headless=True)
@@ -29,10 +27,6 @@ async def run_ask(query: str, *, backend: str | None = "local", live: bool = Tru
         runtime = BrowserRuntime(allow_writes=False, governor=gov, headless=True)
         mode = "isolated"
 
-    evidence = ""
-    title = ""
-    final_url = ""
-    ok = False
     plan = {"url": "", "reason": "", "source": ""}
     try:
         open_tabs = []
@@ -45,45 +39,37 @@ async def run_ask(query: str, *, backend: str | None = "local", live: bool = Tru
 
         plan = plan_url(query, backend=backend, open_tabs=open_tabs)
         url = plan["url"]
+        if danger_url(url):
+            return {"ok": False, "mode": mode, "summary": "Destination denied by observe-only safety policy.",
+                    "evidence": "", "plan": plan}
 
         if mode == "live-native":
             if plan.get("tab_id") and plan.get("expected_url"):
                 used = await runtime.use_tab(plan["tab_id"], plan["expected_url"])
-                if used.status != "verified":
+                if used.status in {"blocked", "denied"}:
+                    return {"ok": False, "mode": mode, "summary": used.message,
+                            "evidence": "", "plan": plan}
+                if used.status != "verified" and used.executed is not None:
                     opened = await runtime.open_tab(url)
-                    if opened.status != "verified":
+                    if opened.status != "verified" and opened.executed is not None:
                         return {"ok": False, "mode": mode, "summary": opened.message,
                                 "evidence": "", "plan": plan}
             else:
                 opened = await runtime.open_tab(url)
-                if opened.status != "verified":
+                if opened.status != "verified" and opened.executed is not None:
                     return {"ok": False, "mode": mode, "summary": opened.message,
                             "evidence": "", "plan": plan}
         else:
             rec = await runtime.navigate(url)
-            if rec.status != "verified":
+            if rec.status != "verified" and rec.executed is not None:
                 return {"ok": False, "mode": mode, "summary": rec.message,
                         "evidence": "", "plan": plan}
 
-        snap = None
-        for _ in range(8):
-            snap = await runtime.snapshot()
-            if snap and len(snap.text or "") > 200:
-                break
-            await asyncio.sleep(0.8)
-        if not snap:
-            return {"ok": False, "mode": mode, "summary": "No page content",
-                    "evidence": "", "plan": plan}
-
-        title = snap.title
-        final_url = snap.url
-        evidence = (
-            f"PLAN: {plan.get('reason')} ({plan.get('source')})\n"
-            f"TITLE: {snap.title}\nURL: {snap.url}\n\n{snap.text[:8000]}"
-        )
-        ok = len(snap.text or "") > 120
-        summary = summarize(query, evidence, backend=backend, ok=ok)
-        return {"ok": ok, "mode": mode, "title": title, "url": final_url,
-                "summary": summary, "evidence": evidence, "plan": plan}
+        mission = compile_mission(query, plan)
+        result = await run_controller(runtime, mission, backend=backend)
+        return {**result, "mode": mode, "plan": plan, "mission": mission.model_dump()}
+    except Exception as exc:
+        return {"ok": False, "mode": mode, "summary": f"Browser unavailable: {exc}",
+                "evidence": "", "plan": plan}
     finally:
         await runtime.close()
