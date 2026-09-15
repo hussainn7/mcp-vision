@@ -274,6 +274,15 @@ class ContextTask:
                         return self.result('input', 'The target could not be resolved after three observations.')
                     snapshot = await self.observe()
                     continue
+                if target and step.action == 'fill' and target.get('role') == 'combobox':
+                    step = step.model_copy(update={'action': 'select'})
+                if step.action == 'set_checked':
+                    try:
+                        step = step.model_copy(update={'value': checkbox_value(step.value)})
+                    except ValueError:
+                        self.unanswered.add(step.name)
+                        feedback = f'{step.name} needs a clear true/false value. Leave it unanswered and continue other fields.'
+                        continue
                 if source and step.action in {'fill', 'select', 'set_checked'}:
                     if (not step.evidence or normalized(step.evidence) not in normalized(source)
                             or not step.value.strip() or normalized(step.value) not in normalized(step.evidence)):
@@ -281,10 +290,6 @@ class ContextTask:
                         feedback = f'{step.name} has no literal factual support. Leave it unanswered and fill OTHER supported fields.'
                         self.emit(f'Leaving {step.name} for your input…')
                         continue
-                if target and step.action == 'fill' and target.get('role') == 'combobox':
-                    step = step.model_copy(update={'action': 'select'})
-                if step.action == 'set_checked':
-                    step = step.model_copy(update={'value': checkbox_value(step.value)})
                 self.constraints.check(self.mode, step.action, target or {}, source=source, value=step.value)
                 if step.action == 'click' and (not step.expected_text or step.expected_text in snapshot.text):
                     return self.result('input', 'This action needs a distinct observable result before I can perform it.')
