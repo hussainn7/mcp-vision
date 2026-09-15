@@ -246,7 +246,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.response.setFont_(AppKit.NSFont.systemFontOfSize_(13.5))
             self.response.setTextColor_(AppKit.NSColor.secondaryLabelColor())
 
-            self.status = AppKit.NSTextField.labelWithString_("Model · ⌥Space over the thing you mean")
+            self.status = AppKit.NSTextField.labelWithString_("Local · ⌥Space or ⌃⌥Space over the target")
             self.status.setFrame_(AppKit.NSMakeRect(24, 16, 380, 20))
             self.status.setFont_(AppKit.NSFont.systemFontOfSize_(11))
             self.status.setTextColor_(AppKit.NSColor.tertiaryLabelColor())
@@ -256,26 +256,84 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
         def install_hotkey(self):
             mask = AppKit.NSEventMaskKeyDown
             option = AppKit.NSEventModifierFlagOption
-            disallowed = AppKit.NSEventModifierFlagCommand | AppKit.NSEventModifierFlagControl
+            control = AppKit.NSEventModifierFlagControl
 
-            def matches(event):
-                flags = event.modifierFlags()
-                return event.keyCode() == 49 and bool(flags & option) and not bool(flags & disallowed)
-
-            def invoke(_event):
-                # Capture under the cursor before the popup becomes frontmost.
+            def invoke():
                 context = capture_native_context()
                 AppHelper.callAfter(self.show_context, context)
 
+            def matches_primary(event):
+                flags = int(event.modifierFlags())
+                return (event.keyCode() == 49 and bool(flags & option)
+                        and not bool(flags & (AppKit.NSEventModifierFlagCommand | control)))
+
+            def matches_fallback(event):
+                flags = int(event.modifierFlags())
+                return (event.keyCode() == 49 and bool(flags & option) and bool(flags & control)
+                        and not bool(flags & AppKit.NSEventModifierFlagCommand))
+
             def local(event):
-                if matches(event):
-                    invoke(event)
+                if matches_primary(event) or matches_fallback(event):
+                    invoke()
                     return None
                 return event
 
             self.monitors.append(AppKit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-                mask, lambda event: invoke(event) if matches(event) else None))
+                mask, lambda event: invoke() if matches_primary(event) or matches_fallback(event) else None))
             self.monitors.append(AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, local))
+            center = AppKit.NSDistributedNotificationCenter.defaultCenter()
+            center.addObserver_selector_name_object_(
+                self, "nativeHotkey:", "org.mcpvision.contextual.hotkey", None)
+            self._menu_invoke = invoke
+            self._install_status_item(invoke)
+            self._ensure_accessibility()
+
+        def nativeHotkey_(self, _notification):
+            if getattr(self, "_menu_invoke", None):
+                self._menu_invoke()
+
+        @objc.python_method
+        def _install_status_item(self, invoke):
+            bar = AppKit.NSStatusBar.systemStatusBar()
+            self.status_item = bar.statusItemWithLength_(AppKit.NSVariableStatusItemLength)
+            button = self.status_item.button()
+            if button is not None:
+                button.setTitle_("MV")
+                button.setToolTip_("MCP-Vision · click or ⌥Space / ⌃⌥Space")
+            menu = AppKit.NSMenu.alloc().init()
+            open_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "Ask about this…", "invokeFromMenu:", "")
+            open_item.setTarget_(self)
+            menu.addItem_(open_item)
+            quit_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "Quit MCP-Vision", "quitFromMenu:", "")
+            quit_item.setTarget_(self)
+            menu.addItem_(quit_item)
+            self.status_item.setMenu_(menu)
+            self._menu_invoke = invoke
+
+        def invokeFromMenu_(self, _sender):
+            if getattr(self, "_menu_invoke", None):
+                self._menu_invoke()
+
+        def quitFromMenu_(self, _sender):
+            AppKit.NSApp.terminate_(None)
+
+        @objc.python_method
+        def _ensure_accessibility(self):
+            import ApplicationServices as AX
+            from Foundation import NSDictionary, NSNumber
+            options = NSDictionary.dictionaryWithObject_forKey_(
+                NSNumber.numberWithBool_(True), AX.kAXTrustedCheckOptionPrompt)
+            trusted = bool(AX.AXIsProcessTrustedWithOptions(options))
+            if trusted:
+                self.status.setStringValue_("Ready · ⌥Space or ⌃⌥Space · or click MV in the menu bar")
+            else:
+                self.status.setStringValue_("Enable Accessibility for MCP-Vision, then use ⌥Space or menu bar MV")
+                AppKit.NSWorkspace.sharedWorkspace().openURL_(
+                    AppKit.NSURL.URLWithString_(
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"))
+            return trusted
 
         @objc.python_method
         def show_context(self, context):
@@ -481,7 +539,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
     thread.start()
     controller.install_hotkey()
     app.finishLaunching()
-    print(f"MCP-Vision UI ready · ⌥Space over the thing you mean · http://127.0.0.1:{server.server_port}", flush=True)
+    print(f"MCP-Vision UI ready · menu bar MV · ⌥Space / ⌃⌥Space · http://127.0.0.1:{server.server_port}", flush=True)
     try:
         AppHelper.runEventLoop()
     finally:
