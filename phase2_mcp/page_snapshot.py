@@ -120,6 +120,8 @@ SNAPSHOT_JS = r"""(maxElements) => {
   %(helpers)s
 
   const out = [];
+  const facts = [];
+  let identity = null;
   document.querySelectorAll('[data-agent-index]').forEach(el => el.removeAttribute('data-agent-index'));
   const pruned = {occluded: 0, offscreen: 0, disabled: 0};
   let i = 0;
@@ -150,13 +152,38 @@ SNAPSHOT_JS = r"""(maxElements) => {
     el.setAttribute('data-agent-index', String(i));
     out.push({
       index: i, role: role, name: name,
+      href: el.tagName.toLowerCase() === "a" ? el.href : null,
       cx: point[0], cy: point[1],
       x: Math.round(r.left), y: Math.round(r.top),
       w: Math.round(r.width), h: Math.round(r.height),
     });
     i++;
   }
-  return {elements: out, pruned: pruned, url: location.href, title: document.title};
+
+  // Small, origin-bound adapters expose facts that accessibility text loses.
+  // Values are page observations, never instructions, and are length/count capped.
+  if (location.hostname === 'github.com') {
+    const login = document.querySelector('meta[name="user-login"]')?.content?.trim();
+    if (login) identity = {value: login.slice(0, 64), via: 'github user-login metadata'};
+  }
+  if (location.hostname === 'mail.google.com') {
+    const account = Array.from(document.querySelectorAll('[aria-label*="Google Account"], [title*="Google Account"]'))
+      .map(el => el.getAttribute('aria-label') || el.getAttribute('title') || '')
+      .find(Boolean);
+    const email = account && account.match(/[A-Z0-9._%%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+    if (email) identity = {value: email[0].slice(0, 254), via: 'google account control'};
+    for (const row of Array.from(document.querySelectorAll('tr.zE')).slice(0, 20)) {
+      const senderEl = row.querySelector('[email], .yW span, [data-hovercard-id]');
+      const subjectEl = row.querySelector('.bog, [data-thread-id] .bog');
+      const dateEl = row.querySelector('.xW span[title], .xW span, td.xW');
+      const clean = value => (value || '').replace(/\s+/g, ' ').trim();
+      const sender = clean(senderEl?.getAttribute('name') || senderEl?.getAttribute('email') || senderEl?.textContent).slice(0, 160);
+      const subject = clean(subjectEl?.textContent).slice(0, 240);
+      const date = clean(dateEl?.getAttribute('title') || dateEl?.textContent).slice(0, 100);
+      if (sender && subject) facts.push({kind: 'unread_email', sender, subject, date});
+    }
+  }
+  return {elements: out, pruned: pruned, facts, identity, url: location.href, title: document.title};
 }""" % {"helpers": _JS_HELPERS, "sel": json.dumps(_CANDIDATE_SELECTOR)}
 
 

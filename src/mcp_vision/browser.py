@@ -40,6 +40,8 @@ class BrowserSnapshot(BaseModel):
     text: str
     elements: list[dict]
     pruned: dict = Field(default_factory=dict)
+    facts: list[dict] = Field(default_factory=list)
+    identity: dict = Field(default_factory=dict)
     source: str = "dom-accessibility"
 
 
@@ -195,7 +197,8 @@ class BrowserRuntime:
             text = await self.page.locator("body").inner_text(timeout=5000)
             self._snapshot = BrowserSnapshot(snapshot_id=uuid.uuid4().hex,
                 url=self.page.url, title=await self.page.title(), text=text[:12000],
-                elements=records, pruned=raw.get("pruned", {}))
+                elements=records, pruned=raw.get("pruned", {}),
+                facts=raw.get("facts") or [], identity=raw.get("identity") or {})
             self._observed_at = time.monotonic()
             return self._snapshot
 
