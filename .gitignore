@@ -57,3 +57,4 @@ bench/golden/
 /outputs/MCPVisionLauncher.*
 /outputs/*-cache/
 /outputs/contextual-demo/
+/outputs/signing/
