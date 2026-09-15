@@ -38,6 +38,12 @@ def test_redact_credentials_in_nested_errors():
     assert "x=2" in str(value)
 
 
+def test_redaction_covers_oauth_callback_codes():
+    value = redact("https://app.test/callback?code=secret-code&state=kept")
+    assert "secret-code" not in value
+    assert "state=kept" in value
+
+
 def test_enter_cannot_submit_without_confirmation():
     policy = classify("press_key_combination", keys=["Enter"])
     assert policy == Policy.RESTRICTED_ACTION

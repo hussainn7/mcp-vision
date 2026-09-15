@@ -2,7 +2,10 @@
 import re
 
 _FIELD = re.compile(r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|authorization|cookie|secret)", re.I)
-_QUERY = re.compile(r"([?&](?:key|api_key|token|access_token)=)[^&\s\"']+", re.I)
+_QUERY = re.compile(
+    r"([?&](?:key|api_key|token|access_token|refresh_token|code|id_token)=)[^&\s\"']+",
+    re.I,
+)
 _BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.I)
 
 
