@@ -20,46 +20,94 @@ def _ax_copy(api: Any, element: Any, attribute: str) -> Any:
 
 
 def capture_native_context() -> Context:
-    """Collect only reliable foreground AX metadata; missing permission is explicit."""
+    """Collect what's under the cursor (not the MCP-Vision popup / IDE)."""
     if sys.platform != "darwin":
         return Context(source="macos", source_application=sys.platform)
-    from AppKit import NSEvent, NSWorkspace
+    from AppKit import NSEvent, NSRunningApplication, NSScreen, NSWorkspace
     import ApplicationServices as AX
 
-    app = NSWorkspace.sharedWorkspace().frontmostApplication()
-    name = str(app.localizedName() or "") if app else ""
-    bundle = str(app.bundleIdentifier() or "") if app else ""
     cursor = NSEvent.mouseLocation()
     trusted = bool(AX.AXIsProcessTrusted())
+    front = NSWorkspace.sharedWorkspace().frontmostApplication()
     context = Context(
         source="macos",
-        source_application=name,
+        source_application=str(front.localizedName() or "") if front else "",
         cursor_position=Point(x=float(cursor.x), y=float(cursor.y)),
-        accessibility_context={"permission": "granted" if trusted else "required", "bundle_id": bundle},
+        accessibility_context={"permission": "granted" if trusted else "required",
+                               "bundle_id": str(front.bundleIdentifier() or "") if front else ""},
         identity=IdentityState(status="unknown"),
     )
     if not trusted:
         return context
+
+    primary_height = float(NSScreen.screens()[0].frame().size.height)
+    ax_x, ax_y = float(cursor.x), primary_height - float(cursor.y)
     system = AX.AXUIElementCreateSystemWide()
-    focused_app = _ax_copy(AX, system, AX.kAXFocusedApplicationAttribute)
-    window = _ax_copy(AX, focused_app, AX.kAXFocusedWindowAttribute) if focused_app else None
-    element = _ax_copy(AX, system, AX.kAXFocusedUIElementAttribute)
+    element = None
+    try:
+        err, element = AX.AXUIElementCopyElementAtPosition(system, ax_x, ax_y, None)
+        if err != 0:
+            element = None
+    except Exception:
+        element = None
+    if element is None:
+        element = _ax_copy(AX, system, AX.kAXFocusedUIElementAttribute)
+
+    app = front
+    window = None
+    pid = None
+    if element is not None:
+        try:
+            err, pid_ref = AX.AXUIElementGetPid(element, None)
+            if err == 0 and pid_ref:
+                pid = int(pid_ref)
+                matched = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+                if matched:
+                    app = matched
+        except Exception:
+            pass
+        window = _ax_copy(AX, element, AX.kAXWindowAttribute) or _ax_copy(AX, element, "AXTopLevelUIElement")
+    if window is None and app is not None:
+        focused_app = AX.AXUIElementCreateApplication(int(app.processIdentifier()))
+        window = _ax_copy(AX, focused_app, AX.kAXFocusedWindowAttribute)
+
+    # Skip our own launcher when the cursor is over the popup chrome.
+    bundle = str(app.bundleIdentifier() or "") if app else ""
+    if bundle == "org.mcpvision.contextual":
+        focused_app = _ax_copy(AX, system, AX.kAXFocusedApplicationAttribute)
+        if focused_app:
+            try:
+                err, pid_ref = AX.AXUIElementGetPid(focused_app, None)
+                if err == 0 and pid_ref:
+                    other = NSRunningApplication.runningApplicationWithProcessIdentifier_(int(pid_ref))
+                    if other and str(other.bundleIdentifier() or "") != "org.mcpvision.contextual":
+                        app = other
+                        window = _ax_copy(AX, focused_app, AX.kAXFocusedWindowAttribute)
+                        element = _ax_copy(AX, system, AX.kAXFocusedUIElementAttribute) or element
+                        pid = int(other.processIdentifier())
+                        bundle = str(other.bundleIdentifier() or "")
+            except Exception:
+                pass
+
+    name = str(app.localizedName() or "") if app else ""
     title = _ax_copy(AX, window, AX.kAXTitleAttribute) if window else ""
     role = _ax_copy(AX, element, AX.kAXRoleAttribute) if element else ""
     selected = _ax_copy(AX, element, AX.kAXSelectedTextAttribute) if element else ""
     secure = "secure" in str(role).lower() or _ax_copy(AX, element, "AXSubrole") == "AXSecureTextField"
-    focused = None
-    if element:
-        focused = describe_ax(AX, element)
+    focused = describe_ax(AX, element) if element else None
+    parent = _ax_copy(AX, element, "AXParent") if element else None
+    controls = nearby_ax(AX, parent or window, 24)[0]
     return context.model_copy(update={
+        "source_application": name,
         "title": str(title or ""),
         "selected_text": str(selected or "") if not secure else "",
         "focused_element": focused,
         "accessibility_context": {
             "permission": "granted", "bundle_id": bundle,
             "window": str(title or ""), "focused_role": str(role or ""),
-            "pid": int(app.processIdentifier()),
-            "controls": nearby_ax(AX, _ax_copy(AX, element, 'AXParent') if element else window, 18)[0],
+            "pid": int(pid if pid is not None else (app.processIdentifier() if app else 0)),
+            "pointer": {"x": ax_x, "y": ax_y},
+            "controls": controls,
         },
     })
 
@@ -94,7 +142,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
 
         @objc.python_method
         def _build_panel(self):
-            width, height = 430, 366
+            width, height = 430, 400
             rect = AppKit.NSMakeRect(0, 0, width, height)
             style = (AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskFullSizeContentView)
             self.panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -120,10 +168,10 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.panel.setContentView_(root)
 
             title = AppKit.NSTextField.labelWithString_("What should I do here?")
-            title.setFrame_(AppKit.NSMakeRect(24, 306, 360, 32))
+            title.setFrame_(AppKit.NSMakeRect(24, 340, 360, 32))
             title.setFont_(AppKit.NSFont.systemFontOfSize_weight_(21, AppKit.NSFontWeightSemibold))
             root.addSubview_(title)
-            dismiss = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(387, 310, 24, 24))
+            dismiss = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(387, 344, 24, 24))
             dismiss.setTitle_("×")
             dismiss.setBordered_(False)
             dismiss.setKeyEquivalent_("\x1b")
@@ -131,7 +179,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             dismiss.setAction_("dismiss:")
             root.addSubview_(dismiss)
 
-            self.input = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 254, 390, 43))
+            self.input = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 288, 390, 43))
             self.input.setPlaceholderString_("Ask about what’s under your cursor…")
             self.input.setFont_(AppKit.NSFont.systemFontOfSize_(15))
             self.input.setBezeled_(True)
@@ -140,7 +188,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.input.setAction_("submit:")
             root.addSubview_(self.input)
 
-            self.modes = AppKit.NSSegmentedControl.alloc().initWithFrame_(AppKit.NSMakeRect(20, 214, 248, 28))
+            self.modes = AppKit.NSSegmentedControl.alloc().initWithFrame_(AppKit.NSMakeRect(20, 248, 248, 28))
             self.modes.setSegmentCount_(4)
             for index, label in enumerate(("Auto", "Ask", "Guide", "Act")):
                 self.modes.setLabel_forSegment_(label, index)
@@ -149,7 +197,15 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.modes.setEnabled_(True)
             root.addSubview_(self.modes)
 
-            send = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(346, 212, 64, 31))
+            self.providers = AppKit.NSPopUpButton.alloc().initWithFrame_pullsDown_(
+                AppKit.NSMakeRect(276, 246, 134, 28), False)
+            from mcp_vision.providers import LABELS
+            for label, _value in LABELS:
+                self.providers.addItemWithTitle_(label)
+            self.providers.selectItemAtIndex_(0)
+            root.addSubview_(self.providers)
+
+            send = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(346, 206, 64, 31))
             send.setTitle_("Go")
             self.send = send
             send.setBezelStyle_(AppKit.NSBezelStyleRounded)
@@ -158,7 +214,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             send.setAction_("submit:")
             root.addSubview_(send)
 
-            cancel = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(276, 212, 70, 31))
+            cancel = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(276, 206, 70, 31))
             cancel.setTitle_("Cancel")
             cancel.setBezelStyle_(AppKit.NSBezelStyleRounded)
             cancel.setTarget_(self)
@@ -167,7 +223,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.cancel_button = cancel
             cancel.setEnabled_(False)
 
-            choose = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(20, 172, 150, 28))
+            choose = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(20, 206, 150, 28))
             choose.setTitle_("Choose résumé…")
             choose.setBezelStyle_(AppKit.NSBezelStyleRounded)
             choose.setTarget_(self)
@@ -175,10 +231,10 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             root.addSubview_(choose)
             self.choose_button = choose
 
-            scroll = AppKit.NSScrollView.alloc().initWithFrame_(AppKit.NSMakeRect(24, 44, 382, 124))
+            scroll = AppKit.NSScrollView.alloc().initWithFrame_(AppKit.NSMakeRect(24, 44, 382, 150))
             scroll.setHasVerticalScroller_(True)
             scroll.setDrawsBackground_(False)
-            self.response = AppKit.NSTextView.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 362, 124))
+            self.response = AppKit.NSTextView.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 362, 150))
             self.response.setEditable_(False)
             self.response.setSelectable_(True)
             self.response.setDrawsBackground_(False)
@@ -190,8 +246,8 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.response.setFont_(AppKit.NSFont.systemFontOfSize_(13.5))
             self.response.setTextColor_(AppKit.NSColor.secondaryLabelColor())
 
-            self.status = AppKit.NSTextField.labelWithString_("Local runtime · ⌥Space")
-            self.status.setFrame_(AppKit.NSMakeRect(24, 16, 360, 20))
+            self.status = AppKit.NSTextField.labelWithString_("Model · ⌥Space over the thing you mean")
+            self.status.setFrame_(AppKit.NSMakeRect(24, 16, 380, 20))
             self.status.setFont_(AppKit.NSFont.systemFontOfSize_(11))
             self.status.setTextColor_(AppKit.NSColor.tertiaryLabelColor())
             root.addSubview_(self.status)
@@ -207,7 +263,9 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 return event.keyCode() == 49 and bool(flags & option) and not bool(flags & disallowed)
 
             def invoke(_event):
-                AppHelper.callAfter(self.show_context, capture_native_context())
+                # Capture under the cursor before the popup becomes frontmost.
+                context = capture_native_context()
+                AppHelper.callAfter(self.show_context, context)
 
             def local(event):
                 if matches(event):
@@ -234,8 +292,9 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.modes.setSelectedSegment_(0)
             self.hide_indicator()
             permission = context.accessibility_context.get("permission", "unknown")
+            where = context.source_application or context.title or "screen"
             suffix = "Accessibility ready" if permission == "granted" else "Accessibility permission needed"
-            self.status.setStringValue_(f"Local runtime · {suffix} · ⌥Space")
+            self.status.setStringValue_(f"{where} · {suffix} · ⌥Space over the target")
             self.input.setStringValue_("")
             self.response.setString_("")
             mouse = AppKit.NSEvent.mouseLocation()
@@ -243,9 +302,9 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                           AppKit.NSScreen.mainScreen())
             frame = screen.visibleFrame()
             x = min(max(mouse.x + 12, frame.origin.x + 8), frame.origin.x + frame.size.width - 438)
-            y = mouse.y - 378
+            y = mouse.y - 412
             if y < frame.origin.y + 8:
-                y = min(mouse.y + 14, frame.origin.y + frame.size.height - 374)
+                y = min(mouse.y + 14, frame.origin.y + frame.size.height - 408)
             self.panel.setFrameOrigin_(AppKit.NSMakePoint(x, y))
             self.panel.makeKeyAndOrderFront_(None)
             self.panel.orderFrontRegardless()
@@ -345,13 +404,20 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             import asyncio
             from mcp_vision.tasks import ContextTask
             from mcp_vision.execution import bind_context_backend
+            from mcp_vision.providers import LABELS, resolve_provider
             request = str(self.input.stringValue()).strip()
             if not request or self.task:
                 return
-            context = self.context or capture_native_context()
+            # Chrome relay contexts stay; otherwise refresh what's under the cursor.
+            if self.context and self.context.source == "chrome" and self.context.url:
+                context = self.context
+            else:
+                context = capture_native_context()
             context = context.model_copy(update={"user_request": request})
             mode = (None, "ask", "guide", "act")[self.modes.selectedSegment()]
-            task = ContextTask(context, mode=mode, provider=provider, source_path=self.source_path,
+            choice = LABELS[max(0, self.providers.indexOfSelectedItem())][1]
+            selected_provider = resolve_provider(provider or choice)
+            task = ContextTask(context, mode=mode, provider=selected_provider, source_path=self.source_path,
                                history=self.history, progress=lambda message: AppHelper.callAfter(self.show_progress, message))
             self.task = task
             self.response.setString_("Reading current context…")
@@ -359,6 +425,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.send.setEnabled_(False)
             self.choose_button.setEnabled_(False)
             self.modes.setEnabled_(False)
+            self.providers.setEnabled_(False)
             self.cancel_button.setEnabled_(True)
 
             async def run():
@@ -397,9 +464,13 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.send.setEnabled_(True)
             self.choose_button.setEnabled_(True)
             self.modes.setEnabled_(True)
+            self.providers.setEnabled_(True)
             self.cancel_button.setEnabled_(False)
             self.response.setString_(result["answer"])
-            self.status.setStringValue_(result.get("state", "Ready").capitalize() + " · " + result.get("capability", "ask").capitalize())
+            where = (self.context.source_application if self.context else "") or "Ready"
+            self.status.setStringValue_(
+                f"{result.get('state', 'ready').capitalize()} · {result.get('capability', 'ask').capitalize()}"
+                f" · {result.get('provider', 'local')} · {where}")
             self.input.setStringValue_("")
 
     controller = Controller.alloc().init()
@@ -410,8 +481,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
     thread.start()
     controller.install_hotkey()
     app.finishLaunching()
-    AppHelper.callAfter(controller.show_context, capture_native_context())
-    print(f"MCP-Vision UI ready · ⌥Space · http://127.0.0.1:{server.server_port}", flush=True)
+    print(f"MCP-Vision UI ready · ⌥Space over the thing you mean · http://127.0.0.1:{server.server_port}", flush=True)
     try:
         AppHelper.runEventLoop()
     finally:

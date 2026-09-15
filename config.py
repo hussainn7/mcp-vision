@@ -84,7 +84,9 @@ class Config(BaseSettings):
     # "local" (default) never leaves the machine. Cloud backends need the
     # matching API key below (in .env, never committed) and cost money per
     # call. Override per-run with `python agent.py --model <name> ...`.
-    model_backend: str = "local"  # local | anthropic | openai | gemini | nvidia
+    # auto uses the first available API key (Claude/ChatGPT/Gemini), else local Ollama.
+    # Aliases: claude, chatgpt, gpt, anthropic, openai, gemini, nvidia, local.
+    model_backend: str = "auto"
 
     anthropic_model: str = "claude-sonnet-4-5"
     openai_model: str = "gpt-4.1-mini"

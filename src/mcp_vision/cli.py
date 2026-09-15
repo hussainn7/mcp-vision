@@ -89,7 +89,7 @@ def studio(port: int) -> None:
 @cli.command()
 @click.option("--port", type=click.IntRange(1024, 65535), default=7331, show_default=True)
 @click.option("--model", "provider", default=None,
-              help="Provider for contextual answers: local, anthropic, openai, gemini, or nvidia.")
+              help="Model provider: auto, local, claude, chatgpt, gemini, or nvidia.")
 @click.option("--driver", "live_driver", type=click.Choice(["native", "cdp"]), default="native")
 @click.option("--cdp-endpoint", default=None, help="Existing Chrome debugging endpoint; enables file attachment.")
 def ui(port: int, provider: str | None, live_driver: str, cdp_endpoint: str | None) -> None:

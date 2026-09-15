@@ -39,8 +39,8 @@ class Step(BaseModel):
 class ModelPlanner:
     def __init__(self, provider=None):
         from backends import get_chat
-        from config import cfg
-        self.chat = get_chat(provider or cfg.model_backend)
+        from mcp_vision.providers import resolve_provider
+        self.chat = get_chat(resolve_provider(provider))
 
     def __call__(self, payload):
         system = (

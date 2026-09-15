@@ -22,11 +22,12 @@ backend's whole job is that transcoding, both directions, so nothing above
 this file ever needs to know which provider it's talking to.
 
 Backends, selected by cfg.model_backend (or `--model` on the CLI):
-    local     — Ollama, fully on-machine. Default. No API key, no network.
-    anthropic — Claude, via the Messages API.
-    openai    — GPT, via the Chat Completions API.
-    gemini    — Google's OpenAI-compatible endpoint. Free tier available.
-    nvidia    — NIM, also OpenAI-compatible (build.nvidia.com).
+    auto      — first available cloud key, else local Ollama.
+    local     — Ollama, fully on-machine. No API key.
+    anthropic — Claude (also accepts --model claude).
+    openai    — ChatGPT / GPT (also accepts chatgpt, gpt).
+    gemini    — Google Gemini.
+    nvidia    — NIM (build.nvidia.com).
 
 Cloud backends need their key in .env (never committed, see config.py for
 the exact env var names) and each call leaves the machine and costs money —
@@ -384,12 +385,13 @@ def make_gemini_native_chat(api_key, model, _post=None):
 
 # --- resolver ------------------------------------------------------------
 
-BACKENDS = ("local", "anthropic", "openai", "gemini", "nvidia")
+BACKENDS = ("local", "anthropic", "openai", "gemini", "nvidia", "auto")
 
 
 def get_chat(backend=None):
     """Build the chat callable for cfg.model_backend, or an explicit override."""
-    backend = (backend or cfg.model_backend).lower()
+    from mcp_vision.providers import resolve_provider
+    backend = resolve_provider(backend or cfg.model_backend)
     if backend == "local":
         return make_local_chat(cfg.ollama_host, cfg.planning_model, cfg.ollama_keep_alive)
     if backend == "anthropic":
@@ -402,7 +404,7 @@ def get_chat(backend=None):
     if backend == "nvidia":
         return make_openai_compat_chat("https://integrate.api.nvidia.com/v1", cfg.nvidia_api_key,
                                        cfg.nvidia_model, "NVIDIA_API_KEY")
-    raise BackendError(f"unknown model backend '{backend}'. choose from: {', '.join(BACKENDS)}")
+    raise BackendError(f"unknown model backend '{backend}'. choose from: local, claude, chatgpt, gemini, nvidia")
 
 
 def demo():
