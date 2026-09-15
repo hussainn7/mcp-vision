@@ -8,7 +8,8 @@ from threading import RLock
 import time
 from contextlib import asynccontextmanager
 
-from mcp_vision.browser import BrowserRuntime, BrowserSnapshot, Receipt
+from mcp_vision.browser import BrowserSnapshot, Receipt
+from mcp_vision.execution import create_execution_backend
 
 from mcp_vision.core.actuate import Actuator, get_actuator, set_actuator
 from mcp_vision.core.capture import Frame, Grabber, capture_display
@@ -195,19 +196,8 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), brows
         from mcp.server.fastmcp import FastMCP
     options = dict(allow_writes=allow_browser_writes, headless=headless,
                    allowed_origins=allowed_origins, governor=_governor)
-    if browser_mode == "live":
-        if live_driver == "cdp" or cdp_endpoint:
-            from mcp_vision.live_browser import LiveBrowserRuntime
-            browser = LiveBrowserRuntime(endpoint=cdp_endpoint, **options)
-        else:
-            from mcp_vision.native_browser import NativeBrowserRuntime
-            browser = NativeBrowserRuntime(**options)
-    elif browser_mode == "isolated":
-        if cdp_endpoint:
-            raise ValueError("cdp_endpoint requires browser_mode=live")
-        browser = BrowserRuntime(**options)
-    else:
-        raise ValueError("browser_mode must be live or isolated")
+    browser = create_execution_backend(browser_mode=browser_mode, live_driver=live_driver,
+                                       cdp_endpoint=cdp_endpoint, **options)
 
     @asynccontextmanager
     async def lifespan(_server):
