@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from mcp_vision.log import get_logger
 
@@ -85,13 +86,36 @@ def _hud() -> Check:
         return Check("hud", True, "headless fallback (pip install 'mcp-vision[hud]')")
 
 
+def _contextual_ui() -> Check:
+    if sys.platform != "darwin":
+        return Check("contextual-ui", False, "global popup currently requires macOS")
+    try:
+        import AppKit  # noqa: F401
+        return Check("contextual-ui", True, "native AppKit popup and Option-Space hotkey available")
+    except ImportError:
+        return Check("contextual-ui", False, "reinstall mcp-vision with its macOS dependencies")
+
+
+def _chrome_extension() -> Check:
+    roots = (Path(__file__).resolve().parents[3], Path(__file__).resolve().parents[2])
+    extension = next((root / "chrome_relay" / "manifest.json" for root in roots
+                      if (root / "chrome_relay" / "manifest.json").is_file()),
+                     roots[0] / "chrome_relay" / "manifest.json")
+    return Check("chrome-extension", extension.is_file(),
+                 str(extension.parent) if extension.is_file() else "chrome_relay was not packaged")
+
+
 def _which() -> Check:
     exe = shutil.which("mcp-vision")
     return Check("cli", bool(exe), exe or "mcp-vision not on PATH (pipx install mcp-vision)")
 
 
+def status_checks() -> list[Check]:
+    return [_screen_recording(), _accessibility(), _contextual_ui(), _chrome_extension(), _ollama()]
+
+
 def run_doctor() -> list[Check]:
-    checks = [_python(), _fastmcp(), _mss(), _screen_recording(), _accessibility(), _hud(), _ollama(), _which()]
+    checks = [_python(), _fastmcp(), _mss(), *status_checks(), _hud(), _which()]
     for c in checks:
         log.info("%s %s — %s", "ok" if c.ok else "FAIL", c.name, c.detail)
     return checks

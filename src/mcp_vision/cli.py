@@ -87,6 +87,36 @@ def studio(port: int) -> None:
 
 
 @cli.command()
+@click.option("--port", type=click.IntRange(1024, 65535), default=7331, show_default=True)
+@click.option("--model", "provider", default=None,
+              help="Provider for contextual answers: local, anthropic, openai, gemini, or nvidia.")
+def ui(port: int, provider: str | None) -> None:
+    """Run the macOS contextual popup. Invoke it anywhere with Option-Space."""
+    from mcp_vision.macos_ui import run_contextual_ui
+    try:
+        run_contextual_ui(port=port, provider=provider)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@cli.command()
+@click.option("--port", type=click.IntRange(1024, 65535), default=7331, show_default=True)
+def status(port: int) -> None:
+    """Show contextual runtime and permission status without changing anything."""
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=1) as response:
+            state = json.load(response)
+        click.echo(f"  [ok] runtime: {state.get('runtime', 'ready')} at 127.0.0.1:{port}")
+    except Exception:
+        click.echo(f"  [off] runtime: not listening at 127.0.0.1:{port} (start with: mcp-vision ui)")
+    from mcp_vision.utils.doctor import status_checks
+    for check in status_checks():
+        click.echo(f"  [{'ok' if check.ok else 'needs attention'}] {check.name}: {check.detail}")
+
+
+@cli.command()
 @click.option("--command", default=None, help="Override the server executable written into host configs.")
 @click.option("--host", type=click.Choice(["cursor", "claude-desktop", "antigravity"]), default=None,
               help="Update only this host. Omit for the legacy multi-host registration.")
@@ -105,6 +135,8 @@ def install(command: str | None, host: str | None, browser_mode: str, allow_brow
             raise click.ClickException(str(exc)) from exc
         click.echo(f"updated {path}")
         click.echo("Restart or refresh your host's MCP connection, then ask it to list browser tabs.")
+        click.echo("Contextual UI: run 'mcp-vision doctor', then 'mcp-vision ui'.")
+        click.echo("Chrome action: load the repository's chrome_relay folder as an unpacked extension.")
         return
     if config_path or allow_browser_writes or browser_mode != "live":
         raise click.UsageError("Select --host when setting browser options or a config path.")
@@ -112,6 +144,7 @@ def install(command: str | None, host: str | None, browser_mode: str, allow_brow
     paths = install_hosts(command)
     for p in paths:
         click.echo(f"updated {p}")
+    click.echo("Next: run 'mcp-vision doctor'. The contextual UI is optional and independent of MCP hosts.")
 
 
 @cli.command("config")
@@ -173,8 +206,9 @@ def connect(driver: str, wait: bool) -> None:
 
     click.echo(f'Connected to existing Chrome ({result.get("driver", driver)}): '
                f'{len(result["tabs"])} accessible tab(s).')
+    from mcp_vision.redaction import redact
     for tab in result["tabs"][:12]:
-        click.echo(f'  [{tab["tab_id"]}] {tab["title"][:60]}  {tab["url"][:80]}')
+        click.echo(f'  [{tab["tab_id"]}] {redact(tab["title"])[:60]}  {redact(tab["url"])[:80]}')
     if driver == "native":
         click.echo("Native driver: no automation banner. Use: mcp-vision serve --browser live")
     else:
@@ -234,12 +268,6 @@ def ask(query: str, backend: str, isolated: bool) -> None:
     from mcp_vision.ask import run_ask
     be = None if backend in {"none", "off", "heuristic"} else backend
     result = asyncio.run(run_ask(query, backend=be, live=not isolated))
-    if result.get("title"):
-        click.echo(f'# {result["title"]}')
-        click.echo(result.get("url", ""))
-        if result.get("plan"):
-            click.echo(f'(plan: {result["plan"].get("reason")})')
-        click.echo("")
     click.echo(result.get("summary") or "(no summary)")
     sys.exit(0 if result.get("ok") else 1)
 
