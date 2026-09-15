@@ -121,6 +121,15 @@ def test_agent_marker_is_distinct_from_system_cursor():
     assert 'cursor:' not in script.lower().replace('pointer-events', '')
 
 
+def test_checkbox_aliases_normalize():
+    from mcp_vision.tasks import checkbox_value
+    assert checkbox_value('on') == 'true'
+    assert checkbox_value('YES') == 'true'
+    assert checkbox_value('off') == 'false'
+    with pytest.raises(ValueError):
+        checkbox_value('maybe')
+
+
 def test_wrong_page_stops_before_reasoning():
     backend = Backend()
     runner = task(backend, lambda _: pytest.fail('planner must not run'))

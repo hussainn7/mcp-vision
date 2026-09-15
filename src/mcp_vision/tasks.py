@@ -16,6 +16,15 @@ from mcp_vision.guidance import resolve_target
 from mcp_vision.task_policy import TaskConstraints, normalized
 
 
+def checkbox_value(value: str) -> str:
+    text = (value or '').strip().casefold()
+    if text in {'true', '1', 'yes', 'y', 'on', 'checked'}:
+        return 'true'
+    if text in {'false', '0', 'no', 'n', 'off', 'unchecked'}:
+        return 'false'
+    raise ValueError('Checkbox value must be true or false.')
+
+
 class Step(BaseModel):
     action: Literal['fill', 'select', 'set_checked', 'upload', 'click', 'scroll', 'guide', 'review', 'input']
     name: str = Field(default='', max_length=1000)
@@ -41,6 +50,7 @@ class ModelPlanner:
             'be copied exactly from observation.elements. Put them in their own JSON fields, not only in message or evidence. '
             'Example: {"action":"guide","name":"Export","role":"button","confidence":0.95,"message":"Press Export."}. '
             'Example: {"action":"fill","name":"Full name","role":"textbox","value":"Jane Example","evidence":"Jane Example"}. '
+            'For set_checked, value MUST be exactly "true" or "false". '
             'Never invent a target. Guide must return guide or input; do not act. '
             'For form filling, fill ALL eligible fields in the containing form unless only_field is constrained. '
             'Do not restrict a whole-form task to the initial clicked field. Skip subjective questions and continue other fields. '
@@ -273,6 +283,8 @@ class ContextTask:
                         continue
                 if target and step.action == 'fill' and target.get('role') == 'combobox':
                     step = step.model_copy(update={'action': 'select'})
+                if step.action == 'set_checked':
+                    step = step.model_copy(update={'value': checkbox_value(step.value)})
                 self.constraints.check(self.mode, step.action, target or {}, source=source, value=step.value)
                 if step.action == 'click' and (not step.expected_text or step.expected_text in snapshot.text):
                     return self.result('input', 'This action needs a distinct observable result before I can perform it.')
@@ -328,9 +340,7 @@ class ContextTask:
         if step.action == 'select':
             return await self.backend.select(sid, index, step.value)
         if step.action == 'set_checked':
-            if step.value not in {'true', 'false'}:
-                raise ValueError('Checkbox value must be true or false.')
-            return await self.backend.set_checked(sid, index, step.value == 'true')
+            return await self.backend.set_checked(sid, index, checkbox_value(step.value) == 'true')
         if step.action == 'upload':
             return await self.backend.upload(sid, index, self.source_path)
         raise ValueError('Unsupported action.')
@@ -346,7 +356,7 @@ class ContextTask:
         if step.action in {'fill', 'select'}:
             return current.get('value') == step.value
         if step.action == 'set_checked':
-            return current.get('checked') is (step.value == 'true')
+            return current.get('checked') is (checkbox_value(step.value) == 'true')
         if step.action == 'upload':
             return Path(self.source_path).name in current.get('files', [])
         return False
