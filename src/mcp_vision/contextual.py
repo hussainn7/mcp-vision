@@ -12,18 +12,38 @@ Capability = Literal["ask", "guide", "act"]
 
 
 def infer_capability(request: str) -> Capability:
-    text = (request or "").lower()
-    if re.search(r"\b(where|show me|walk me|guide|how do i|which setting)\b", text):
+    text = (request or "").lower().replace("’", "'")
+    if re.match(r"\s*(what|why|which|is|are|does|can i|should i|summarize|explain)\b", text):
+        return "ask"
+    if re.search(r"\b(where|show me|walk me|guide|how do i|how to|which setting)\b", text):
         return "guide"
-    if re.search(r"\b(fill|click|type|send|submit|book|buy|apply|change|delete|move|create)\b", text):
+    positive = re.split(r"\b(?:but|only|do not|don't|never)\b", text)[0]
+    if re.match(r"\s*(?:(?:please|can you|could you)\s+)*(fill|click|type|send|submit|book|buy|apply|change|delete|move|create|export|download|open|organize|turn|attach|upload)\b", positive):
         return "act"
     return "ask"
 
 
-def answer_context(context: Context, *, provider: str | None = None) -> dict[str, str]:
+def package_context(context: Context) -> dict:
+    target = context.clicked_element or context.focused_element if context.source == "chrome" else context.focused_element
+    nearby = context.dom_context if context.source == "chrome" else context.accessibility_context
+    data = {"target": target.model_dump(exclude_none=True) if target else {},
+            "nearby": nearby, "selection": context.selected_text[:4000],
+            "page": {"title": context.title, "url": context.url, "application": context.source_application}}
+    from mcp_vision.context import _compact
+    data = _compact(data)
+    # A total budget prevents a wide DOM/AX object from defeating per-string caps.
+    if len(json.dumps(data, ensure_ascii=False)) > 14000:
+        data["nearby"] = {"text": str(nearby.get("text", ""))[:3000],
+                          "controls": nearby.get("controls", [])[:8]}
+    if len(json.dumps(data, ensure_ascii=False)) > 14000:
+        data["nearby"] = {}
+    return redact(data)
+
+
+def answer_context(context: Context, *, provider: str | None = None, history: list | None = None) -> dict[str, str]:
     request = context.user_request.strip()
-    capability = infer_capability(request)
-    safe = redact(context.compact())
+    capability = "ask"
+    safe = package_context(context)
     model_backend = provider
     if model_backend is None:
         try:
@@ -41,6 +61,7 @@ def answer_context(context: Context, *, provider: str | None = None) -> dict[str
         from backends import get_chat
         message = get_chat(model_backend)([
             {"role": "system", "content": system},
+            *(history or [])[-6:],
             {"role": "user", "content": f"REQUEST\n{request}\n\nCONTEXT\n{json.dumps(safe, ensure_ascii=False)}"},
         ], tools=None)
         answer = (message.get("content") or "").strip()
