@@ -1,10 +1,15 @@
 {
   "manifest_version": 3,
   "name": "mcp-vision Chrome Bridge",
-  "version": "0.1.0",
-  "description": "Lets mcp-vision use your real tabs without CDP or the automation banner.",
-  "permissions": ["tabs", "scripting", "activeTab"],
+  "version": "0.2.0",
+  "description": "Invoke MCP-Vision from the page and connect it to your real Chrome tabs.",
+  "permissions": ["tabs", "scripting", "activeTab", "contextMenus"],
   "host_permissions": ["http://127.0.0.1:9230/*", "<all_urls>"],
   "background": { "service_worker": "background.js" },
+  "content_scripts": [{
+    "matches": ["http://*/*", "https://*/*"],
+    "js": ["context.js"],
+    "run_at": "document_start"
+  }],
   "action": { "default_title": "mcp-vision" }
 }

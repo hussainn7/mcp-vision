@@ -1,4 +1,44 @@
 const HOST = "http://127.0.0.1:9230";
+const CONTEXT_HOST = "http://127.0.0.1:7331";
+const MENU_ID = "ask-mcp-vision";
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: MENU_ID, title: "Ask MCP-Vision", contexts: ["all"] });
+  });
+});
+
+async function sendInvocation(tab, info) {
+  let context;
+  try {
+    context = await chrome.tabs.sendMessage(tab.id, "capture-context");
+  } catch (_) {
+    context = {
+      source: "chrome", source_application: "Google Chrome", url: tab.url || "", title: tab.title || "",
+      selected_text: info.selectionText || "", cursor_position: null,
+      session: { authenticated: null, session_kind: "existing-chrome-profile" }, identity: { status: "unknown" },
+    };
+  }
+  if (info.selectionText && !context.selected_text) context.selected_text = info.selectionText;
+  const response = await fetch(CONTEXT_HOST + "/api/context", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-MCP-Vision": "chrome-extension" },
+    body: JSON.stringify(context),
+  });
+  if (!response.ok) throw new Error("local runtime unavailable");
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== MENU_ID || !tab || !tab.id) return;
+  sendInvocation(tab, info).then(() => {
+    chrome.action.setBadgeText({ text: "✓", tabId: tab.id });
+    chrome.action.setBadgeBackgroundColor({ color: "#2D8C74", tabId: tab.id });
+    setTimeout(() => chrome.action.setBadgeText({ text: "", tabId: tab.id }), 1400);
+  }).catch(() => {
+    chrome.action.setBadgeText({ text: "!", tabId: tab.id });
+    chrome.action.setBadgeBackgroundColor({ color: "#C65B48", tabId: tab.id });
+  });
+});
 
 async function evalInTab(tabId, js) {
   const [{ result }] = await chrome.scripting.executeScript({
