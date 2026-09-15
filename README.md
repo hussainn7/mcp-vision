@@ -1,6 +1,10 @@
 # MCP-Vision
 
-Computer use for agents — your Chrome, your model.
+An open-source contextual action layer for your computer. Point at what you're
+working on, invoke MCP-Vision, and let your preferred model Ask, Guide, or Act—with
+verification and evidence for meaningful actions.
+
+**Your model. Your computer. Evidence for every action.**
 
 Needs **Python 3.12+** (macOS `/usr/bin/python3` is often 3.9 and will fail).
 
@@ -38,6 +42,41 @@ mcp-vision setup
 ```
 
 Then open Chrome and refresh MCP in Cursor / Claude.
+
+## Contextual invocation on macOS
+
+```bash
+mcp-vision doctor
+mcp-vision ui
+```
+
+Press **Option-Space** anywhere to open the small MCP-Vision popup beside the
+cursor. It collects the foreground application, window, selection, and focused
+accessibility element when macOS makes those fields reliably available. A simple
+Ask is answered in place; the inferred Ask · Guide · Act labels do not create a
+second automation engine.
+
+For Chrome, open `chrome://extensions`, enable Developer mode, choose **Load
+unpacked**, and select this repository's `chrome_relay` folder. Right-click a page
+and choose **Ask MCP-Vision**. The action sends a bounded selection/element/nearby
+DOM context to the same local runtime and opens the native popup. Keep
+`mcp-vision ui` running while using the action.
+
+Useful checks:
+
+```bash
+mcp-vision status
+mcp-vision install --host cursor
+```
+
+The UI is optional. Existing `mcp-vision serve`, MCP host configuration, and CLI
+workflows remain independent.
+
+### Runtime boundary
+
+The core owns context, orchestration, trust decisions, verification, receipts,
+and UX. Browser and desktop control sit behind an execution-backend protocol;
+the existing native/CDP/isolated runtimes are the defaults and are not duplicated.
 
 ## Ask the bot
 
@@ -85,6 +124,7 @@ mcp-vision connect
 mcp-vision demo
 mcp-vision probe --live
 mcp-vision studio
+mcp-vision status
 ```
 
 ## License
