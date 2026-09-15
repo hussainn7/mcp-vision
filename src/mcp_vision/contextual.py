@@ -16,22 +16,24 @@ def infer_capability(request: str) -> Capability:
     # Guide first: locating UI / how-to on this screen (before generic "which/what").
     if re.search(
         r"\b(where|show me|point(?:\s+to|\s+me)?|highlight|walk me|guide(?:\s+me)?|"
-        r"how do i|how to|which (?:button|setting|option|menu|tab|control|field|link)|"
+        r"how do i|how to|which (?:button|setting|menu|tab|control|field|link)|"
         r"what(?:'s| is) the (?:button|setting|shortcut)|next step)\b",
         text,
     ):
         return "guide"
+    # Ask questions about meaning/choice before treating verbs inside the sentence as Act.
+    if re.match(r"\s*(what|why|which|is|are|does|can i|should i|summarize|explain|maybe)\b", text):
+        return "ask"
     positive = re.split(r"\b(?:but|only|do not|don't|never)\b", text)[0]
-    if re.search(
-        r"\b(fill|click|press|type|send|submit|book|buy|apply|change|delete|move|create|"
+    if re.match(
+        r"\s*(?:(?:please|can you|could you)\s+)*"
+        r"(fill|click|press|type|send|submit|book|buy|apply|change|delete|move|create|"
         r"export|download|open|organize|enable|disable|toggle|attach|upload|search|find|"
         r"look up|look for|navigate|go to|select|check|uncheck|set|write|paste|login|log in|"
-        r"sign in|turn\b.*\b(on|off))\b",
+        r"sign in|turn)\b",
         positive,
     ):
         return "act"
-    if re.match(r"\s*(what|why|which|is|are|does|can i|should i|summarize|explain)\b", text):
-        return "ask"
     return "ask"
 
 
