@@ -435,6 +435,16 @@ class BrowserRuntime:
         except Exception as e:
             return Receipt(status="error", action=action, message=redact(str(e)))
 
+    async def highlight(self, snapshot_id: str, index: int, label: str = "Next step", duration: int = 8000) -> bool:
+        from mcp_vision.guidance import overlay_script
+        async with self._lock:
+            await self._target(snapshot_id, index)
+            return bool(await self.page.evaluate(overlay_script(index, label, duration)))
+
+    async def clear_highlight(self):
+        if self.page:
+            await self.page.evaluate("window.__mcpVisionHighlight?.()")
+
     async def screenshot(self) -> bytes:
         async with self._lock:
             await self._ensure()

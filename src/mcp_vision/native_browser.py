@@ -523,6 +523,16 @@ class NativeBrowserRuntime(BrowserRuntime):
             except Exception as e:
                 return Receipt(status="error", action="verify_text", message=redact(str(e)))
 
+    async def highlight(self, snapshot_id: str, index: int, label: str = "Next step", duration: int = 8000) -> bool:
+        from mcp_vision.guidance import overlay_script
+        async with self._lock:
+            await self._fresh_target(snapshot_id, index)
+            result = await self._run(self._eval, overlay_script(index, label, duration))
+            return str(result).lower() == "true"
+
+    async def clear_highlight(self):
+        await self._run(self._eval, "window.__mcpVisionHighlight?.(); true")
+
     async def screenshot(self) -> bytes:
         async with self._lock:
             await self._ensure()

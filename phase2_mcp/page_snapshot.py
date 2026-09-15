@@ -152,6 +152,13 @@ SNAPSHOT_JS = r"""(maxElements) => {
     el.setAttribute('data-agent-index', String(i));
     out.push({
       index: i, role: role, name: name,
+      tag: el.tagName.toLowerCase(), input_type: (el.type || '').toLowerCase(),
+      required: !!el.required || el.getAttribute('aria-required') === 'true',
+      value: el.type === 'password' ? '' : (typeof el.value === 'string' ? el.value.slice(0, 4000) : ''),
+      checked: !!el.checked,
+      valid: el.validity ? el.validity.valid : null,
+      files: el.files ? Array.from(el.files).map(f => f.name) : [],
+      options: el.options ? Array.from(el.options).slice(0, 80).map(o => ({value:o.value, label:o.textContent.trim(), disabled:o.disabled})) : [],
       href: el.tagName.toLowerCase() === "a" ? el.href : null,
       cx: point[0], cy: point[1],
       x: Math.round(r.left), y: Math.round(r.top),

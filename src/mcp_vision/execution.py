@@ -45,3 +45,30 @@ def create_execution_backend(*, browser_mode: str, live_driver: str = "native",
         from mcp_vision.browser import BrowserRuntime
         return BrowserRuntime(**options)
     raise ValueError("browser_mode must be live or isolated")
+
+
+async def bind_context_backend(context, *, mode, live_driver='native', cdp_endpoint=None,
+                               indicator=None, factory=create_execution_backend):
+    if mode == 'ask':
+        return None
+    if context.source == 'macos' and not context.url:
+        from mcp_vision.native_context import NativeContextBackend
+        if mode == 'act':
+            raise ValueError('Native Act is not available in this contextual backend. Switch to Guide.')
+        return NativeContextBackend(context, indicator)
+    if not context.url:
+        raise ValueError('Invoke on a browser page to select an execution target.')
+    backend = factory(browser_mode='live', live_driver=live_driver, cdp_endpoint=cdp_endpoint,
+                      allow_writes=mode == 'act')
+    try:
+        listing = await backend.tabs()
+        matches = [tab for tab in listing.get('tabs', []) if tab['url'] == context.url]
+        if len(matches) != 1:
+            raise ValueError('The contextual tab is missing or ambiguous. Keep one matching tab open and invoke again.')
+        receipt = await backend.use_tab(matches[0]['tab_id'], context.url)
+        if receipt.status != 'verified':
+            raise ValueError(receipt.message)
+        return backend
+    except Exception:
+        await backend.close()
+        raise
