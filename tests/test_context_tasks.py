@@ -6,7 +6,7 @@ import pytest
 from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import Context
 from mcp_vision.execution import bind_context_backend
-from mcp_vision.guidance import resolve_target
+from mcp_vision.guidance import overlay_script, resolve_target
 from mcp_vision.tasks import ContextTask, Step
 
 
@@ -111,6 +111,14 @@ def test_ambiguous_target_never_points():
     element = {'name': 'Next', 'role': 'button', 'w': 10, 'h': 20}
     assert resolve_target([element, element], 'Next') is None
     assert resolve_target([element], 'Other') is None
+    assert resolve_target([{'name': 'Notes', 'role': 'textbox', 'w': 10, 'h': 20}], 'Notes', 'textarea')['name'] == 'Notes'
+
+
+def test_agent_marker_is_distinct_from_system_cursor():
+    script = overlay_script(2, 'MCP-Vision · Acting', 2200)
+    assert 'data-mcp-agent-marker' in script
+    assert 'mcpPulse' in script
+    assert 'cursor:' not in script.lower().replace('pointer-events', '')
 
 
 def test_wrong_page_stops_before_reasoning():

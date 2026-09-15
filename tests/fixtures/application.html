@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Example application — MCP-Vision test</title>
+<style>body{font:16px system-ui;background:#f4f7f6;color:#183e35;max-width:650px;margin:25px auto}form{background:white;padding:24px;border-radius:16px}label{display:block;margin:12px 0 4px}input:not([type=checkbox]),select,textarea{box-sizing:border-box;width:100%;padding:8px;border:1px solid #9baea7;border-radius:5px}button{padding:10px 20px;margin-top:15px}small{color:#546c63}</style>
+<h1>Example application</h1><p>Disposable test form. No data leaves this page.</p>
+<form onsubmit="event.preventDefault();window.submitted=true;document.querySelector('#result').textContent='Submitted'">
+<label for="name">Full name</label><input id="name" required autocomplete="name">
+<label for="email">Email</label><input id="email" type="email" required autocomplete="email">
+<label for="role">Role</label><select id="role" required><option value="">Choose</option><option>Engineer</option><option>Designer</option></select>
+<label for="start">Available start date</label><input id="start" type="date" required>
+<label><input id="relocate" type="checkbox"> Available for relocation</label>
+<label for="resume">Résumé</label><input id="resume" type="file" required>
+<label for="why">Why do you want this role?</label><textarea id="why" required></textarea><small>Subjective question: leave for the applicant.</small><br>
+<button type="submit">Submit application</button><p id="result"></p></form>
+<script>window.submitted=false;</script></html>

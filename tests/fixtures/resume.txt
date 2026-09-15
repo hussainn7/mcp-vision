@@ -1,0 +1,6 @@
+Jane Example
+jane@example.test
+Role: Engineer
+Available start date: 2026-10-01
+Available for relocation: true
+Experience: Built Python tools and browser tests.
