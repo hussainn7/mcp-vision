@@ -317,3 +317,19 @@ def demo():
 
 if __name__ == "__main__":
     demo()
+
+
+FORM_STATE_JS = r"""() => {
+  %s
+  return {url: location.href, fields: Array.from(document.querySelectorAll('input,select,textarea'))
+    .filter(el => !el.disabled && el.type !== 'hidden')
+    .slice(0, 200).map(el => {
+      const r = el.getBoundingClientRect();
+      return {name: accName(el), role: (el.getAttribute('role') || implicitRole(el)).toLowerCase(),
+        required: !!el.required || el.getAttribute('aria-required') === 'true',
+        value: el.type === 'password' ? '' : el.value.slice(0, 4000), checked: !!el.checked,
+        valid: el.validity ? el.validity.valid : null,
+        files: el.files ? Array.from(el.files).map(f => f.name) : [],
+        x:r.x, y:r.y, w:r.width, h:r.height};
+    }), total: document.querySelectorAll('input,select,textarea').length};
+}""" % _JS_HELPERS

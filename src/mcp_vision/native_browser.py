@@ -523,6 +523,15 @@ class NativeBrowserRuntime(BrowserRuntime):
             except Exception as e:
                 return Receipt(status="error", action="verify_text", message=redact(str(e)))
 
+    async def form_state(self):
+        from phase2_mcp.page_snapshot import FORM_STATE_JS
+        async with self._lock:
+            await self._ensure()
+            raw = await self._run(self._eval, f"JSON.stringify(({FORM_STATE_JS})())")
+            result = json.loads(raw)
+            self._check_url(result['url'])
+            return result
+
     async def highlight(self, snapshot_id: str, index: int, label: str = "Next step", duration: int = 8000) -> bool:
         from mcp_vision.guidance import overlay_script
         async with self._lock:

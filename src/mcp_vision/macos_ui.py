@@ -46,17 +46,14 @@ def capture_native_context() -> Context:
     element = _ax_copy(AX, system, AX.kAXFocusedUIElementAttribute)
     title = _ax_copy(AX, window, AX.kAXTitleAttribute) if window else ""
     role = _ax_copy(AX, element, AX.kAXRoleAttribute) if element else ""
-    element_title = _ax_copy(AX, element, AX.kAXTitleAttribute) if element else ""
-    description = _ax_copy(AX, element, AX.kAXDescriptionAttribute) if element else ""
     selected = _ax_copy(AX, element, AX.kAXSelectedTextAttribute) if element else ""
-    value = _ax_copy(AX, element, AX.kAXValueAttribute) if element else ""
-    safe_value = value if isinstance(value, str) and "secure" not in str(role).lower() else ""
+    secure = "secure" in str(role).lower() or _ax_copy(AX, element, "AXSubrole") == "AXSecureTextField"
     focused = None
     if element:
         focused = describe_ax(AX, element)
     return context.model_copy(update={
         "title": str(title or ""),
-        "selected_text": str(selected or "") if "secure" not in str(role).lower() else "",
+        "selected_text": str(selected or "") if not secure else "",
         "focused_element": focused,
         "accessibility_context": {
             "permission": "granted", "bundle_id": bundle,
@@ -90,6 +87,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.history = []
             self.source_path = None
             self.highlight_window = None
+            self.marker_window = None
             self.highlight_generation = 0
             self._build_panel()
             return self
@@ -125,6 +123,13 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             title.setFrame_(AppKit.NSMakeRect(24, 306, 360, 32))
             title.setFont_(AppKit.NSFont.systemFontOfSize_weight_(21, AppKit.NSFontWeightSemibold))
             root.addSubview_(title)
+            dismiss = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(387, 310, 24, 24))
+            dismiss.setTitle_("×")
+            dismiss.setBordered_(False)
+            dismiss.setKeyEquivalent_("\x1b")
+            dismiss.setTarget_(self)
+            dismiss.setAction_("dismiss:")
+            root.addSubview_(dismiss)
 
             self.input = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 254, 390, 43))
             self.input.setPlaceholderString_("Ask about what’s under your cursor…")
@@ -257,6 +262,10 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 self.source_path = str(panel.URL().path())
                 self.choose_button.setTitle_("Résumé selected ✓")
 
+        def dismiss_(self, _sender):
+            self.cancel_(None)
+            self.panel.orderOut_(None)
+
         def cancel_(self, _sender):
             if self.task:
                 self.task.cancel()
@@ -269,6 +278,9 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             if self.highlight_window:
                 self.highlight_window.orderOut_(None)
                 self.highlight_window = None
+            if self.marker_window:
+                self.marker_window.orderOut_(None)
+                self.marker_window = None
 
         @objc.python_method
         def indicator(self, resolver, label, duration):
@@ -281,6 +293,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             if resolver is None:
                 return
             generation = self.highlight_generation
+            teal = AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.18, .73, .63, 1)
             window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 AppKit.NSMakeRect(0, 0, 20, 20), AppKit.NSWindowStyleMaskBorderless,
                 AppKit.NSBackingStoreBuffered, False)
@@ -293,8 +306,23 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             view.setWantsLayer_(True)
             view.layer().setBorderWidth_(3)
             view.layer().setCornerRadius_(7)
-            view.layer().setBorderColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.18, .73, .63, 1).CGColor())
+            view.layer().setBorderColor_(teal.CGColor())
+            marker = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                AppKit.NSMakeRect(0, 0, 14, 14), AppKit.NSWindowStyleMaskBorderless,
+                AppKit.NSBackingStoreBuffered, False)
+            marker.setReleasedWhenClosed_(False)
+            marker.setOpaque_(False)
+            marker.setBackgroundColor_(AppKit.NSColor.clearColor())
+            marker.setIgnoresMouseEvents_(True)
+            marker.setLevel_(AppKit.NSStatusWindowLevel + 1)
+            mview = marker.contentView()
+            mview.setWantsLayer_(True)
+            mview.layer().setBackgroundColor_(teal.CGColor())
+            mview.layer().setCornerRadius_(7)
+            mview.layer().setBorderWidth_(2)
+            mview.layer().setBorderColor_(AppKit.NSColor.whiteColor().CGColor())
             self.highlight_window = window
+            self.marker_window = marker
             deadline = time.monotonic() + duration / 1000
             def track():
                 if generation != self.highlight_generation:
@@ -306,7 +334,10 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 primary_height = AppKit.NSScreen.screens()[0].frame().size.height
                 window.setFrame_display_(AppKit.NSMakeRect(box.x-3, primary_height-box.y-box.height-3,
                                                           box.width+6, box.height+6), True)
+                marker.setFrame_display_(AppKit.NSMakeRect(box.x + box.width/2 - 7,
+                                                          primary_height - box.y - box.height/2 - 7, 14, 14), True)
                 window.orderFrontRegardless()
+                marker.orderFrontRegardless()
                 AppHelper.callLater(.12, track)
             track()
 

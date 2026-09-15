@@ -435,6 +435,13 @@ class BrowserRuntime:
         except Exception as e:
             return Receipt(status="error", action=action, message=redact(str(e)))
 
+    async def form_state(self):
+        from phase2_mcp.page_snapshot import FORM_STATE_JS
+        async with self._lock:
+            await self._ensure()
+            self._check_url(self.page.url)
+            return await self.page.evaluate(FORM_STATE_JS)
+
     async def highlight(self, snapshot_id: str, index: int, label: str = "Next step", duration: int = 8000) -> bool:
         from mcp_vision.guidance import overlay_script
         async with self._lock:

@@ -162,3 +162,62 @@ def test_ask_does_not_access_backend(monkeypatch):
     backend = Backend()
     result = asyncio.run(task(backend, None, mode='ask').run())
     assert result['state'] == 'answered' and backend.actions == backend.observations == 0
+
+
+def test_cancel_returns_without_waiting_for_provider():
+    import threading
+    entered = threading.Event()
+    release = threading.Event()
+    backend = Backend()
+    def planner(_):
+        entered.set()
+        release.wait(5)
+        return Step(action='fill', name='Name', value='Jane')
+    runner = task(backend, planner)
+    async def run():
+        running = asyncio.create_task(runner.run())
+        await asyncio.to_thread(entered.wait, 2)
+        runner.cancel()
+        result = await asyncio.wait_for(running, .5)
+        release.set()
+        return result
+    assert asyncio.run(run())['state'] == 'cancelled'
+    assert backend.actions == 0
+
+
+def test_selected_file_permission_cannot_authorize_submit():
+    from mcp_vision.execution import task_governor
+    from mcp_vision.core.models import Policy
+    governor = task_governor('/selected/resume.txt')
+    assert governor.allow(Policy.RESTRICTED_ACTION, 'Upload resume.txt to Résumé')
+    assert not governor.allow(Policy.RESTRICTED_ACTION, 'Submit this form: Next')
+    assert not governor.allow(Policy.RESTRICTED_ACTION, 'Upload other.txt to Résumé')
+
+
+def test_fabricated_subjective_answer_is_skipped_while_factual_work_continues(tmp_path):
+    backend = Backend()
+    source = tmp_path / 'resume.txt'
+    source.write_text('Jane Doe')
+    steps = iter([Step(action='fill', name='Name', value='An invented name', evidence='not in source'),
+                  Step(action='review')])
+    runner = task(backend, lambda _: next(steps), source_path=str(source))
+    result = asyncio.run(runner.run())
+    assert result['state'] == 'review'
+    assert backend.actions == 0
+    assert 'Name' in result['answer']
+
+
+def test_stale_action_is_resolved_again_before_retry():
+    backend = Backend()
+    calls = []
+    original = backend.fill
+    async def fill(sid, index, value):
+        calls.append(sid)
+        if len(calls) == 1:
+            return Receipt(status='stale', action='fill', message='Moved')
+        return await original(sid, index, value)
+    backend.fill = fill
+    steps = iter([Step(action='fill', name='Name', value='Jane'), Step(action='fill', name='Name', value='Jane'), Step(action='review')])
+    result = asyncio.run(task(backend, lambda _: next(steps)).run())
+    assert result['state'] == 'review' and len(result['verified']) == 1
+    assert calls == ['1', '2']

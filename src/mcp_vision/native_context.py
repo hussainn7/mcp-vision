@@ -33,6 +33,8 @@ def nearby_ax(api, root, limit=60):
     while queue and visited < 180 and len(records) < limit:
         element, depth = queue.pop(0)
         visited += 1
+        if _ax_copy(api, element, 'AXHidden') is True:
+            continue
         desc = describe_ax(api, element)
         box = desc.bounds
         if box and box.width > 0 and box.height > 0 and (desc.name or desc.value):

@@ -52,3 +52,8 @@ bench/golden/
 
 # weights
 /weights/*
+# Local contextual app builds and live demo evidence
+/outputs/MCP-Vision*.app/
+/outputs/MCPVisionLauncher.*
+/outputs/*-cache/
+/outputs/contextual-demo/
