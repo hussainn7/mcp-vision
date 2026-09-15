@@ -5,7 +5,9 @@ import json
 
 
 def resolve_target(elements, name, role=''):
-    role = {'textarea': 'textbox', 'input': 'textbox', 'select': 'combobox'}.get(role.lower(), role)
+    role = {'textarea': 'textbox', 'input': 'textbox', 'select': 'combobox',
+            'axbutton': 'button', 'axtextfield': 'textbox', 'axtextarea': 'textbox',
+            'axcheckbox': 'checkbox', 'axpopupbutton': 'combobox'}.get(role.lower(), role)
     matches = [e for e in elements if e.get('name', '').casefold().strip() == name.casefold().strip()
                and (not role or e.get('role', '').casefold() == role.casefold())]
     if len(matches) != 1 or not name.strip():

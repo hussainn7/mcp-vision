@@ -44,4 +44,17 @@ def test_nameless_ax_control_gets_usable_label():
     root = element('', AXRole='AXTextArea', AXValue='Draft note', AXChildren=[])
     records, handles = nearby_ax(AX, root, 5)
     assert records[0]['name'] in {'Draft note', 'Text Area'}
+    assert records[0]['role'] == 'textbox'
     assert handles[0]['AXValue'] == 'Draft note'
+
+
+def test_native_act_backend_is_bound_for_macos():
+    import asyncio
+    from mcp_vision.context import Context
+    from mcp_vision.execution import bind_context_backend
+    from mcp_vision.native_context import NativeContextBackend
+
+    context = Context(source='macos', title='Notes', accessibility_context={'pid': 1, 'permission': 'granted'})
+    backend = asyncio.run(bind_context_backend(context, mode='act'))
+    assert isinstance(backend, NativeContextBackend)
+    assert backend.allow_writes is True

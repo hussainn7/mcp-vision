@@ -53,9 +53,7 @@ async def bind_context_backend(context, *, mode, live_driver='native', cdp_endpo
         return None
     if context.source == 'macos' and not context.url:
         from mcp_vision.native_context import NativeContextBackend
-        if mode == 'act':
-            raise ValueError('Native Act is not available in this contextual backend. Switch to Guide.')
-        return NativeContextBackend(context, indicator)
+        return NativeContextBackend(context, indicator, allow_writes=mode == 'act')
     if not context.url:
         raise ValueError('Invoke on a browser page to select an execution target.')
     backend = factory(browser_mode='live', live_driver=live_driver, cdp_endpoint=cdp_endpoint,
