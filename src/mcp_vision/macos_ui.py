@@ -305,6 +305,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             root.addSubview_(scroll)
             self.response.setFont_(AppKit.NSFont.systemFontOfSize_(15))
             self.response.setTextColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.91, .94, .98, 1))
+            self.response.setMenu_(_edit_menu())
             self.status = label("Desktop preview · 0.3.1", (30, 28, 318, 20), 11)
             self.copy_button = button("Copy", (350, 22, 74, 30), "copyAnswer:")
             self.source_button = button("Open source", (428, 22, 126, 30), "openSource:")
@@ -341,6 +342,17 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                         and not bool(flags & AppKit.NSEventModifierFlagCommand))
 
             def local(event):
+                # Borderless accessory apps often never dispatch ⌘C/⌘V key
+                # equivalents from the menu bar, so send the edit actions
+                # directly to whichever control is first responder.
+                flags = int(event.modifierFlags())
+                cmd = AppKit.NSEventModifierFlagCommand
+                if (bool(flags & cmd) and not bool(flags & (option | control))
+                        and self.panel and self.panel.isVisible()):
+                    action = {8: "copy:", 7: "cut:", 9: "paste:", 0: "selectAll:"}.get(event.keyCode())
+                    if action:
+                        AppKit.NSApp.sendAction_to_from_(action, None, None)
+                        return None
                 if matches_primary(event) or matches_fallback(event):
                     invoke()
                     return None
