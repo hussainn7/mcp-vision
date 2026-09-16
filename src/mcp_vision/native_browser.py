@@ -260,12 +260,16 @@ class NativeBrowserRuntime(BrowserRuntime):
             url = data.get("url") or (self._current.url if self._current else "")
             title = data.get("title") or (self._current.title if self._current else "")
             text = data.get("text") or ""
-            if not text:
-                try:
-                    text = await self._run(self._eval,
-                        "(document.body && document.body.innerText || '').slice(0, 12000)")
-                except Exception:
-                    text = ""
+            # The pruned accessibility tree frequently drops JS-rendered page content
+            # (e.g. Google Flights offers). Prefer the document's full rendered text
+            # so evaluators and the summarizer can ground answers on real evidence.
+            try:
+                full = await self._run(self._eval,
+                    "(document.body && document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 16000).trim()")
+            except Exception:
+                full = ""
+            if len(full) > len(text):
+                text = full
             if not url.startswith("http"):
                 url = self._current.url if self._current and self._current.url.startswith("http") else url
             if not str(url).startswith("http"):
