@@ -1,0 +1,11 @@
+{
+  "query": "Find round-trip flights from ATL to SFO September 28 to October 2, 2026",
+  "capability": "ask",
+  "state": "answered",
+  "answer": "Route: ATL–SFO\nDates: 2026-09-28 to 2026-10-02\nDeparting flight offers (not booked):\n- Frontier: 17:25–19:48, ATL–SFO, Non-stop, 5 hrs 23 min — US$423 round trip\n- Frontier: 08:33–13:19, ATL–SFO, 1 stop, 7 hrs 46 min — US$459 round trip\n- Frontier: 19:59–00:14+1, ATL–SFO, 1 stop, 7 hrs 15 min — US$470 round trip\n- Frontier: 06:41–10:47, ATL–SFO, 1 stop, 7 hrs 6 min — US$470 round trip\n- Southwest: 06:00–09:35, ATL–SFO, 1 stop, 6 hrs 35 min — US$564 round trip — https://www.google.com/travel/flights?q=Find+round-trip+flights+from+ATL+to+SFO+September+28+to+October+2%2C+2026&curr=USD",
+  "verified": [],
+  "evidence": "URL: https://www.google.com/travel/flights?q=Find+round-trip+flights+from+ATL+to+SFO+September+28+to+October+2%2C+2026&curr=USD\nANSWER:\nRoute: ATL–SFO\nDates: 2026-09-28 to 2026-10-02\nDeparting flight offers (not booked):\n- Frontier: 17:25–19:48, ATL–SFO, Non-stop, 5 hrs 23 min — US$423 round trip\n- Frontier: 08:33–13:19, ATL–SFO, 1 stop, 7 hrs 46 min — US$459 round trip\n- Frontier: 19:59–00:14+1, ATL–SFO, 1 stop, 7 hrs 15 min — US$470 round trip\n- Frontier: 06:41–10:47, ATL–SFO, 1 stop, 7 hrs 6 min — US$470 round trip\n- Southwest: 06:00–09:35, ATL–SFO, 1 stop, 6 hrs 35 min — US$564 round trip",
+  "url": "https://www.google.com/travel/flights?q=Find+round-trip+flights+from+ATL+to+SFO+September+28+to+October+2%2C+2026&curr=USD",
+  "trace": [],
+  "provider": "local"
+}
