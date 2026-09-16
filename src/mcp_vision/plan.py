@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date, timedelta
 from urllib.parse import quote_plus, urlsplit
 
 # Seed aliases only. Planner logic decides *when* to use a product vs Google.
@@ -44,6 +45,21 @@ _RESEARCH = re.compile(
 )
 _SHOP = re.compile(r"\b(buy|price|cheap|under \$?\d|for sale|listing|shop)\b", re.I)
 _FLIGHT = re.compile(r"\b(flight|flights|round.?trip|one.?way|airport|sfo|lax|jfk)\b", re.I)
+
+# Any of these means the user has *decided* the travel window without pinning a
+# specific date — Google Flights is allowed to (and must) pick one for us.
+_ANY_DATES = re.compile(
+    r"\b(anytime|flexible|whenever|any\s+(?:dates?|days?|time|week|month)|open.?ended|"
+    r"your (?:choice|call|pick)|whatever|pick\s+(?:the\s+dates|any))\b",
+    re.I,
+)
+# A concrete or Google-parsable departure/return signal is already given.
+_HAS_DATE = re.compile(
+    r"\b(?:today|tomorrow|this week|next week|this weekend|next weekend|this month|next month|"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}|\d{1,2}\s+"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?|\d{1,4}[-/]\d{1,2})\b",
+    re.I,
+)
 
 
 def _host(url: str) -> str:
@@ -138,6 +154,48 @@ def _best_tab(open_tabs: list[dict], host: str, *, personal: bool) -> dict | Non
     return best
 
 
+def _flight_term(q: str) -> str:
+    """A Google-read flight search phrase with origin/destination + concrete dates.
+
+    Google Flights only shows offer cards once a *concrete* date range is set;
+    without one it just shows the search form (which a read-only mission cannot
+    fill). When the user defers ("pick any dates", "flexible") or leaves the
+    dates out, we pick a sensible upcoming long weekend so real results render.
+    """
+    q = (q or "").strip()
+    if _HAS_DATE.search(q):
+        # Concrete/relative dates are already in the natural text and Google
+        # parses them straight from the query — keep them verbatim.
+        return re.sub(r"\s+", " ", q).strip()
+    # No date signal yet: build a clean origin → destination phrase and let
+    # Google Flights render real offer cards for a picked long weekend.
+    stop = r"(?=\s+(?:to|from|on|in|at|for|returning|departing|arriving|with|next|this|sep|oct|stay|whenever|anytime|flexible|any)\b|[,;!.?]|$)"
+    origin = re.search(r"\bfrom\s+([a-z][a-z0-9 \-']*?)" + stop, q, re.I)
+    dest = re.search(r"\bto\s+([a-z][a-z0-9 \-']*?)" + stop, q, re.I)
+    o = (re.sub(r"\s+", " ", origin.group(1)).strip() if origin else "")
+    d = (re.sub(r"\s+", " ", dest.group(1)).strip() if dest else "")
+    if not o:
+        before_to = re.search(r"\b([a-z][a-z0-9 \-']*?)\s+to\b", q, re.I)
+        o = (re.sub(r"\s+", " ", before_to.group(1)).strip() if before_to else "")
+    if not d:
+        after_from = re.search(r"\bfrom\s+([a-z][a-z0-9 \-']*?)\s*$", q, re.I)
+        d = (re.sub(r"\s+", " ", after_from.group(1)).strip() if after_from else "")
+    phrase = ("flights from " + o) if o else "flights"
+    if d:
+        phrase += " to " + d
+    # Pick next Thursday out, four days back (a typical long weekend) so
+    # Google Flights actually renders offer cards.
+    days = (3 - date.today().weekday()) % 7 or 7
+    d1 = date.today() + timedelta(days=days)
+    d2 = d1 + timedelta(days=4)
+    fmt = lambda d: d.strftime("%b %d").replace(" 0", " ")
+    return f"{phrase} {fmt(d1)} to {fmt(d2)}"
+
+
+def _flight_search_url(q: str) -> str:
+    return "https://www.google.com/travel/flights?q=" + quote_plus(_flight_term(q)) + "&curr=USD"
+
+
 def plan_url(query: str, *, backend: str | None = "local",
              open_tabs: list[dict] | None = None) -> dict:
     """Decide the first page to open. Prefer product sites for personal tasks."""
@@ -152,7 +210,7 @@ def plan_url(query: str, *, backend: str | None = "local",
     # Unknown destinations start at search. Model-invented deep links can be
     # stale or nonexistent; only observed result links are navigated afterward.
     if _FLIGHT.search(low):
-        return {"url": "https://www.google.com/travel/flights?q=" + quote_plus(q) + "&curr=USD",
+        return {"url": _flight_search_url(q),
                 "reason": "flight search", "source": "rule"}
 
     if product and (personal or not research):
