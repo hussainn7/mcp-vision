@@ -56,6 +56,30 @@ accessibility element when macOS makes those fields reliably available. A simple
 Ask is answered in place; the inferred Ask · Guide · Act labels do not create a
 second automation engine.
 
+Auto chooses the behavior separately for each request. Ask can answer general
+questions or gather read-only browser evidence; Guide points at controls; Act
+performs supported operations and checks the resulting state. The popup retains
+the app/tab captured at invocation instead of capturing its own Go button.
+
+Examples in the popup:
+
+- “Explain what a heat pump does” → direct answer.
+- “Research heat pumps” → Google search and observed evidence.
+- “What unread emails are in my Gmail?” → existing Gmail session; sign-in is
+  requested only if needed.
+- “Find flights to SFO next week” → asks for the missing departure airport;
+  your next reply continues that request.
+- “Open Gmail” → opens or reuses the service and verifies the destination.
+- “Where is the export button?” → Guide on the captured app.
+- “Fill this using my résumé, don’t submit” → factual filling and review.
+
+The runtime checks the selected model before browser research or model-driven
+operations and can start an installed Ollama app if it is stopped. Missing models,
+credentials, OS permissions, sign-in and CAPTCHA remain explicit setup/user steps.
+It does not silently change providers or download model weights. This is a bounded
+assistant, not universal automation: unsupported controls and uncertain outcomes
+stop with a blocker; sending, booking and purchasing remain gated.
+
 For Chrome, open `chrome://extensions`, enable Developer mode, choose **Load
 unpacked**, and select this repository's `chrome_relay` folder. Right-click a page
 and choose **Ask MCP-Vision**. The action sends a bounded selection/element/nearby

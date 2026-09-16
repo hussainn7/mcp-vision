@@ -94,10 +94,21 @@ def studio(port: int) -> None:
 @click.option("--cdp-endpoint", default=None, help="Existing Chrome debugging endpoint; enables file attachment.")
 def ui(port: int, provider: str | None, live_driver: str, cdp_endpoint: str | None) -> None:
     """Run the macOS contextual popup. Invoke it anywhere with Option-Space."""
-    from mcp_vision.macos_ui import run_contextual_ui
     try:
+        from mcp_vision.macos_ui import run_contextual_ui
         run_contextual_ui(port=port, provider=provider, live_driver=live_driver, cdp_endpoint=cdp_endpoint)
-    except (OSError, RuntimeError) as exc:
+    except Exception as exc:
+        import traceback
+        from mcp_vision.paths import state_dir
+        log_path = state_dir() / "ui-startup.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(traceback.format_exc())
+        if sys.platform == "darwin":
+            import AppKit
+            alert = AppKit.NSAlert.alloc().init()
+            alert.setMessageText_("MCP-Vision could not start")
+            alert.setInformativeText_(str(exc) + "\n\nDetails: " + str(log_path))
+            alert.runModal()
         raise click.ClickException(str(exc)) from exc
 
 
