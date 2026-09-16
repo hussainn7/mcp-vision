@@ -204,3 +204,72 @@ def test_cap_is_hard():
     import pytest
     with pytest.raises(ValueError):
         run(Runtime([]), max_steps=MAX_STEPS + 1)
+
+
+def test_public_research_follows_observed_external_source():
+    from mcp_vision.controller import next_link
+    mission = compile_mission('research heat pumps', {'url': 'https://www.google.com/search?q=heat+pumps'})
+    page = snap('Results', mission.url, links=[
+        {'role': 'link', 'name': 'Heat pumps explained', 'href': 'https://energy.gov/heat-pumps'}])
+    assert next_link(mission, page, {mission.url}) == 'https://energy.gov/heat-pumps'
+    private = compile_mission('my gmail inbox', {'url': 'https://mail.google.com'})
+    page.elements[0]['name'] = 'Inbox messages'
+    assert next_link(private, page, set()) is None
+
+
+def test_flight_mission_requires_actual_options():
+    mission = compile_mission('flights from ATL to SFO tomorrow', {'url': 'https://www.google.com/travel/flights'})
+    assert all(word in mission.success for word in ('origin', 'destination', 'dates', 'price'))
+
+
+def test_provider_failure_surfaces_without_pointless_scrolls(monkeypatch):
+    from backends import BackendError
+    def fail(*a):
+        raise BackendError('Local model unavailable')
+    monkeypatch.setattr('mcp_vision.controller.model_evidence', fail)
+    runtime = Runtime([snap('Search results')])
+    result = run(runtime, query='research heat pumps', backend='local')
+    assert not result['ok'] and 'Local model unavailable' in result['blocker']
+    assert not runtime.actions
+
+
+def test_public_research_never_uses_model_invented_url(monkeypatch):
+    monkeypatch.setattr('mcp_vision.plan.plan_with_model', lambda *a: {'url': 'https://example.com/not-real'})
+    assert '/search?q=' in plan_url('Look up heat pumps')['url']
+    assert '/search?q=' in plan_url('Search Google for heat pumps')['url']
+
+
+def test_fenced_evidence_is_supported_without_accepting_fabricated_quotes(monkeypatch):
+    import json
+    from mcp_vision.controller import model_evidence
+    mission = compile_mission('research heat pumps', {'url': 'https://www.google.com/search?q=heat+pumps'})
+    page = snap('Heat pumps move thermal energy between spaces.')
+    quote = page.text
+    def chat(*a, **k):
+        return {'content': '```json\n' + json.dumps({'complete': True, 'quotes': [quote]}) + '\n```'}
+    monkeypatch.setattr('backends.get_chat', lambda _: chat)
+    assert model_evidence(mission, page, 'local') == page.text
+    quote = 'Heat pumps produce unlimited free energy.'
+    assert model_evidence(mission, page, 'local') == ''
+
+
+def test_page_quotes_allow_layout_whitespace_but_not_new_facts(monkeypatch):
+    import json
+    from mcp_vision.controller import model_evidence
+    mission = compile_mission('flights from ATL to SFO September 28', {'url': 'https://www.google.com/travel/flights'})
+    page = snap('Frontier\nATL–SFO\nUS$423\nround\u00a0trip')
+    def chat(*a, **k):
+        return {'content': json.dumps({'complete': True, 'quotes': ['Frontier ATL–SFO US$423 round trip']})}
+    monkeypatch.setattr('backends.get_chat', lambda _: chat)
+    assert 'US$423' in model_evidence(mission, page, 'local')
+
+
+def test_flight_options_require_observed_route_and_ordered_dates():
+    from mcp_vision.controller import flight_evidence
+    query = 'Find round-trip flights from ATL to SFO September 28 to October 2, 2026'
+    text = ('Track prices departing 2026-09-28 and returning 2026-10-02\n'
+            '17:25\n–\n19:48\nFrontier\n5 hrs 23 min\nATL–SFO\nNon-stop\nUS$423\nround trip')
+    assert 'Frontier: 17:25–19:48' in flight_evidence(query, snap(text))
+    assert not flight_evidence(query, snap(text.replace('2026-10-02', '2026-10-03')))
+    assert not flight_evidence(query, snap(text.replace('ATL–SFO', 'SFO–ATL')))
+    assert not flight_evidence(query, snap(text.replace('departing', 'returning')))

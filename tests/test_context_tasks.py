@@ -238,3 +238,25 @@ def test_stale_action_is_resolved_again_before_retry():
     result = asyncio.run(task(backend, lambda _: next(steps)).run())
     assert result['state'] == 'review' and len(result['verified']) == 1
     assert calls == ['1', '2']
+
+
+def test_hotkey_chrome_binds_captured_title_to_structured_browser():
+    backend = Backend()
+    async def tabs():
+        return {'connected': True, 'tabs': [{'tab_id': '1', 'url': backend.url, 'title': 'Form'}]}
+    backend.tabs = tabs
+    context = Context(source='macos', source_application='Google Chrome', title='Form')
+    result = asyncio.run(bind_context_backend(context, mode='act', factory=lambda **k: backend))
+    assert result is backend
+
+
+def test_bad_click_postcondition_gets_bounded_repair_before_execution():
+    backend = Backend()
+    calls = []
+    def planner(payload):
+        calls.append(payload['feedback'])
+        return Step(action='click', name='Name', expected_text='Form')
+    result = asyncio.run(task(backend, planner).run())
+    assert result['state'] == 'input' and len(calls) == 3
+    assert 'NOT currently' in calls[1]
+    assert backend.actions == 0

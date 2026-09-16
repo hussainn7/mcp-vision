@@ -18,8 +18,8 @@ def test_auto_falls_back_to_local_without_keys(monkeypatch):
     assert resolve_provider("auto") == "local"
 
 
-def test_search_requests_route_to_act():
-    assert infer_capability("Search for flights in SF") == "act"
-    assert infer_capability("Find hotels near me") == "act"
+def test_search_requests_route_to_read_only_ask():
+    assert infer_capability("Search for flights in SF") == "ask"
+    assert infer_capability("Find hotels near me") == "ask"
     assert infer_capability("What does this error mean?") == "ask"
     assert infer_capability("How do I enable this?") == "guide"

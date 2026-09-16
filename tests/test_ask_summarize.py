@@ -66,3 +66,12 @@ def test_setup_and_ask_cli_exist():
     assert "setup" in runner.invoke(cli, ["--help"]).output
     assert "ask" in runner.invoke(cli, ["--help"]).output
     assert runner.invoke(cli, ["ask", "--help"]).exit_code == 0
+
+
+def test_verified_flights_render_readable_offers_without_mixing_prices():
+    evidence = ('URL: https://www.google.com/travel/flights\nANSWER:\n'
+                '17:25\n – \n19:48\nFrontier\n5 hrs 23 min\nATL–SFO\nNon-stop\n'
+                '194 kg CO2e\n-38% emissions\n0\n0\nUS$423\nround trip\n')
+    result = summarize('find flights from ATL to SFO', evidence, backend=None)
+    assert 'Frontier: 17:25–19:48, ATL–SFO, Non-stop, 5 hrs 23 min — US$423 round trip' in result
+    assert 'not booked' in result and 'CO2e' not in result

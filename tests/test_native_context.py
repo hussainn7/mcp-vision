@@ -58,3 +58,27 @@ def test_native_act_backend_is_bound_for_macos():
     backend = asyncio.run(bind_context_backend(context, mode='act'))
     assert isinstance(backend, NativeContextBackend)
     assert backend.allow_writes is True
+
+
+def test_submit_keeps_pre_popup_context_and_continues_clarification(monkeypatch):
+    from mcp_vision.context import Context, ContextElement
+    from mcp_vision.macos_ui import submission_context
+    def unexpected():
+        raise AssertionError('Go must not capture the popup')
+    monkeypatch.setattr('mcp_vision.macos_ui.capture_native_context', unexpected)
+    captured = Context(source='macos', source_application='Notes', title='Project',
+                       focused_element=ContextElement(name='Original field'),
+                       accessibility_context={'pid': 123})
+    submitted = submission_context(captured, 'from ATL, September 28', 'find flights to SFO next week')
+    assert submitted.title == 'Project' and submitted.accessibility_context['pid'] == 123
+    assert submitted.focused_element.name == 'Original field'
+    assert 'from ATL' in submitted.user_request and 'SFO' in submitted.user_request
+    assert captured.user_request == ''
+
+
+def test_bare_departure_city_continues_flight_search():
+    from mcp_vision.macos_ui import submission_context
+    from mcp_vision.tasks import ContextTask
+    context = submission_context(None, 'Atlanta', 'find flights to SF next week')
+    assert 'from Atlanta' in context.user_request
+    assert ContextTask(context).route.kind == 'browser'
