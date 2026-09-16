@@ -14,6 +14,9 @@ from mcp_vision.tasks import ContextTask
     ('find flights to SF from ATL next week', 'ask', 'browser'),
     ('Can you please search Google for battery recycling?', 'ask', 'browser'),
     ('Research heat pumps', 'ask', 'browser'),
+    ("Which startups are in the next accelerator batch?", 'ask', 'browser'),
+    ('What did the company announce recently?', 'ask', 'browser'),
+    ('Who won the tournament yesterday?', 'ask', 'browser'),
     ('What is in my Gmail inbox?', 'ask', 'browser'),
     ('Find hotels near me', 'ask', 'browser'),
     ('Can you explain recursion?', 'ask', 'context'),
@@ -48,6 +51,11 @@ def test_flight_clarification_needs_no_model_or_browser():
     assert followup.route.kind == 'browser'
 
 
+def test_vague_research_request_asks_for_topic():
+    route = route_request('do some research', 'ask')
+    assert route.kind == 'input' and route.missing == 'topic'
+
+
 def test_search_is_executed_in_explicit_ask(monkeypatch):
     import mcp_vision.ask
     monkeypatch.setattr('mcp_vision.readiness.ensure_model_ready', lambda _: None)
@@ -63,15 +71,18 @@ def test_search_is_executed_in_explicit_ask(monkeypatch):
     assert result['state'] == 'answered' and result['evidence'] == 'Source excerpt'
 
 
-def test_missing_model_does_not_start_browser(monkeypatch):
+def test_missing_model_uses_grounded_browser_fallback(monkeypatch):
     def fail(_):
         raise RuntimeError('Model is not installed')
     monkeypatch.setattr('mcp_vision.readiness.ensure_model_ready', fail)
-    async def unexpected(*a, **k):
-        pytest.fail('browser should not start')
-    monkeypatch.setattr('mcp_vision.ask.run_ask', unexpected)
+    calls = []
+    async def fallback(query, **options):
+        calls.append((query, options['backend']))
+        return {'ok': True, 'summary': 'Grounded answer', 'evidence': 'Observed text'}
+    monkeypatch.setattr('mcp_vision.ask.run_ask', fallback)
     result = asyncio.run(ContextTask(Context(user_request='research heat pumps')).run())
-    assert result['state'] == 'error' and 'not installed' in result['answer']
+    assert result['state'] == 'answered' and result['provider'] == 'grounded'
+    assert calls == [('research heat pumps', None)]
 
 
 def test_research_cancellation_during_model_wait(monkeypatch):
@@ -104,6 +115,17 @@ def test_stay_on_page_blocks_search_navigation():
 def test_flights_this_week_are_not_mistaken_for_screen_context():
     assert route_request('find flights from ATL to SFO this week', 'ask').kind == 'browser'
     assert route_request('find flights from ATL to SFO', 'ask').kind == 'input'
+
+
+def test_freshness_routes_by_language_not_topic_names():
+    for prompt in (
+        'What is the next batch?',
+        'Which version was just released?',
+        'Is the application still available?',
+        'What is happening this quarter?',
+    ):
+        assert route_request(prompt, 'ask').kind == 'browser'
+    assert route_request('Explain recursion', 'ask').kind == 'context'
 
 
 def test_open_preserves_case_sensitive_url():

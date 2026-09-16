@@ -11,6 +11,12 @@ from dataclasses import dataclass
 
 _PREFIX = re.compile(r"^\s*(?:(?:please|can you|could you|would you|help me(?: to)?)\s+)*", re.I)
 _CONTROLS = r"button|field|tab|menu|checkbox|control|form|input|dropdown|setting|link"
+_FRESHNESS = re.compile(
+    r"\b(?:now|currently|current|latest|newest|recent(?:ly)?|today|tonight|tomorrow|"
+    r"yesterday|upcoming|next|this (?:week|month|quarter|year|season)|as of|still|"
+    r"just announced|just released|when will|when does)\b",
+    re.I,
+)
 
 
 def request_text(request: str) -> str:
@@ -25,6 +31,11 @@ def needs_browser(request: str) -> bool:
         return False
     if re.search(rf'\b(?:{_CONTROLS})\b', text) and not explicit:
         return False
+    # Freshness is a property of the request, not its subject. This sends any
+    # time-sensitive real-world question to observed web evidence without a
+    # growing list of companies, people, products, leagues, or events.
+    if _FRESHNESS.search(text):
+        return True
     return explicit or bool(re.search(
         r"\b(find|search|look for|fetch|retrieve|latest|current|today|weather|news|"
         r"flights?|inbox|unread|gmail|emails?|compare|prices?)\b", text)) or bool(
@@ -51,6 +62,8 @@ def route_request(request: str, mode: str) -> RequestRoute:
             return RequestRoute('browser_open', destination)
     mutation = re.match(r'(send|submit|book|buy|delete|fill|create|write|attach|upload|change|click|open|navigate|go to)\b', text)
     if needs_browser(request) and not mutation:
+        if re.fullmatch(r'(?:do\s+)?(?:some\s+)?research(?:\s+(?:for|on)\s+me)?[?.!]*', text):
+            return RequestRoute('input', 'What topic would you like me to research?', 'topic')
         if re.search(r'\bflights?\b', text) and not re.search(r'\bfrom\s+\S+', text):
             return RequestRoute('input', 'What city or airport are you flying from? Include your departure and return dates (or say one-way) so I can search Google Flights.', 'departure')
         has_date = re.search(

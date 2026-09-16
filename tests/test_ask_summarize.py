@@ -12,7 +12,7 @@ def test_summarize_falls_back_without_model():
     out = summarize("flights", "Frontier US$390 nonstop ATL–SFO", backend="none", ok=True)
     assert "390" in out
     bad = summarize("flights", "nothing", backend="none", ok=False)
-    assert "did not succeed" in bad.lower()
+    assert "couldn't verify" in bad.lower()
 
 
 def test_personal_product_opens_site_not_google():
@@ -27,9 +27,11 @@ def test_personal_product_opens_site_not_google():
     assert "linkedin.com" in plan["url"]
 
 
-def test_research_still_uses_google():
+def test_research_uses_public_search_without_google_bot_wall():
     plan = plan_url("what is a rust borrow checker", backend="none")
-    assert "google.com/search" in plan["url"]
+    assert "wikipedia.org/w/index.php" in plan["url"]
+    assert "heat+pumps" in plan_url("Research heat pumps", backend="none")["url"]
+    assert "google.com/search" in plan_url("search Google for rust borrow checker", backend="none")["url"]
 
 
 def test_reuses_open_tab_for_product():
@@ -75,3 +77,12 @@ def test_verified_flights_render_readable_offers_without_mixing_prices():
     result = summarize('find flights from ATL to SFO', evidence, backend=None)
     assert 'Frontier: 17:25–19:48, ATL–SFO, Non-stop, 5 hrs 23 min — US$423 round trip' in result
     assert 'not booked' in result and 'CO2e' not in result
+
+
+def test_live_google_flight_card_format_with_meridiem_and_plain_dollars():
+    evidence = ('URL: https://www.google.com/travel/flights\nANSWER:\n'
+                '5:25\u202fPM\n – \n7:48\u202fPM\nFrontier\n5 hr 23 min\nATL–SFO\nNonstop\n'
+                '194 kg CO2e\n-38% emissions\n0\n0\n$485\nround trip\n')
+    result = summarize('find flights from ATL to SFO', evidence, backend=None)
+    assert 'Frontier: 5:25 PM–7:48 PM' in result
+    assert '$485 round trip' in result

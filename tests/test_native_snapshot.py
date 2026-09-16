@@ -59,3 +59,9 @@ def test_snapshot_keeps_ax_text_when_inner_text_is_shorter():
     rt = _runtime(_eval_switcher(ax_text, inner_text))
     snap = asyncio.run(rt.snapshot())
     assert snap.text == ax_text
+
+
+def test_snapshot_preserves_result_card_line_breaks():
+    inner = "17:25\n19:48\nFrontier\n5 hrs 23 min\nATL–SFO\nNon-stop\nUS$423\nround trip"
+    rt = _runtime(_eval_switcher("short", inner))
+    assert asyncio.run(rt.snapshot()).text == inner

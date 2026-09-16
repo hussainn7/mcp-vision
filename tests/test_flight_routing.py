@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import re
 
-from mcp_vision.plan import _flight_term
+from datetime import date
+
+from mcp_vision.plan import _flight_term, _relative_flight_dates
 from mcp_vision.request_routing import route_request
 
 
@@ -43,3 +45,9 @@ def test_deferral_words_are_not_glued_to_city_names():
     term = _flight_term("flights to Paris from New York whenever")
     assert "whenever" not in term
     assert "New York" in term and "Paris" in term
+
+
+def test_next_week_becomes_a_concrete_search_window():
+    start, end, _ = _relative_flight_dates('flights next week', date(2026, 9, 16))
+    assert start.isoformat() == '2026-09-21'
+    assert end.isoformat() == '2026-09-27'

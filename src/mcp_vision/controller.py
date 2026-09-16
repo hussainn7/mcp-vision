@@ -111,37 +111,102 @@ def flight_evidence(query: str, snap) -> str:
     """
     if not re.search(r'\bflights?\b', query, re.I):
         return ''
-    route = re.search(r'\bfrom\s+([A-Z]{3})\s+to\s+([A-Z]{3})\b', query, re.I)
+    aliases = {
+        'atlanta': 'ATL', 'atl': 'ATL', 'san francisco': 'SFO', 'sf': 'SFO', 'sfo': 'SFO',
+        'new york': 'NYC', 'nyc': 'NYC', 'los angeles': 'LAX', 'la': 'LAX', 'lax': 'LAX',
+        'chicago': 'CHI', 'miami': 'MIA', 'boston': 'BOS', 'seattle': 'SEA',
+    }
+    route = re.search(
+        r'\bfrom\s+(.+?)\s+to\s+(.+?)(?=\s+(?:on|depart|return|this|next|today|tomorrow|'
+        r'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|'
+        r'sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{4}-\d{2}-\d{2})\b|[,;.!?]|$)',
+        query, re.I,
+    )
     if not route:
         return ''
-    origin, destination = (value.upper() for value in route.groups())
-    if not re.search(rf'\b{origin}\s*[–-]\s*{destination}\b', snap.text):
+    def airport(value):
+        value = re.sub(r'\s+', ' ', value).strip().lower()
+        return value.upper() if re.fullmatch(r'[a-z]{3}', value) else aliases.get(value)
+    origin, destination = (airport(value) for value in route.groups())
+    if not origin or not destination:
+        return ''
+    observed_routes = re.findall(r'\b([A-Z]{3})\s*[–-]\s*([A-Z]{3})\b', snap.text)
+    valid_origins = {'JFK', 'LGA', 'EWR'} if origin == 'NYC' else {origin}
+    valid_destinations = {'JFK', 'LGA', 'EWR'} if destination == 'NYC' else {destination}
+    if not any(a in valid_origins and b in valid_destinations for a, b in observed_routes):
         return ''
     dates = re.findall(r'\b\d{4}-\d{2}-\d{2}\b', query)
     if not dates:
         years = set(re.findall(r'\b20\d{2}\b', query))
-        if len(years) != 1:
-            return ''
         from datetime import datetime
         months = re.findall(r'\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})\b', query, re.I)
-        try:
-            dates = [datetime.strptime(f'{month[:3]} {day} {next(iter(years))}', '%b %d %Y').date().isoformat()
-                     for month, day in months]
-        except ValueError:
-            return ''
+        if months and len(years) == 1:
+            try:
+                dates = [datetime.strptime(f'{month[:3]} {day} {next(iter(years))}', '%b %d %Y').date().isoformat()
+                         for month, day in months]
+            except (ValueError, StopIteration):
+                return ''
+    if not dates:
+        from mcp_vision.plan import _relative_flight_dates
+        relative = _relative_flight_dates(query)
+        if relative:
+            dates = [relative[0].isoformat(), relative[1].isoformat()]
     one_way = bool(re.search(r'one[ -]way', query, re.I))
-    if len(dates) != (1 if one_way else 2) or not all(date in snap.text for date in dates):
+    if len(dates) != (1 if one_way else 2):
+        return ''
+    from datetime import date as date_type
+    def date_observed(iso):
+        day = date_type.fromisoformat(iso)
+        forms = (iso, day.strftime('%b %d').replace(' 0', ' '),
+                 day.strftime('%B %d').replace(' 0', ' '))
+        return any(form.lower() in snap.text.lower() for form in forms)
+    if not all(date_observed(value) for value in dates):
         return ''
     # Preserve the departing/returning semantics, not just two unrelated dates.
-    if not re.search(r'departing\s+' + re.escape(dates[0]), snap.text, re.I):
+    def labelled_date(label, iso):
+        day = date_type.fromisoformat(iso)
+        variants = (iso, day.strftime('%b %d').replace(' 0', ' '),
+                    day.strftime('%B %d').replace(' 0', ' '))
+        return any(re.search(label + r'.{0,50}' + re.escape(value), snap.text, re.I | re.S)
+                   for value in variants)
+    if not labelled_date('departing', dates[0]):
         return ''
-    if not one_way and not re.search(r'returning\s+' + re.escape(dates[1]), snap.text, re.I):
+    if not one_way and not labelled_date('returning', dates[1]):
         return ''
     from mcp_vision.summarize import _flight_offers
     offers = _flight_offers(snap.text)
     if offers == snap.text:
         return ''
     return f'Route: {origin}–{destination}\nDates: ' + ' to '.join(dates) + '\n' + offers
+
+
+def research_evidence(mission: Mission, snap) -> str:
+    """Extract grounded prose when a public source is useful but a model is unavailable.
+
+    Search-result pages are navigation, not the answer. On a followed source we
+    require substantive text containing the topic terms and return exact excerpts.
+    """
+    current = urlsplit(snap.url)
+    if (not public_research(mission)
+            or current.hostname in {'www.google.com', 'www.bing.com'}
+            or (current.hostname == 'en.wikipedia.org' and current.path == '/w/index.php')):
+        return ''
+    stop = {'find', 'search', 'research', 'look', 'compare', 'latest', 'current',
+            'about', 'please', 'some', 'topic', 'web', 'internet', 'google'}
+    words = [w for w in re.findall(r'[a-z]{4,}', mission.goal.lower()) if w not in stop]
+    if not words:
+        return ''
+    chunks = []
+    for raw in re.split(r'\n+|(?<=[.!?])\s+', snap.text):
+        line = ' '.join(raw.split()).strip()
+        low = line.lower()
+        if (40 <= len(line) <= 700 and any(word in low for word in words)
+                and not re.search(r'cookie|sign in|subscribe|privacy policy|skip to|navigation', low)):
+            if line not in chunks:
+                chunks.append(line)
+        if len(chunks) >= 6:
+            break
+    return '\n'.join(chunks) if chunks else ''
 
 
 def evaluate(mission: Mission, snap, backend=None) -> str:
@@ -172,13 +237,15 @@ def evaluate(mission: Mission, snap, backend=None) -> str:
         return '\n'.join(lines)
     if re.search(r'\b(commits?|contributions?|how many|count)\b', mission.goal, re.I):
         return ''
-    return model_evidence(mission, snap, backend)
+    modeled = model_evidence(mission, snap, backend)
+    return modeled or research_evidence(mission, snap)
 
 
 def public_research(mission: Mission) -> bool:
     """Only public search missions may follow results across origins."""
     start = urlsplit(mission.url)
-    return start.hostname == 'www.google.com' and start.path == '/search'
+    return ((start.hostname in {'www.google.com', 'www.bing.com'} and start.path == '/search')
+            or (start.hostname == 'en.wikipedia.org' and start.path == '/w/index.php'))
 
 
 def next_link(mission: Mission, snap, visited: set[str]):
@@ -243,11 +310,12 @@ async def run_controller(runtime, mission: Mission, *, backend=None, max_steps=M
                 reason = f'{challenge.challenge_type}: user authentication or verification required at {snap.url}'
                 break
             if pending:
-                kind, target, before = pending
+                kind, target, before, action_progress = pending
                 same_host = urlsplit(snap.url).hostname == urlsplit(target or '').hostname
                 verified = ((snap.url.rstrip('/') == (target or '').rstrip('/') or
                              (same_host and (snap.url, snap.text) != before))
-                            if kind == 'navigate' else (snap.url, snap.text) != before)
+                            if kind == 'navigate' else
+                            (action_progress or (snap.url, snap.text) != before))
                 trace[-1].update(postcondition_verified=verified, observed_url=snap.url,
                                  observed_title=snap.title,
                                  observed_identity=observed_identity or 'unknown',
@@ -271,11 +339,14 @@ async def run_controller(runtime, mission: Mission, *, backend=None, max_steps=M
             if target:
                 progress('Following a relevant source…')
                 visited.add(target)
-                pending = ('navigate', target, before)
                 receipt = await runtime.navigate(target)
+                pending = ('navigate', target, before, False)
             else:
-                pending = ('scroll', None, before)
                 receipt = await runtime.scroll(snap.snapshot_id, 650)
+                movement = getattr(receipt, 'evidence', {}) or {}
+                moved = (movement.get('before') is not None and movement.get('after') is not None
+                         and movement['before'] != movement['after'])
+                pending = ('scroll', None, before, moved)
             trace.append(dict(action=pending[0], expected_url=target,
                               expected_postcondition='destination URL observed' if target else 'new page evidence',
                               status=receipt.status, executed=receipt.executed))

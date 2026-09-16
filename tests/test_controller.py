@@ -235,7 +235,7 @@ def test_provider_failure_surfaces_without_pointless_scrolls(monkeypatch):
 
 def test_public_research_never_uses_model_invented_url(monkeypatch):
     monkeypatch.setattr('mcp_vision.plan.plan_with_model', lambda *a: {'url': 'https://example.com/not-real'})
-    assert '/search?q=' in plan_url('Look up heat pumps')['url']
+    assert 'wikipedia.org/w/index.php?search=' in plan_url('Look up heat pumps')['url']
     assert '/search?q=' in plan_url('Search Google for heat pumps')['url']
 
 
@@ -273,3 +273,28 @@ def test_flight_options_require_observed_route_and_ordered_dates():
     assert not flight_evidence(query, snap(text.replace('2026-10-02', '2026-10-03')))
     assert not flight_evidence(query, snap(text.replace('ATL–SFO', 'SFO–ATL')))
     assert not flight_evidence(query, snap(text.replace('departing', 'returning')))
+
+
+def test_relative_date_city_flight_evidence_is_deterministic(monkeypatch):
+    import mcp_vision.plan
+    from datetime import date
+    from mcp_vision.controller import flight_evidence
+    monkeypatch.setattr(mcp_vision.plan, '_relative_flight_dates',
+                        lambda _q: (date(2026, 9, 21), date(2026, 9, 27), 'next week'))
+    text = ('Departing Mon, Sep 21 Returning Sun, Sep 27\n'
+            '17:25\n–\n19:48\nFrontier\n5 hrs 23 min\nATL–SFO\nNon-stop\nUS$423\nround trip')
+    result = flight_evidence('Find flights from Atlanta to SF next week', snap(text))
+    assert 'ATL–SFO' in result and 'US$423' in result
+
+
+def test_public_research_can_use_exact_article_excerpts_without_a_model():
+    page = snap('Heat pumps transfer heat rather than generating it, which can reduce electricity use.\n'
+                'Modern heat pumps can provide both heating and cooling in many climates.',
+                'https://energy.gov/heat-pumps')
+    result = run(Runtime([
+        snap('Results', 'https://www.google.com/search?q=heat+pumps', links=[
+            {'role': 'link', 'name': 'Heat pumps explained', 'href': page.url}]),
+        page,
+    ]),
+        query='research heat pumps', backend=None)
+    assert result['ok'] and 'transfer heat' in result['summary']

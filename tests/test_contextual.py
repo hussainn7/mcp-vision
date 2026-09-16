@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mcp_vision.context import Context, ContextBounds, ContextElement
-from mcp_vision.contextual import answer_context, infer_capability
+from mcp_vision.contextual import _dedupe_answer, answer_context, infer_capability
 from mcp_vision.execution import ExecutionBackend, create_execution_backend
 
 
@@ -37,6 +37,24 @@ def test_context_only_answer_always_returns_in_popup_shape():
     assert result["capability"] == "ask"
     assert "Connection refused" in result["answer"]
     assert result["provider"] == "context-only"
+
+
+def test_repeated_provider_answer_is_shown_once():
+    block = ('This is a complete answer with enough detail to be useful.\n\n'
+             'It should appear exactly once in the popup.')
+    assert _dedupe_answer(block + '\n\n' + block) == block
+
+
+def test_general_answer_prompt_does_not_treat_screen_context_as_a_requirement(monkeypatch):
+    seen = []
+    def chat(messages, tools=None):
+        seen.extend(messages)
+        return {'content': 'A direct general answer.'}
+    monkeypatch.setattr('backends.get_chat', lambda _backend: chat)
+    result = answer_context(Context(source_application='ChatGPT', user_request='Explain recursion'),
+                            provider='local')
+    assert result['answer'] == 'A direct general answer.'
+    assert 'Never refuse merely because the answer is absent from CONTEXT' in seen[0]['content']
 
 
 def test_execution_boundary_rejects_unknown_mode():

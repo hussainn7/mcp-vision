@@ -263,9 +263,11 @@ class NativeBrowserRuntime(BrowserRuntime):
             # The pruned accessibility tree frequently drops JS-rendered page content
             # (e.g. Google Flights offers). Prefer the document's full rendered text
             # so evaluators and the summarizer can ground answers on real evidence.
+            # Keep line breaks: result cards use them as semantic boundaries. Flattening
+            # innerText made a visually complete flight page impossible to parse.
             try:
                 full = await self._run(self._eval,
-                    "(document.body && document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 16000).trim()")
+                    "(document.body && document.body.innerText || '').slice(0, 16000).trim()")
             except Exception:
                 full = ""
             if len(full) > len(text):

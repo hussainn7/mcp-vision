@@ -50,3 +50,11 @@ def test_capture_and_submission_helpers_exist():
     assert callable(ui.submission_context)
     # The submission helper keeps the popup's own fields out of task evidence.
     assert inspect.isroutine(ui.submission_context) or callable(ui.submission_context)
+
+
+def test_input_supports_standard_editing_without_system_focus_ring():
+    src = _source()
+    assert 'self.input.setMenu_(_edit_menu())' in src
+    assert '"copy:", "c"' in src and '"paste:", "v"' in src
+    assert 'self.input.setFocusRingType_(AppKit.NSFocusRingTypeNone)' in src
+    assert 'self.input.setBezeled_(False)' in src

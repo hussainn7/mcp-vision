@@ -39,7 +39,7 @@ _PERSONAL = re.compile(
     re.I,
 )
 _RESEARCH = re.compile(
-    r"\b(what is|what'?s a|how (do|does|to|can)|why (do|does|is)|vs\.?|versus|"
+    r"\b(research|look up|what is|what'?s a|how (do|does|to|can)|why (do|does|is)|vs\.?|versus|"
     r"difference between|explain|best way|tutorial|meaning of)\b",
     re.I,
 )
@@ -93,7 +93,7 @@ _PLAN_SYSTEM = (
     "Rules: "
     "1) If they ask about THEIR account/activity/inbox/commits/orders on a named service, "
     "open that service's real site (logged-in home), never a Google search of the sentence. "
-    "2) Google Search only for open-ended research (what is / how to / compare). "
+    "2) Public web search only for open-ended research (what is / how to / compare). "
     "3) Flights → Google Flights. Shopping on a named store → that store. "
     "4) Prefer https URLs with no tracking junk."
 )
@@ -163,9 +163,23 @@ def _flight_term(q: str) -> str:
     dates out, we pick a sensible upcoming long weekend so real results render.
     """
     q = (q or "").strip()
+    relative = _relative_flight_dates(q)
+    if relative:
+        start, end, phrase = relative
+        # Give Google concrete dates rather than hoping its query parser and our
+        # verifier interpret "next week" identically.
+        clean = re.sub(
+            r"\b(?:today|tomorrow|this week|next week|this weekend|next weekend)\b",
+            "", q, flags=re.I,
+        )
+        clean = re.sub(r"\s+", " ", clean).strip(" ,")
+        rendered = start.strftime("%b %d").replace(" 0", " ")
+        if end != start:
+            rendered += " to " + end.strftime("%b %d, %Y").replace(" 0", " ")
+        else:
+            rendered += ", " + str(start.year)
+        return f"{clean} {rendered}".strip()
     if _HAS_DATE.search(q):
-        # Concrete/relative dates are already in the natural text and Google
-        # parses them straight from the query — keep them verbatim.
         return re.sub(r"\s+", " ", q).strip()
     # No date signal yet: build a clean origin → destination phrase and let
     # Google Flights render real offer cards for a picked long weekend.
@@ -190,6 +204,30 @@ def _flight_term(q: str) -> str:
     d2 = d1 + timedelta(days=4)
     fmt = lambda d: d.strftime("%b %d").replace(" 0", " ")
     return f"{phrase} {fmt(d1)} to {fmt(d2)}"
+
+
+def _relative_flight_dates(q: str, today: date | None = None) -> tuple[date, date, str] | None:
+    """Resolve common relative travel windows once, for planning and proof."""
+    today = today or date.today()
+    low = (q or "").lower()
+    if re.search(r"\btomorrow\b", low):
+        day = today + timedelta(days=1)
+        return day, day, "tomorrow"
+    if re.search(r"\bnext week\b", low):
+        start = today + timedelta(days=(7 - today.weekday()))
+        return start, start + timedelta(days=6), "next week"
+    if re.search(r"\bthis week\b", low):
+        start = today + timedelta(days=1)
+        end = today + timedelta(days=max(1, 6 - today.weekday()))
+        return start, end, "this week"
+    weekend = re.search(r"\b(next|this) weekend\b", low)
+    if weekend:
+        days_to_friday = (4 - today.weekday()) % 7
+        if weekend.group(1) == "next" or days_to_friday == 0:
+            days_to_friday += 7
+        start = today + timedelta(days=days_to_friday)
+        return start, start + timedelta(days=2), weekend.group(0)
+    return None
 
 
 def _flight_search_url(q: str) -> str:
@@ -228,6 +266,20 @@ def plan_url(query: str, *, backend: str | None = "local",
         return {"url": url, "reason": f"open {product} (personal/account task)" if personal
                 else f"open {product}", "source": "rule"}
 
-    return {"url": "https://www.google.com/search?q=" + quote_plus(q),
+    # General search engines frequently present automation challenges to
+    # disposable browsers. Wikipedia's search is a stable, content-rich first
+    # source for ordinary research; explicit Google and time-sensitive requests
+    # still use a general search engine.
+    if research and not re.search(
+            r'\b(?:now|currently|current|latest|newest|recent(?:ly)?|today|tonight|tomorrow|'
+            r'yesterday|upcoming|next|this (?:week|month|quarter|year|season)|news|google)\b',
+            low):
+        term = re.sub(r'^\s*(?:research|look up)\s+', '', q, flags=re.I).strip() or q
+        search = "https://en.wikipedia.org/w/index.php?search="
+        q = term
+    else:
+        search = ("https://www.google.com/search?q=" if re.search(r'\bgoogle\b', low)
+                  else "https://www.bing.com/search?q=")
+    return {"url": search + quote_plus(q),
             "reason": "web research" if research or not product else "fallback search",
             "source": "rule"}

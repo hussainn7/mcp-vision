@@ -188,24 +188,36 @@ class ContextTask:
         try:
             self.check_cancel()
             self.emit('Reading current context…')
+            browser_backend = None
             if self.route.kind == 'input':
                 return self.result('input', self.route.message)
             if self.route.kind == 'browser':
                 from mcp_vision.readiness import ensure_model_ready
                 from mcp_vision.providers import resolve_provider
                 self.emit('Checking the selected model…')
-                await self.reason(ensure_model_ready, resolve_provider(self.provider))
+                browser_backend = resolve_provider(self.provider)
+                try:
+                    await self.reason(ensure_model_ready, browser_backend)
+                except RuntimeError:
+                    # Browser missions have deterministic evidence extractors for
+                    # the MVP paths. A stopped model should reduce answer polish,
+                    # not prevent the browser from gathering a grounded answer.
+                    browser_backend = None
+                    self.emit('Model unavailable · using grounded browser evidence…')
             if self.route.kind in {'browser', 'browser_open'}:
                 from mcp_vision.ask import run_ask
                 from mcp_vision.providers import resolve_provider
+                if self.route.kind == 'browser_open':
+                    browser_backend = resolve_provider(self.provider)
                 result = await run_ask(self.route.message if self.route.kind == 'browser_open' else self.context.user_request,
-                                       backend=resolve_provider(self.provider), open_only=self.route.kind == 'browser_open',
+                                       backend=browser_backend, open_only=self.route.kind == 'browser_open',
                                        check_cancel=self.check_cancel, progress=self.emit,
                                        reason=self.reason)
                 self.check_cancel()
                 return {**self.result('answered' if result['ok'] else 'input', result['summary']),
                         'evidence': result.get('evidence', ''), 'url': result.get('url', ''),
-                        'trace': result.get('trace', []), 'provider': resolve_provider(self.provider)}
+                        'trace': result.get('trace', []),
+                        'provider': browser_backend or 'grounded'}
             if self.mode == 'ask':
                 result = await self.reason(answer_context, self.context, provider=self.provider, history=self.history)
                 self.check_cancel()
