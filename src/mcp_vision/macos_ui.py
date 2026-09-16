@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import os
 import threading
 from typing import Any
 
@@ -86,14 +87,14 @@ def capture_native_context() -> Context:
 
     # Skip our own launcher when the cursor is over the popup chrome.
     bundle = str(app.bundleIdentifier() or "") if app else ""
-    if bundle == "org.mcpvision.contextual":
+    if bundle == "org.mcpvision.contextual" or (app and int(app.processIdentifier()) == os.getpid()):
         focused_app = _ax_copy(AX, system, AX.kAXFocusedApplicationAttribute)
         if focused_app:
             try:
                 err, pid_ref = AX.AXUIElementGetPid(focused_app, None)
                 if err == 0 and pid_ref:
                     other = NSRunningApplication.runningApplicationWithProcessIdentifier_(int(pid_ref))
-                    if other and str(other.bundleIdentifier() or "") != "org.mcpvision.contextual":
+                    if other and int(other.processIdentifier()) != os.getpid() and str(other.bundleIdentifier() or "") != "org.mcpvision.contextual":
                         app = other
                         window = _ax_copy(AX, focused_app, AX.kAXFocusedWindowAttribute)
                         element = _ax_copy(AX, system, AX.kAXFocusedUIElementAttribute) or element
@@ -101,6 +102,10 @@ def capture_native_context() -> Context:
                         bundle = str(other.bundleIdentifier() or "")
             except Exception:
                 pass
+
+    if bundle == "org.mcpvision.contextual" or (app and int(app.processIdentifier()) == os.getpid()):
+        # Never turn our own request field/answer into task evidence or an action target.
+        return Context(source="macos", accessibility_context={"permission": "granted"})
 
     name = str(app.localizedName() or "") if app else ""
     title = _ax_copy(AX, window, AX.kAXTitleAttribute) if window else ""
@@ -125,6 +130,18 @@ def capture_native_context() -> Context:
     })
 
 
+def submission_context(captured: Context | None, request: str, pending_request: str | None = None) -> Context:
+    """Go must never re-capture the foreground popup as task context."""
+    context = captured or Context(source="macos")
+    if pending_request:
+        import re
+        from mcp_vision.request_routing import route_request
+        if route_request(pending_request, 'ask').missing == 'departure' and not re.search(r'\bfrom\b', request, re.I):
+            request = 'from ' + request
+        request = pending_request + "\nAdditional details: " + request
+    return context.model_copy(update={"user_request": request})
+
+
 def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_driver: str = "native", cdp_endpoint: str | None = None) -> None:
     if sys.platform != "darwin":
         raise RuntimeError("The contextual hotkey UI currently requires macOS.")
@@ -146,6 +163,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.monitors = []
             self.task = None
             self.history = []
+            self.pending_request = None
             self.source_path = None
             self.highlight_window = None
             self.marker_window = None
@@ -155,11 +173,12 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
 
         @objc.python_method
         def _build_panel(self):
-            width, height = 430, 400
+            width, height = 580, 610
             rect = AppKit.NSMakeRect(0, 0, width, height)
-            style = (AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskFullSizeContentView)
+            style = AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskFullSizeContentView
             self.panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
                 rect, style, AppKit.NSBackingStoreBuffered, False)
+            self.panel.setTitle_("MCP-Vision")
             self.panel.setTitlebarAppearsTransparent_(True)
             self.panel.setTitleVisibility_(AppKit.NSWindowTitleHidden)
             self.panel.setMovableByWindowBackground_(True)
@@ -169,22 +188,28 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.panel.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
                                                AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary)
             self.panel.setReleasedWhenClosed_(False)
+            self.panel.setAppearance_(AppKit.NSAppearance.appearanceNamed_(AppKit.NSAppearanceNameDarkAqua))
             self.panel.setOpaque_(False)
             self.panel.setBackgroundColor_(AppKit.NSColor.clearColor())
-            root = AppKit.NSVisualEffectView.alloc().initWithFrame_(rect)
-            root.setMaterial_(AppKit.NSVisualEffectMaterialPopover)
-            root.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
-            root.setState_(AppKit.NSVisualEffectStateActive)
+            root = AppKit.NSView.alloc().initWithFrame_(rect)
             root.setWantsLayer_(True)
-            root.layer().setCornerRadius_(18)
+            root.layer().setBackgroundColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.08, .10, .14, 1).CGColor())
+            root.layer().setCornerRadius_(20)
             root.layer().setMasksToBounds_(True)
             self.panel.setContentView_(root)
 
-            title = AppKit.NSTextField.labelWithString_("What should I do here?")
-            title.setFrame_(AppKit.NSMakeRect(24, 340, 360, 32))
-            title.setFont_(AppKit.NSFont.systemFontOfSize_weight_(21, AppKit.NSFontWeightSemibold))
-            root.addSubview_(title)
-            dismiss = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(387, 344, 24, 24))
+            def label(text, frame, size=13, bold=False):
+                view = AppKit.NSTextField.labelWithString_(text)
+                view.setFrame_(AppKit.NSMakeRect(*frame))
+                view.setFont_(AppKit.NSFont.systemFontOfSize_weight_(size, AppKit.NSFontWeightSemibold if bold else AppKit.NSFontWeightRegular))
+                view.setTextColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.91, .94, .98, 1))
+                root.addSubview_(view)
+                return view
+
+            label("MCP-Vision", (28, 550, 440, 38), 28, True)
+            self.context_label = label("Ask a question. Find something. Get it done.", (30, 524, 510, 22))
+            self.context_label.setTextColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.64, .72, .84, 1))
+            dismiss = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(530, 559, 26, 26))
             dismiss.setTitle_("×")
             dismiss.setBordered_(False)
             dismiss.setKeyEquivalent_("\x1b")
@@ -192,81 +217,88 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             dismiss.setAction_("dismiss:")
             root.addSubview_(dismiss)
 
-            self.input = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 288, 390, 43))
-            self.input.setPlaceholderString_("Ask about what’s under your cursor…")
-            self.input.setFont_(AppKit.NSFont.systemFontOfSize_(15))
+            self.input = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(28, 463, 524, 46))
+            self.input.setPlaceholderString_("What would you like me to do?")
+            self.input.setFont_(AppKit.NSFont.systemFontOfSize_(16))
             self.input.setBezeled_(True)
             self.input.setBezelStyle_(AppKit.NSTextFieldRoundedBezel)
             self.input.setTarget_(self)
             self.input.setAction_("submit:")
             root.addSubview_(self.input)
 
-            self.modes = AppKit.NSSegmentedControl.alloc().initWithFrame_(AppKit.NSMakeRect(20, 248, 248, 28))
+            self.modes = AppKit.NSSegmentedControl.alloc().initWithFrame_(AppKit.NSMakeRect(28, 415, 328, 30))
             self.modes.setSegmentCount_(4)
-            for index, label in enumerate(("Auto", "Ask", "Guide", "Act")):
-                self.modes.setLabel_forSegment_(label, index)
-                self.modes.setWidth_forSegment_(62, index)
+            for index, text in enumerate(("Auto", "Ask", "Guide", "Act")):
+                self.modes.setLabel_forSegment_(text, index)
+                self.modes.setWidth_forSegment_(82, index)
             self.modes.setSelectedSegment_(0)
-            self.modes.setEnabled_(True)
+            self.modes.setTarget_(self)
+            self.modes.setAction_("modeChanged:")
             root.addSubview_(self.modes)
 
             self.providers = AppKit.NSPopUpButton.alloc().initWithFrame_pullsDown_(
-                AppKit.NSMakeRect(276, 246, 134, 28), False)
+                AppKit.NSMakeRect(390, 414, 162, 30), False)
             from mcp_vision.providers import LABELS
-            for label, _value in LABELS:
-                self.providers.addItemWithTitle_(label)
+            for text, _value in LABELS:
+                self.providers.addItemWithTitle_(text)
             self.providers.selectItemAtIndex_(0)
+            self.providers.setToolTip_("Model provider · Auto uses a configured provider")
             root.addSubview_(self.providers)
+            self.mode_hint = label("Auto chooses whether to answer, guide, or take action.", (30, 386, 520, 20), 12)
+            self.mode_hint.setTextColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.64, .72, .84, 1))
 
-            send = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(346, 206, 64, 31))
-            send.setTitle_("Go")
-            self.send = send
-            send.setBezelStyle_(AppKit.NSBezelStyleRounded)
-            send.setKeyEquivalent_("\r")
-            send.setTarget_(self)
-            send.setAction_("submit:")
-            root.addSubview_(send)
+            def button(text, frame, action):
+                view = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(*frame))
+                view.setTitle_(text)
+                view.setBezelStyle_(AppKit.NSBezelStyleRounded)
+                view.setTarget_(self)
+                view.setAction_(action)
+                root.addSubview_(view)
+                return view
 
-            cancel = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(276, 206, 70, 31))
-            cancel.setTitle_("Cancel")
-            cancel.setBezelStyle_(AppKit.NSBezelStyleRounded)
-            cancel.setTarget_(self)
-            cancel.setAction_("cancel:")
-            root.addSubview_(cancel)
-            self.cancel_button = cancel
-            cancel.setEnabled_(False)
+            self.send = button("Run", (444, 338, 108, 34), "submit:")
+            self.send.setKeyEquivalent_("\r")
+            self.send.setContentTintColor_(AppKit.NSColor.systemTealColor())
+            self.cancel_button = button("Cancel", (344, 338, 96, 34), "cancel:")
+            self.cancel_button.setEnabled_(False)
+            self.cancel_button.setHidden_(True)
+            self.choose_button = button("Attach résumé…", (24, 338, 164, 34), "chooseSource:")
+            self.choose_button.setToolTip_("Optional · attach a résumé for factual form filling")
+            self.result_heading = label("Ready when you are", (30, 302, 520, 22), 14, True)
+            self.result_heading.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
 
-            choose = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(20, 206, 150, 28))
-            choose.setTitle_("Choose résumé…")
-            choose.setBezelStyle_(AppKit.NSBezelStyleRounded)
-            choose.setTarget_(self)
-            choose.setAction_("chooseSource:")
-            root.addSubview_(choose)
-            self.choose_button = choose
-
-            scroll = AppKit.NSScrollView.alloc().initWithFrame_(AppKit.NSMakeRect(24, 44, 382, 150))
+            scroll = AppKit.NSScrollView.alloc().initWithFrame_(AppKit.NSMakeRect(28, 66, 524, 225))
             scroll.setHasVerticalScroller_(True)
             scroll.setDrawsBackground_(False)
-            self.response = AppKit.NSTextView.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 362, 150))
+            self.response = AppKit.NSTextView.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 504, 225))
             self.response.setEditable_(False)
             self.response.setSelectable_(True)
             self.response.setDrawsBackground_(False)
             self.response.setVerticallyResizable_(True)
             self.response.setAutoresizingMask_(AppKit.NSViewWidthSizable)
             self.response.textContainer().setWidthTracksTextView_(True)
+            self.response.setTextContainerInset_(AppKit.NSMakeSize(2, 6))
             scroll.setDocumentView_(self.response)
             root.addSubview_(scroll)
-            self.response.setFont_(AppKit.NSFont.systemFontOfSize_(13.5))
-            self.response.setTextColor_(AppKit.NSColor.secondaryLabelColor())
+            self.response.setFont_(AppKit.NSFont.systemFontOfSize_(15))
+            self.response.setTextColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.91, .94, .98, 1))
+            self.status = label("Desktop preview · 0.3.1", (30, 28, 318, 20), 11)
+            self.copy_button = button("Copy", (350, 22, 74, 30), "copyAnswer:")
+            self.source_button = button("Open source", (428, 22, 126, 30), "openSource:")
+            self.copy_button.setEnabled_(False)
+            self.source_button.setHidden_(True)
+            self.result_url = ''
 
-            self.status = AppKit.NSTextField.labelWithString_("Local · ⌥Space or ⌃⌥Space over the target")
-            self.status.setFrame_(AppKit.NSMakeRect(24, 16, 380, 20))
-            self.status.setFont_(AppKit.NSFont.systemFontOfSize_(11))
-            self.status.setTextColor_(AppKit.NSColor.tertiaryLabelColor())
-            root.addSubview_(self.status)
+            self._ensure_accessibility()
 
         @objc.python_method
         def install_hotkey(self):
+            """Wire ⌥Space / ⌃⌥Space plus the menu-bar and native hotkey paths.
+
+            The packaged macOS launcher registers a Carbon global hotkey and posts
+            org.mcpvision.contextual.hotkey; this also installs AppKit key monitors
+            so the same shortcuts work when started via `mcp-vision ui`.
+            """
             mask = AppKit.NSEventMaskKeyDown
             option = AppKit.NSEventModifierFlagOption
             control = AppKit.NSEventModifierFlagControl
@@ -299,7 +331,6 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 self, "nativeHotkey:", "org.mcpvision.contextual.hotkey", None)
             self._menu_invoke = invoke
             self._install_status_item(invoke)
-            self._ensure_accessibility()
 
         def nativeHotkey_(self, _notification):
             if getattr(self, "_menu_invoke", None):
@@ -358,8 +389,9 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 return
             self.context = context
             self.history = []
+            self.pending_request = None
             self.source_path = None
-            self.choose_button.setTitle_("Choose résumé…")
+            self.choose_button.setTitle_("Attach résumé…")
             self.modes.setSelectedSegment_(0)
             self.hide_indicator()
             permission = context.accessibility_context.get("permission", "unknown")
@@ -368,17 +400,24 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 suffix = "Accessibility ready"
             else:
                 suffix = "Add /Applications/MCP-Vision.app in Accessibility, then toggle it on"
-            self.status.setStringValue_(f"{where} · {suffix}")
+            self.context_label.setStringValue_(f"Working with {where}" if context.source_application else "Ask a question. Find something. Get it done.")
+            self.status.setStringValue_("Ready · Desktop preview 0.3.1")
             self.input.setStringValue_("")
-            self.response.setString_("")
+            self.result_heading.setStringValue_("Ready when you are")
+            self.response.setString_("Try a request in your own words:\n\nFind flights to San Francisco next week\nResearch a topic on the web\nExplain what’s on this screen\nFill this form using my résumé")
+            self.input.setPlaceholderString_("What would you like me to do?")
+            self.send.setTitle_("Run")
+            self.source_button.setHidden_(True)
+            self.copy_button.setEnabled_(False)
+            self.modeChanged_(None)
             mouse = AppKit.NSEvent.mouseLocation()
             screen = next((s for s in AppKit.NSScreen.screens() if AppKit.NSPointInRect(mouse, s.frame())),
                           AppKit.NSScreen.mainScreen())
             frame = screen.visibleFrame()
-            x = min(max(mouse.x + 12, frame.origin.x + 8), frame.origin.x + frame.size.width - 438)
-            y = mouse.y - 412
+            x = min(max(mouse.x + 12, frame.origin.x + 8), frame.origin.x + frame.size.width - 588)
+            y = mouse.y - 622
             if y < frame.origin.y + 8:
-                y = min(mouse.y + 14, frame.origin.y + frame.size.height - 408)
+                y = min(mouse.y + 14, frame.origin.y + frame.size.height - 618)
             self.panel.setFrameOrigin_(AppKit.NSMakePoint(x, y))
             self.panel.makeKeyAndOrderFront_(None)
             self.panel.orderFrontRegardless()
@@ -482,35 +521,32 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             request = str(self.input.stringValue()).strip()
             if not request or self.task:
                 return
-            # Chrome relay contexts stay; otherwise refresh what's under the cursor.
-            if self.context and self.context.source == "chrome" and self.context.url:
-                context = self.context
-            else:
-                context = capture_native_context()
-            context = context.model_copy(update={"user_request": request})
+            # Go is inside the popup. Preserve the target captured BEFORE it opened.
+            context = submission_context(self.context, request, self.pending_request)
             mode = (None, "ask", "guide", "act")[self.modes.selectedSegment()]
             choice = LABELS[max(0, self.providers.indexOfSelectedItem())][1]
             selected_provider = resolve_provider(provider or choice)
             task = ContextTask(context, mode=mode, provider=selected_provider, source_path=self.source_path,
                                history=self.history, progress=lambda message: AppHelper.callAfter(self.show_progress, message))
             self.task = task
+            self.result_heading.setStringValue_(request)
+            self.source_button.setHidden_(True)
+            self.copy_button.setEnabled_(False)
             auto = self.modes.selectedSegment() == 0
             label = {"ask": "Asking", "guide": "Guiding", "act": "Acting"}.get(task.mode, "Working")
             self.response.setString_(f"{'Auto → ' if auto else ''}{label}…")
             self.status.setStringValue_(f"{'Auto → ' if auto else ''}{task.mode.capitalize()} · reading context…")
-            # Mirror the inferred Auto choice on the segment control so it's obvious.
-            if auto:
-                self.modes.setSelectedSegment_({"ask": 1, "guide": 2, "act": 3}[task.mode])
             self.input.setEnabled_(False)
             self.send.setEnabled_(False)
             self.choose_button.setEnabled_(False)
             self.modes.setEnabled_(False)
             self.providers.setEnabled_(False)
             self.cancel_button.setEnabled_(True)
+            self.cancel_button.setHidden_(False)
 
             async def run():
                 try:
-                    if task.mode != "ask":
+                    if task.route.kind == "surface":
                         task.check_cancel()
                         task.backend = await bind_context_backend(context, mode=task.mode, live_driver=live_driver,
                                                                   cdp_endpoint=cdp_endpoint, indicator=self.indicator, source_path=self.source_path)
@@ -539,6 +575,8 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 self.history.extend([{"role": "user", "content": self.task.context.user_request},
                                      {"role": "assistant", "content": result["answer"]}])
                 self.history = self.history[-6:]
+            self.pending_request = (self.task.context.user_request if self.task and result.get("state") == "input"
+                                    and self.task.route.missing else None)
             self.task = None
             self.input.setEnabled_(True)
             self.send.setEnabled_(True)
@@ -546,12 +584,39 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.modes.setEnabled_(True)
             self.providers.setEnabled_(True)
             self.cancel_button.setEnabled_(False)
+            self.cancel_button.setHidden_(True)
             self.response.setString_(result["answer"])
+            self.response.scrollRangeToVisible_(AppKit.NSMakeRange(0, 0))
+            self.copy_button.setEnabled_(True)
+            from urllib.parse import urlsplit
+            self.result_url = result.get('url', '')
+            self.source_button.setHidden_(urlsplit(self.result_url).scheme not in {'http', 'https'})
+            self.send.setTitle_("Continue" if self.pending_request else "Run")
+            self.input.setPlaceholderString_("Add the missing details…" if self.pending_request else "Ask another question or start a task…")
             where = (self.context.source_application if self.context else "") or "Ready"
             self.status.setStringValue_(
-                f"{result.get('state', 'ready').capitalize()} · {result.get('capability', 'ask').capitalize()}"
-                f" · {result.get('provider', 'local')} · {where}")
+                f"{ {'answered': 'Answer ready', 'input': 'Needs your input', 'review': 'Ready for review', 'guided': 'Guidance ready', 'error': 'Could not complete'}.get(result.get('state'), result.get('state', 'Ready').capitalize())} · {result.get('capability', 'ask').capitalize()}"
+                f" · {result.get('provider', 'local').capitalize()}")
             self.input.setStringValue_("")
+            self.panel.makeFirstResponder_(self.input)
+
+        def modeChanged_(self, _sender):
+            hints = ("Auto chooses whether to answer, guide, or take action.",
+                     "Ask answers questions and can research the web.",
+                     "Guide shows you the next control without changing it.",
+                     "Act performs supported steps and verifies the result.")
+            self.mode_hint.setStringValue_(hints[self.modes.selectedSegment()])
+
+        def copyAnswer_(self, _sender):
+            board = AppKit.NSPasteboard.generalPasteboard()
+            board.clearContents()
+            board.setString_forType_(str(self.response.string()), AppKit.NSPasteboardTypeString)
+            self.status.setStringValue_("Answer copied")
+
+        def openSource_(self, _sender):
+            from urllib.parse import urlsplit
+            if urlsplit(self.result_url).scheme in {'http', 'https'}:
+                AppKit.NSWorkspace.sharedWorkspace().openURL_(AppKit.NSURL.URLWithString_(self.result_url))
 
     controller = Controller.alloc().init()
     server = StudioServer(port, invocation_handler=lambda context: AppHelper.callAfter(controller.show_context, context),
