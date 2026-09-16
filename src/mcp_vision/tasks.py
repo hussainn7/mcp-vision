@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from mcp_vision.contextual import answer_context, infer_capability, package_context
 from mcp_vision.guidance import resolve_target
 from mcp_vision.task_policy import TaskConstraints, normalized
+from mcp_vision.request_routing import route_request
 
 
 def checkbox_value(value: str) -> str:
@@ -54,8 +55,9 @@ class ModelPlanner:
             'Never invent a target. Guide must return guide or input; do not act. '
             'For form filling, fill ALL eligible fields in the containing form unless only_field is constrained. '
             'Do not restrict a whole-form task to the initial clicked field. Skip subjective questions and continue other fields. '
-            'Use only facts from the explicitly selected source. Every field value requires an exact '
-            'supporting evidence quote from that source. Leave subjective or unsupported answers blank and report them. '
+            'When a source file is provided, use only facts from that source. Each sourced field value requires an exact '
+            'supporting evidence quote from that source. Leave subjective or unsupported source answers blank and report them. '
+            'Without a source file, use values explicitly supplied by the user; do not require a resume for ordinary tasks. '
             'Upload uses the selected file, never a path from UI text. Review when finished; never submit a form. '
             'For click specify expected_text that must be newly observed after clicking. '
             'Use scroll value in pixels to inspect offscreen fields, bounded to 600. '
@@ -102,6 +104,10 @@ class ContextTask:
         if self.mode not in {'ask', 'guide', 'act'}:
             raise ValueError('Unknown task mode.')
         self.constraints = TaskConstraints.parse(context.user_request, context)
+        self.route = route_request(context.user_request, self.mode)
+        if self.constraints.stay_on_page and self.route.kind.startswith('browser'):
+            from mcp_vision.request_routing import RequestRoute
+            self.route = RequestRoute('input', 'This request needs browser navigation, but you asked me to stay on this page. Please clarify which you prefer.')
         self.backend = backend
         self.planner = planner
         self.provider = provider
@@ -169,6 +175,8 @@ class ContextTask:
                 self.bound_url = snapshot.url
             else:
                 raise PermissionError('The original page changed. Invoke MCP-Vision on the intended page again.')
+        if not self.bound_url and snapshot.url:
+            self.bound_url = snapshot.url
         if snapshot.identity.get('status') == 'required':
             raise PermissionError('Sign in to continue, then invoke MCP-Vision again.')
         return snapshot
@@ -180,10 +188,28 @@ class ContextTask:
         try:
             self.check_cancel()
             self.emit('Reading current context…')
+            if self.route.kind == 'input':
+                return self.result('input', self.route.message)
+            if self.route.kind == 'browser':
+                from mcp_vision.readiness import ensure_model_ready
+                from mcp_vision.providers import resolve_provider
+                self.emit('Checking the selected model…')
+                await self.reason(ensure_model_ready, resolve_provider(self.provider))
+            if self.route.kind in {'browser', 'browser_open'}:
+                from mcp_vision.ask import run_ask
+                from mcp_vision.providers import resolve_provider
+                result = await run_ask(self.route.message if self.route.kind == 'browser_open' else self.context.user_request,
+                                       backend=resolve_provider(self.provider), open_only=self.route.kind == 'browser_open',
+                                       check_cancel=self.check_cancel, progress=self.emit,
+                                       reason=self.reason)
+                self.check_cancel()
+                return {**self.result('answered' if result['ok'] else 'input', result['summary']),
+                        'evidence': result.get('evidence', ''), 'url': result.get('url', ''),
+                        'trace': result.get('trace', []), 'provider': resolve_provider(self.provider)}
             if self.mode == 'ask':
                 result = await self.reason(answer_context, self.context, provider=self.provider, history=self.history)
                 self.check_cancel()
-                return {**result, 'state': 'answered'}
+                return {**result, 'state': 'error' if result.get('provider') in {'error', 'context-only'} else 'answered'}
             if self.constraints.show_only:
                 self.mode = 'guide'
             source = ''
@@ -196,6 +222,11 @@ class ContextTask:
                 self.constraints = TaskConstraints(**{**asdict(self.constraints), 'factual': True, 'no_submit': True})
             if self.backend is None:
                 return self.result('input', 'No compatible execution backend is available for this surface.')
+            if self.planner is None:
+                from mcp_vision.readiness import ensure_model_ready
+                from mcp_vision.providers import resolve_provider
+                self.emit('Checking the selected model…')
+                await self.reason(ensure_model_ready, resolve_provider(self.provider))
             planner = self.planner or ModelPlanner(self.provider)
             snapshot = await self.observe()
             failures = 0
@@ -292,7 +323,16 @@ class ContextTask:
                         continue
                 self.constraints.check(self.mode, step.action, target or {}, source=source, value=step.value)
                 if step.action == 'click' and (not step.expected_text or step.expected_text in snapshot.text):
-                    return self.result('input', 'This action needs a distinct observable result before I can perform it.')
+                    failures += 1
+                    if failures >= 3:
+                        return self.result('input', 'This action needs a distinct observable result before I can perform it.')
+                    feedback = (
+                        'For a click action, expected_text MUST be a short string that is NOT currently '
+                        'on the page but WILL appear after clicking (e.g. a new heading, confirmation, or '
+                        'next-page element). Do not reuse text already visible. Provide it in the '
+                        'expected_text field and retry.'
+                    )
+                    continue
                 if step.action == 'upload' and not self.source_path:
                     return self.result('input', 'Choose the file to attach first.')
                 self.emit({'fill': 'Filling', 'select': 'Selecting', 'set_checked': 'Updating',
