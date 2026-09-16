@@ -142,6 +142,26 @@ def submission_context(captured: Context | None, request: str, pending_request: 
     return context.model_copy(update={"user_request": request})
 
 
+def _edit_menu():
+    """Standard Edit items so Cmd+C/Cmd+V and right-click work in the popup.
+
+    The popup is a borderless accessory app with no menu bar, so without an
+    Edit menu the field editor never gets copy/paste/select-all key equivalents.
+    """
+    import AppKit
+    menu = AppKit.NSMenu.alloc().initWithTitle_("Edit")
+    for title, action, key in (
+        ("Select All", "selectAll:", "a"),
+        ("Cut", "cut:", "x"),
+        ("Copy", "copy:", "c"),
+        ("Paste", "paste:", "v"),
+    ):
+        item = menu.addItemWithTitle_action_keyEquivalent_(title, action, key)
+        item.setKeyEquivalentModifierMask_(AppKit.NSEventModifierFlagCommand)
+        # Nill target routes each action up the responder chain to the field editor.
+    return menu
+
+
 def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_driver: str = "native", cdp_endpoint: str | None = None) -> None:
     if sys.platform != "darwin":
         raise RuntimeError("The contextual hotkey UI currently requires macOS.")
@@ -152,6 +172,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
 
     app = AppKit.NSApplication.sharedApplication()
     app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
+    app.setMainMenu_(_edit_menu())
 
     class Controller(AppKit.NSObject):
         def init(self):
@@ -222,6 +243,8 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.input.setFont_(AppKit.NSFont.systemFontOfSize_(16))
             self.input.setBezeled_(True)
             self.input.setBezelStyle_(AppKit.NSTextFieldRoundedBezel)
+            self.input.setFocusRingType_(AppKit.NSFocusRingTypeNone)
+            self.input.setMenu_(_edit_menu())
             self.input.setTarget_(self)
             self.input.setAction_("submit:")
             root.addSubview_(self.input)
