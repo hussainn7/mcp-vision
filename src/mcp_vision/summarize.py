@@ -53,6 +53,24 @@ def _heuristic(query: str, evidence: str) -> str:
     return "\n".join(bits)
 
 
+def _flight_offers(answer: str) -> str:
+    """Format verified excerpts without asking a model to rewrite prices/times."""
+    pattern = re.compile(
+        r'(\d{1,2}:\d{2})\s*[–-]\s*(\d{1,2}:\d{2}(?:\+\d+)?)\s*\n'
+        r'([^\n]+)\n([^\n]*(?:hrs?|min)[^\n]*)\n([A-Z]{3}[–-][A-Z]{3})\n'
+        r'(Non-stop|\d+ stops?)\n.{0,300}?(US\$[\d,]+(?:\.\d{2})?)\s*\n(round trip|one way)',
+        re.S | re.I,
+    )
+    offers = []
+    for depart, arrive, airline, duration, route, stops, price, fare in pattern.findall(answer):
+        line = f'{airline.strip()}: {depart}–{arrive}, {route}, {stops}, {duration.strip()} — {price} {fare}'
+        if line not in offers:
+            offers.append(line)
+    if not offers:
+        return answer
+    return 'Departing flight offers (not booked):\n' + '\n'.join('- ' + line for line in offers[:5])
+
+
 def summarize(query: str, evidence: str, *, backend: str | None = "local",
               ok: bool = True) -> str:
     """Return a clean answer. Uses a model when available; else a local heuristic."""
@@ -63,6 +81,8 @@ def summarize(query: str, evidence: str, *, backend: str | None = "local",
 
     if "\nANSWER:\n" in evidence and evidence.startswith("URL: https"):
         source, answer = evidence.split("\nANSWER:\n", 1)
+        if re.search(r"\bflights?\b", query, re.I):
+            answer = _flight_offers(answer)
         return answer + " — " + source.removeprefix("URL: ")
 
     from mcp_vision.controller import answer_lines

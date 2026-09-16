@@ -7,6 +7,7 @@ from urllib.parse import quote_plus, urlsplit
 
 # Seed aliases only. Planner logic decides *when* to use a product vs Google.
 _ALIASES = {
+    "google": "https://www.google.com",
     "github": "https://github.com",
     "gh": "https://github.com",
     "gmail": "https://mail.google.com",
@@ -145,17 +146,11 @@ def plan_url(query: str, *, backend: str | None = "local",
     personal = bool(_PERSONAL.search(low))
     research = bool(_RESEARCH.search(low))
     product = product_mention(q)
+    if product == "google" and low != "google":
+        product = None
 
-    planned = None if product or research or _FLIGHT.search(low) else plan_with_model(q, backend)
-    if planned:
-        host = _host(planned["url"])
-        tab = _best_tab(open_tabs, host, personal=personal) if host else None
-        if tab:
-            return {"url": tab["url"], "reason": f"reuse open tab for {host}",
-                    "source": "tab", "tab_id": tab.get("tab_id"),
-                    "expected_url": tab.get("url")}
-        return planned
-
+    # Unknown destinations start at search. Model-invented deep links can be
+    # stale or nonexistent; only observed result links are navigated afterward.
     if _FLIGHT.search(low):
         return {"url": "https://www.google.com/travel/flights?q=" + quote_plus(q) + "&curr=USD",
                 "reason": "flight search", "source": "rule"}

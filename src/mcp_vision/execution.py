@@ -51,19 +51,29 @@ async def bind_context_backend(context, *, mode, live_driver='native', cdp_endpo
                                indicator=None, source_path=None, factory=create_execution_backend):
     if mode == 'ask':
         return None
-    if context.source == 'macos' and not context.url:
+    native_chrome = (context.source == 'macos' and not context.url and
+                     (context.accessibility_context.get('bundle_id') == 'com.google.Chrome'
+                      or context.source_application == 'Google Chrome'))
+    if context.source == 'macos' and not context.url and not native_chrome:
         from mcp_vision.native_context import NativeContextBackend
         return NativeContextBackend(context, indicator, allow_writes=mode == 'act')
-    if not context.url:
+    if not context.url and not native_chrome:
         raise ValueError('Invoke on a browser page to select an execution target.')
     backend = factory(browser_mode='live', live_driver=live_driver, cdp_endpoint=cdp_endpoint,
                       allow_writes=mode == 'act', governor=task_governor(source_path))
     try:
         listing = await backend.tabs()
-        matches = [tab for tab in listing.get('tabs', []) if tab['url'] == context.url]
+        if listing.get('connected') is False:
+            raise ValueError(listing.get('error') or 'Chrome could not connect.')
+        if native_chrome:
+            matches = [tab for tab in listing.get('tabs', [])
+                       if context.title and tab.get('title') == context.title]
+        else:
+            matches = [tab for tab in listing.get('tabs', []) if tab['url'] == context.url]
+
         if len(matches) != 1:
             raise ValueError('The contextual tab is missing or ambiguous. Keep one matching tab open and invoke again.')
-        receipt = await backend.use_tab(matches[0]['tab_id'], context.url)
+        receipt = await backend.use_tab(matches[0]['tab_id'], matches[0]['url'])
         if receipt.status != 'verified':
             raise ValueError(receipt.message)
         return backend
