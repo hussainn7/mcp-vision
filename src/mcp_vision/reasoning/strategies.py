@@ -33,7 +33,9 @@ def classify(detail: str, *, receipt_ok: bool | None = None,
     classifiers can have the model refine this later.
     """
     low = (detail or "").lower()
-    if any(tok in low for tok in ("deny", "permission", "not allowed", "blocked", "unauthorized", "sign in")):
+    if any(tok in low for tok in ("deny", "denied", "permission", "not allowed", "blocked",
+                                  "unauthorized", "not authorised", "unauthorised", "access",
+                                  "sign in", "forbidden")):
         return FailureCategory.PERMISSION
     if any(tok in low for tok in ("timeout", "not connected", "site", "page error", "503", "captcha", "network")):
         return FailureCategory.SITE

@@ -19,13 +19,24 @@ _EXTERNAL = re.compile(
     re.I,
 )
 _IDENTITY = re.compile(r"\b(password|ssn|identity|birth date)\b", re.I)
+# "why is checkout broken / fix X / figure out" is research, however payment-ish
+# the subject words look. Research/disgnosis is never itself a commit.
+_RESEARCH_FRAMING = re.compile(
+    r"\b(figure out|find out|why(?: is| does| do| did)|fix|repair|debug|diagnos|"
+    r"not working|broken|error|troubleshoot| investigate)\b", re.I)
 
 
 def level_for_request(text: str) -> ConsequenceLevel:
-    """Best-effort consequence classification for a raw user request (fast path)."""
+    """Best-effort consequence classification for a raw user request (fast path).
+
+    Only the *action* a request asks for confers consequence, not its subject.
+    Reading/researching about 'checkout' is safe; buying something is not.
+    """
     low = (text or "").lower()
     if _IDENTITY.search(low):
         return ConsequenceLevel.CRITICAL
+    if _RESEARCH_FRAMING.search(low):
+        return ConsequenceLevel.NONE
     if re.search(r"\b(buy|purchase|order|pay|checkout|transfer|wire|delete|destroy|format)\b", low):
         return ConsequenceLevel.SIGNIFICANT
     if _EXTERNAL.search(low):
@@ -89,3 +100,20 @@ def shadow_consequences(action: ProposedAction, objective: str = "") -> list[str
     if action.expected and not action.reversible and int(action.consequence) >= int(ConsequenceLevel.SIGNIFICANT):
         shadows.append("not reversible at this consequence level")
     return shadows
+
+
+_COMMIT_SHADOW = re.compile(
+    r"\b(send/submit|charge|obligation|permanently remove|identity|account)\b", re.I)
+
+
+def escalate_for_shadows(level: int, shadows: list[str]) -> int:
+    """Raise a consequence estimate if a shadow signals an external effect that
+    the bare action level may miss (e.g. 'click' on an 'Apply' button).
+
+    Read-only research never escalates; commit-adjacent actions do. This is how
+    the harness stays aggressive about investigating while still gating real
+    submissions/purchases/deletions.
+    """
+    if any(_COMMIT_SHADOW.search(s or "") for s in shadows):
+        return max(int(level), int(ConsequenceLevel.SIGNIFICANT))
+    return int(level)

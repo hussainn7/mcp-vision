@@ -19,7 +19,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from mcp_vision.reasoning.budget import Budget, measure_progress, should_continue
-from mcp_vision.reasoning.consequence import autonomy_allowed, shadow_consequences
+from mcp_vision.reasoning.consequence import (
+    autonomy_allowed,
+    escalate_for_shadows,
+    level_for_action,
+    shadow_consequences,
+)
 from mcp_vision.reasoning.intent import analyze
 from mcp_vision.reasoning.memory import ingest_observation
 from mcp_vision.reasoning.model_routing import Meta, meta_reason_due, route_tier
@@ -35,6 +40,13 @@ from mcp_vision.reasoning.schemas import (
 )
 from mcp_vision.reasoning.strategies import classify, recovery_for
 from mcp_vision.reasoning.verify import verify_action, verify_state
+
+# Actions that only gather/produce information or prepare (never commit).
+# These stay aggressive under the autonomy gate; only a consequential *goal*
+# (SIGNIFICANT+) gates them so we don't quietly work toward an unauthorized
+# purchase/submission/etc.
+_READ_PREP_ACTIONS = frozenset(
+    {"search", "inspect", "list", "compare", "read", "draft"})
 
 
 class Executor(Protocol):
@@ -142,10 +154,20 @@ class ReasoningHarness:
                 continue
 
             proposed = decision.next
-            # Merge consequences and reason about shadows before any action.
-            proposed.consequence = ConsequenceLevel(
-                max(int(proposed.consequence), int(self.state.consequence_level)))
-            proposed.shadow = shadow_consequences(proposed, self.state.objective)
+            # Autonomy gating. Read/research & prep actions stay aggressive: they
+            # are how the harness investigates. They are gated only by a genuinely
+            # consequential *goal* (SIGNIFICANT+). Commit-adjacent actions are
+            # gated by their own level, the goal level, and shadow consequences.
+            own_level = max(int(proposed.consequence),
+                            int(level_for_action(proposed.action)))
+            goal_level = int(self.state.consequence_level)
+            if proposed.action in _READ_PREP_ACTIONS and goal_level < int(ConsequenceLevel.SIGNIFICANT):
+                final_level = own_level
+            else:
+                proposed.shadow = shadow_consequences(proposed, self.state.objective)
+                final_level = escalate_for_shadows(max(own_level, goal_level),
+                                                   proposed.shadow)
+            proposed.consequence = ConsequenceLevel(final_level)
             if not autonomy_allowed(proposed.consequence, gate=self.gate):
                 self.actions_not_taken.append(proposed.action)
                 self.progress(f"Pausing before {proposed.action} "

@@ -15,7 +15,10 @@ from mcp_vision.reasoning.schemas import AgentState, P_USER_ASSERTED
 
 _POLITE = re.compile(
     r"^\s*(?:please|can you|could you|would you|hey|hi|yo|help me(?: to)?|"
-    r"could you please|can we|imagine you'?re|pretend)\s*", re.I)
+    r"could you please|can we|imagine you'?re|pretend|"
+    r"i(?:\s+(?:really|kinda|kind of))?\s+wanna(?:\s+go)?|"
+    r"i'?d\s+like to|i\s+would\s+like to|i\s+want(?: to)?|"
+    r"i'?m\s+(?:looking|trying)\s+to|let'?s|go(?: ahead)? and)\s*", re.I)
 _PRICE = re.compile(r"\b(?:under|less than|around|about|at most|max|cheaper than|budget(?: of)?)\s*\$?(\d+(?:\.\d{1,2})?|\bk\b)", re.I)
 _PREF_EXPENSIVE = re.compile(r"\b(best|premium|high-?end|fastest|top-?tier)\b", re.I)
 _PREF_CHEAP = re.compile(r"\b(cheap|cheaper|cheapest|affordable|budget|inexpensive|decent)\b", re.I)
