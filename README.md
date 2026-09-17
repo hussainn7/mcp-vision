@@ -151,6 +151,15 @@ mcp-vision studio
 mcp-vision status
 ```
 
+## Reasoning harness
+
+`src/mcp_vision/reasoning/` is a general, runtime-agnostic decision-making layer
+(not a workflow system): it turns vague requests into a persistent loop of
+understand → assume defensibly → investigate → verify → re-evaluate → finish,
+while the runtimes keep ownership of reality and safety. The model owns
+judgment; the runtime owns real execution, permissions, and verification.
+See [docs/REASONING_HARNESS.md](docs/REASONING_HARNESS.md).
+
 ## License
 
 MIT

@@ -20,10 +20,10 @@ _EXTERNAL = re.compile(
 )
 _IDENTITY = re.compile(r"\b(password|ssn|identity|birth date)\b", re.I)
 # "why is checkout broken / fix X / figure out" is research, however payment-ish
-# the subject words look. Research/disgnosis is never itself a commit.
+# the subject words look. Research/diagnosis is never itself a commit.
 _RESEARCH_FRAMING = re.compile(
     r"\b(figure out|find out|why(?: is| does| do| did)|fix|repair|debug|diagnos|"
-    r"not working|broken|error|troubleshoot| investigate)\b", re.I)
+    r"not working|broken|error|troubleshoot|investigate)\b", re.I)
 
 
 def level_for_request(text: str) -> ConsequenceLevel:
