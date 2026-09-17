@@ -28,7 +28,8 @@ class TaskConstraints:
         if name in {'this', 'this field'}:
             target = (context.clicked_element or context.focused_element) if context else None
             name = target.name if target else '__unresolved__'
-        return cls(no_submit=forbidden(r'submit\w*'), no_send=forbidden(r'send\w*'),
+        form_fill = bool(re.search(r'\b(?:fill|full out|complete)\b.*\b(?:form|application)\b', text))
+        return cls(no_submit=form_fill or forbidden(r'submit\w*'), no_send=forbidden(r'send\w*'),
                    no_delete=forbidden(r'delet\w*'), factual='factual' in text or 'do not fabricate' in text,
                    show_only=bool(re.search(r'\b(just|only) show me\b', text)),
                    stay_on_page=forbidden(r'leave\w*') or 'stay on this page' in text,
@@ -39,6 +40,9 @@ class TaskConstraints:
             raise PermissionError('This mode only reads the interface.')
         if action not in {'fill', 'select', 'set_checked', 'upload', 'click', 'scroll'}:
             raise PermissionError('Unsupported task action.')
+        label = normalized(str(target.get('name') or '') + ' ' + str(target.get('input_type') or ''))
+        if action == 'click' and re.search(r'\b(submit|send application|apply now|finish application)\b', label):
+            raise PermissionError('Final submission is reserved for the user.')
         # Unknown click handlers can send, submit, delete, or navigate.
         if action == 'click' and (self.no_submit or self.no_send or self.no_delete or self.stay_on_page):
             raise PermissionError('This task forbids clicks with unknown side effects. Use a direct field operation.')

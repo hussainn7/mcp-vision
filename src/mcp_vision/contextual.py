@@ -40,7 +40,7 @@ def infer_capability(request: str) -> Capability:
         return "ask"
     if re.match(
         r"\s*(?:(?:please|can you|could you)\s+)*"
-        r"(fill|click|press|type|send|submit|book|buy|apply|change|delete|move|create|"
+        r"(fill|full out|complete|click|press|type|send|submit|book|buy|apply|change|delete|move|create|"
         r"export|download|open|organize|enable|disable|toggle|attach|upload|search|find|"
         r"look up|look for|navigate|go to|select|check|uncheck|set|write|paste|login|log in|"
         r"sign in|turn)\b",
@@ -58,6 +58,8 @@ def package_context(context: Context) -> dict:
     nearby = context.dom_context if context.source == "chrome" else context.accessibility_context
     data = {"target": target.model_dump(exclude_none=True) if target else {},
             "nearby": nearby, "selection": context.selected_text[:4000],
+            "pointer": context.cursor_position.model_dump() if context.cursor_position else {},
+            "viewport": context.viewport.model_dump() if context.viewport else {},
             "page": {"title": context.title, "url": context.url, "application": context.source_application}}
     from mcp_vision.context import _compact
     data = _compact(data)

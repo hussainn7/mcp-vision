@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
+from urllib.request import urlopen
 
 import click
 
@@ -29,6 +31,16 @@ def agent_cli() -> None:
 def cli() -> None:
     """mcp-vision — screen perception and actuation over MCP."""
     configure()
+
+
+def _contextual_ui_ready(port: int) -> bool:
+    """Return True only when the occupied port is our contextual runtime."""
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/api/status", timeout=.35) as response:
+            payload = json.load(response)
+        return response.status == 200 and payload.get("runtime") == "ready" and payload.get("contextual") is True
+    except Exception:
+        return False
 
 
 @cli.command()
@@ -94,10 +106,18 @@ def studio(port: int) -> None:
 @click.option("--cdp-endpoint", default=None, help="Existing Chrome debugging endpoint; enables file attachment.")
 def ui(port: int, provider: str | None, live_driver: str, cdp_endpoint: str | None) -> None:
     """Run the macOS contextual popup. Invoke it anywhere with Option-Space."""
+    if _contextual_ui_ready(port):
+        click.echo(f"MCP-Vision UI is already running at 127.0.0.1:{port}.")
+        return
     try:
         from mcp_vision.macos_ui import run_contextual_ui
         run_contextual_ui(port=port, provider=provider, live_driver=live_driver, cdp_endpoint=cdp_endpoint)
     except Exception as exc:
+        # A second launcher can race the preflight. Re-check before showing a
+        # fatal native alert; the existing healthy instance is the desired state.
+        if isinstance(exc, OSError) and _contextual_ui_ready(port):
+            click.echo(f"MCP-Vision UI is already running at 127.0.0.1:{port}.")
+            return
         import traceback
         from mcp_vision.paths import state_dir
         log_path = state_dir() / "ui-startup.log"

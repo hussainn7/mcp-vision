@@ -55,12 +55,14 @@ def route_request(request: str, mode: str) -> RequestRoute:
     # Explicit Act still uses the read-only mission for information gathering.
     # A request to send/book/buy must never be disguised as a lookup.
     text = request_text(request)
+    if re.fullmatch(r'(?:do|handle|solve|fix)\s+(?:something|anything)[?.!]*', text):
+        return RequestRoute('input', 'What would you like me to work on? Point at it or describe the outcome you want.', 'goal')
     from mcp_vision.plan import product_mention
     if mode == 'act' and re.match(r'(?:open|go to|navigate to)\s+', text):
         destination = re.sub(r'^(?:open|go to|navigate to)\s+', '', _PREFIX.sub('', request.strip()), flags=re.I).strip()
         if product_mention(destination) or re.fullmatch(r'https?://\S+', destination):
             return RequestRoute('browser_open', destination)
-    mutation = re.match(r'(send|submit|book|buy|delete|fill|create|write|attach|upload|change|click|open|navigate|go to)\b', text)
+    mutation = re.match(r'(send|submit|book|buy|delete|fill|full out|complete|create|write|attach|upload|change|click|open|navigate|go to)\b', text)
     if needs_browser(request) and not mutation:
         if re.fullmatch(r'(?:do\s+)?(?:some\s+)?research(?:\s+(?:for|on)\s+me)?[?.!]*', text):
             return RequestRoute('input', 'What topic would you like me to research?', 'topic')

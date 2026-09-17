@@ -58,3 +58,7 @@ def test_input_supports_standard_editing_without_system_focus_ring():
     assert '"copy:", "c"' in src and '"paste:", "v"' in src
     assert 'self.input.setFocusRingType_(AppKit.NSFocusRingTypeNone)' in src
     assert 'self.input.setBezeled_(False)' in src
+
+
+def test_popup_names_the_control_under_the_cursor():
+    assert 'under cursor:' in _source()

@@ -40,6 +40,14 @@ def test_prohibitions_are_executable():
     c.check('act', 'fill', {'name': 'Experience'}, value='2 years', source='Experience: 2 years')
 
 
+def test_form_filling_always_stops_before_final_submission():
+    constraints = TaskConstraints.parse('Complete this application')
+    assert constraints.no_submit
+    constraints.check('act', 'fill', {'name': 'Full name'}, value='Jane')
+    with pytest.raises(PermissionError, match='Final submission'):
+        TaskConstraints().check('act', 'click', {'name': 'Submit application', 'input_type': 'submit'})
+
+
 def test_only_this_field_is_resolved():
     c = TaskConstraints.parse('Only change this field.', Context(clicked_element=ContextElement(name='Email')))
     assert c.only_field == 'Email'

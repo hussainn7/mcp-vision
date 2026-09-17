@@ -440,7 +440,10 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 suffix = "Accessibility ready"
             else:
                 suffix = "Add /Applications/MCP-Vision.app in Accessibility, then toggle it on"
-            self.context_label.setStringValue_(f"Working with {where}" if context.source_application else "Ask a question. Find something. Get it done.")
+            target = context.focused_element
+            target_name = ((target.name or target.value)[:60] if target else '')
+            working = f"Working with {where}" + (f" · under cursor: {target_name}" if target_name else '')
+            self.context_label.setStringValue_(working if context.source_application else "Ask a question. Find something. Get it done.")
             self.status.setStringValue_("Ready · Desktop preview 0.3.1")
             self.input.setStringValue_("")
             self.result_heading.setStringValue_("Ready when you are")

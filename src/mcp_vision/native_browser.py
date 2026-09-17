@@ -6,6 +6,7 @@ import hashlib
 import json
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -230,6 +231,37 @@ class NativeBrowserRuntime(BrowserRuntime):
                 self._current.url = t["url"]
                 self._current.title = t["title"]
                 return
+
+    async def _adopt_new_tab(self, before_tabs: list[dict]) -> bool:
+        """Follow one tab created by the just-dispatched click."""
+        before_urls = Counter(row.get("url", "") for row in before_tabs)
+        for _ in range(5):
+            rows = await self._run(_osa_tabs)
+            remaining = before_urls.copy()
+            created = []
+            for row in rows:
+                url = row.get("url", "")
+                if remaining[url] > 0:
+                    remaining[url] -= 1
+                else:
+                    created.append(row)
+            if len(created) == 1:
+                row = created[0]
+                active_url = row.get("url", "")
+                if urlsplit(active_url).scheme not in {"http", "https"}:
+                    await asyncio.sleep(.25)
+                    continue
+                await self._run(_osa_activate, row["window"], row["tab"])
+                tab = _Tab(window=row["window"], tab=row["tab"], url=active_url,
+                           title=row.get("title", ""), key=uuid.uuid4().hex[:12])
+                self._tabs[tab.key] = tab
+                self._current = tab
+                self.page = _PageRef(self)
+                return True
+            if len(rows) <= len(before_tabs):
+                return False
+            await asyncio.sleep(.25)
+        return False
 
     async def _page_blob(self) -> tuple[str, str, str]:
         raw = await self._run(self._eval, "JSON.stringify({url: location.href, title: document.title, "

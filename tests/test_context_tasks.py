@@ -7,7 +7,7 @@ from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import Context
 from mcp_vision.execution import bind_context_backend
 from mcp_vision.guidance import overlay_script, resolve_target
-from mcp_vision.tasks import ContextTask, Step
+from mcp_vision.tasks import ContextTask, ModelPlanner, Step
 
 
 class Backend:
@@ -138,6 +138,30 @@ def test_wrong_page_stops_before_reasoning():
     assert result['state'] == 'input' and backend.actions == 0
 
 
+def test_intentional_link_click_can_continue_to_observed_external_origin():
+    class ExternalBackend(Backend):
+        async def snapshot(self):
+            self.observations += 1
+            if self.url == 'https://form.test/':
+                return BrowserSnapshot(snapshot_id=str(self.observations), url=self.url, title='Job',
+                    text='Apply externally', elements=[dict(index=0, role='button', name='Apply externally',
+                                                            href='https://jobs.example/apply', w=160, h=36)])
+            return BrowserSnapshot(snapshot_id=str(self.observations), url=self.url, title='Application',
+                text='Application form', elements=[])
+
+        async def click(self, sid, index):
+            self.actions += 1
+            self.url = 'https://jobs.example/apply'
+            return Receipt(status='unverified', action='click', executed=True, message='navigated')
+
+    backend = ExternalBackend()
+    steps = iter([Step(action='click', name='Apply externally', role='button'), Step(action='review')])
+    context = Context(source='chrome', url=backend.url, user_request='Open the internship application')
+    result = asyncio.run(ContextTask(context, backend=backend, planner=lambda _: next(steps)).run())
+    assert result['state'] == 'review'
+    assert result['verified'][0]['name'] == 'Apply externally'
+
+
 def test_source_selection_and_factual_fill(tmp_path):
     backend = Backend()
     context = Context(source='chrome', url=backend.url,
@@ -153,6 +177,33 @@ def test_source_selection_and_factual_fill(tmp_path):
                                      planner=lambda _: next(steps)).run())
     assert result['state'] == 'review' and backend.value == 'Jane Doe'
     assert 'Stopped before submission' in result['answer']
+
+
+def test_generic_form_requires_values_or_file_before_touching_ui(tmp_path):
+    backend = Backend()
+    context = Context(source='chrome', url=backend.url, user_request='Fill out this form')
+    missing = asyncio.run(ContextTask(context, backend=backend, planner=lambda _: Step(action='review')).run())
+    assert missing['state'] == 'input' and 'attach' in missing['answer'].lower()
+    assert backend.observations == backend.actions == 0
+
+    source = tmp_path / 'resume.txt'
+    source.write_text('Jane Doe\nEngineer')
+    steps = iter([Step(action='fill', name='Name', role='textbox', value='Jane Doe', evidence='Jane Doe'),
+                  Step(action='review')])
+    completed = asyncio.run(ContextTask(context, backend=backend, source_path=str(source),
+                                        planner=lambda _: next(steps)).run())
+    assert completed['state'] == 'review' and backend.value == 'Jane Doe'
+    assert 'Stopped before submission' in completed['answer']
+
+
+def test_model_planner_accepts_wrapped_valid_json(monkeypatch):
+    def chat(_messages, tools=None):
+        return {'content': 'Here is the next action:\n'
+                '{"action":"fill","name":"Name","role":"textbox",'
+                '"value":"Jane","confidence":0.9}'}
+    monkeypatch.setattr('backends.get_chat', lambda _provider: chat)
+    step = ModelPlanner('local')({'observation': {'elements': []}})
+    assert step.action == 'fill' and step.name == 'Name' and step.value == 'Jane'
 
 
 def test_review_reports_empty_required_fields():
@@ -250,13 +301,45 @@ def test_hotkey_chrome_binds_captured_title_to_structured_browser():
     assert result is backend
 
 
-def test_bad_click_postcondition_gets_bounded_repair_before_execution():
-    backend = Backend()
-    calls = []
-    def planner(payload):
-        calls.append(payload['feedback'])
-        return Step(action='click', name='Name', expected_text='Form')
-    result = asyncio.run(task(backend, planner).run())
-    assert result['state'] == 'input' and len(calls) == 3
-    assert 'NOT currently' in calls[1]
-    assert backend.actions == 0
+def test_click_can_verify_by_navigation_when_label_was_already_visible():
+    class ClickBackend(Backend):
+        async def snapshot(self):
+            self.observations += 1
+            return BrowserSnapshot(snapshot_id=str(self.observations), url=self.url, title='Jobs',
+                text='Software Engineering Intern', elements=[
+                        dict(index=0, role='button', name='Software Engineering Intern', w=220, h=36)])
+
+        async def click(self, sid, index):
+            self.actions += 1
+            self.url = 'https://form.test/jobs/123'
+            return Receipt(status='unverified', action='click', executed=True, message='dispatched')
+
+    backend = ClickBackend()
+    steps = iter([
+        Step(action='click', name='Software Engineering Intern', role='button',
+             expected_text='Software Engineering Intern'),
+        Step(action='review'),
+    ])
+    context = Context(source='chrome', url=backend.url, user_request='Open this internship')
+    result = asyncio.run(ContextTask(context, backend=backend, planner=lambda _: next(steps)).run())
+    assert result['state'] == 'review'
+    assert result['verified'][0]['action'] == 'click'
+    assert backend.actions == 1
+
+
+def test_click_can_verify_by_newly_exposed_control_without_new_text_requirement():
+    before = BrowserSnapshot(snapshot_id='1', url='https://form.test/', title='Form', text='Open',
+        elements=[dict(index=0, role='button', name='Open')])
+    after = BrowserSnapshot(snapshot_id='2', url='https://form.test/', title='Form', text='Open',
+        elements=[dict(index=0, role='button', name='Open'), dict(index=1, role='dialog', name='Details')])
+    runner = ContextTask(Context(source='chrome', url=before.url, user_request='Open this'),
+                         backend=Backend(), planner=lambda _: Step(action='review'))
+    assert runner.verify(Step(action='click', name='Open', role='button'), before.elements[0], before, after)
+
+
+def test_click_still_rejects_no_observed_change():
+    snap = BrowserSnapshot(snapshot_id='1', url='https://form.test/', title='Form', text='Open',
+        elements=[dict(index=0, role='button', name='Open')])
+    runner = ContextTask(Context(source='chrome', url=snap.url, user_request='Open this'),
+                         backend=Backend(), planner=lambda _: Step(action='review'))
+    assert not runner.verify(Step(action='click', name='Open', role='button'), snap.elements[0], snap, snap)

@@ -56,6 +56,12 @@ def test_vague_research_request_asks_for_topic():
     assert route.kind == 'input' and route.missing == 'topic'
 
 
+def test_vague_action_requests_clarify_instead_of_guessing():
+    for prompt in ('do something', 'solve anything', 'handle something', 'fix something'):
+        route = route_request(prompt, infer_capability(prompt))
+        assert route.kind == 'input' and route.missing == 'goal'
+
+
 def test_search_is_executed_in_explicit_ask(monkeypatch):
     import mcp_vision.ask
     monkeypatch.setattr('mcp_vision.readiness.ensure_model_ready', lambda _: None)

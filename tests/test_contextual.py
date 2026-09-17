@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from mcp_vision.context import Context, ContextBounds, ContextElement
-from mcp_vision.contextual import _dedupe_answer, answer_context, infer_capability
+from mcp_vision.context import Context, ContextBounds, ContextElement, Point
+from mcp_vision.contextual import _dedupe_answer, answer_context, infer_capability, package_context
 from mcp_vision.execution import ExecutionBackend, create_execution_backend
 
 
@@ -29,6 +29,18 @@ def test_capability_is_inferred_without_forcing_a_choice():
     assert infer_capability("Fill this application but don't submit") == "act"
     assert infer_capability("Show me how to export") == "guide"
     assert infer_capability("Turn this off") == "act"
+    assert infer_capability("Complete this application") == "act"
+    assert infer_capability("Full out this form") == "act"
+
+
+def test_packaged_context_marks_the_exact_cursor_target():
+    context = Context(
+        source='macos', source_application='Safari', cursor_position=Point(x=320, y=180),
+        focused_element=ContextElement(role='AXTextField', name='Email address'),
+    )
+    packaged = package_context(context)
+    assert packaged['target']['name'] == 'Email address'
+    assert packaged['pointer'] == {'x': 320.0, 'y': 180.0}
 
 
 def test_context_only_answer_always_returns_in_popup_shape():
