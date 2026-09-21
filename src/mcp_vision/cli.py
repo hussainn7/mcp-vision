@@ -75,6 +75,24 @@ def demo() -> None:
     sys.exit(0 if asyncio.run(run_demo()) else 1)
 
 
+@cli.command("bench-fastpath")
+@click.option("--iterations", type=click.IntRange(1, 20), default=3, show_default=True)
+@click.option("--headed", is_flag=True, help="Show the disposable browser while tasks run.")
+@click.option("--output", type=click.Path(path_type=Path), help="Optional JSON report path.")
+def bench_fastpath(iterations: int, headed: bool, output: Path | None) -> None:
+    """Compare stepwise planner handoffs with rules FastPath on local dynamic tasks."""
+    import asyncio
+    from mcp_vision.benchmarks import run_browser_benchmark
+    result = asyncio.run(run_browser_benchmark(iterations=iterations, headed=headed))
+    rendered = json.dumps(result, indent=2)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered + "\n")
+        click.echo(str(output))
+    else:
+        click.echo(rendered)
+
+
 @cli.command()
 @click.argument("goal")
 @click.option("--url", default="", help="Starting HTTP(S) page.")

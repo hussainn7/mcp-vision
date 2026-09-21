@@ -146,6 +146,7 @@ Buy / send / book still need Allow once.
 ```bash
 mcp-vision connect
 mcp-vision demo
+mcp-vision bench-fastpath --iterations 10
 mcp-vision probe --live
 mcp-vision studio
 mcp-vision status
@@ -166,6 +167,11 @@ The bounded runtime path exposes immutable UI states, state-owned `@e` element
 references, compiled action candidates, optional fast-policy selection, and
 single-action transactions with successor diffs and semantic postconditions.
 See [docs/STATE_RUNTIME.md](docs/STATE_RUNTIME.md).
+
+The bounded FastPath can execute a routine multi-step subgoal with stale/no-op/
+loop budgets and evidence-based completion. Reproduce the local dynamic-browser
+comparison in [docs/BENCHMARKS.md](docs/BENCHMARKS.md); the checked-in report is
+deliberately explicit about what was and was not measured.
 
 ## License
 
