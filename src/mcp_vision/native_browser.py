@@ -411,7 +411,8 @@ class NativeBrowserRuntime(BrowserRuntime):
                 return Receipt(status="unverified", action="click", executed=True,
                                message="Click dispatched. Check an explicit postcondition before claiming completion.",
                                evidence={"target": rec.get("name"), "url": self._current.url if self._current else "",
-                                         "driver": "native"})
+                                         "driver": "native", "execution_path": "native_browser_dom",
+                                         "background": False})
             except ValueError as e:
                 return Receipt(status="stale", action="click", message=redact(str(e)))
             except Exception as e:
@@ -453,7 +454,8 @@ class NativeBrowserRuntime(BrowserRuntime):
                 matches = out == text
                 return Receipt(status="verified" if matches else "unverified", action="fill", executed=True,
                                message="Field value read back." if matches else "Field did not retain the expected value.",
-                               evidence={"value_matches": matches, "characters": len(text), "driver": "native"})
+                               evidence={"value_matches": matches, "characters": len(text), "driver": "native",
+                                         "execution_path": "native_browser_dom", "background": False})
             except ValueError as e:
                 return Receipt(status="stale", action="fill", message=redact(str(e)))
             except Exception as e:
@@ -482,7 +484,8 @@ class NativeBrowserRuntime(BrowserRuntime):
                 matches = out == value
                 return Receipt(status="verified" if matches else "unverified", action="select", executed=True,
                                message="Selected value read back." if matches else "Control did not retain the selected value.",
-                               evidence={"value_matches": matches, "selected_value": out, "driver": "native"})
+                               evidence={"value_matches": matches, "selected_value": out, "driver": "native",
+                                         "execution_path": "native_browser_dom", "background": False})
             except ValueError as e:
                 return Receipt(status="stale", action="select", message=redact(str(e)))
             except Exception as e:
@@ -510,7 +513,8 @@ class NativeBrowserRuntime(BrowserRuntime):
                 matches = actual is checked
                 return Receipt(status="verified" if matches else "unverified", action="set_checked", executed=True,
                                message="Checked state read back." if matches else "Control did not retain the requested checked state.",
-                               evidence={"checked_matches": matches, "checked": actual, "driver": "native"})
+                               evidence={"checked_matches": matches, "checked": actual, "driver": "native",
+                                         "execution_path": "native_browser_dom", "background": False})
             except ValueError as e:
                 return Receipt(status="stale", action="set_checked", message=redact(str(e)))
             except Exception as e:
@@ -540,7 +544,8 @@ class NativeBrowserRuntime(BrowserRuntime):
                 changed = position["before"] != position["after"]
                 return Receipt(status="verified" if changed else "unverified", action="scroll", executed=True,
                                message="Scroll position changed." if changed else "Scroll reached a page boundary.",
-                               evidence={**position, "requested_delta_y": delta_y, "driver": "native"})
+                               evidence={**position, "requested_delta_y": delta_y, "driver": "native",
+                                         "execution_path": "native_browser_dom", "background": False})
             except ValueError as e:
                 return Receipt(status="stale", action="scroll", message=redact(str(e)))
             except Exception as e:

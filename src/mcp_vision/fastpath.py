@@ -93,6 +93,8 @@ class FastPath:
         steps: list[FastPathStep] = []
         repeats: dict[tuple[Any, ...], int] = {}
         retries = noops = 0
+        self.runtime.record_event("fastpath_start", subgoal=task.subgoal,
+                                  completion=task.completion.model_dump(mode="json"))
         initial = state = await self.runtime.observe()
         metrics.observations += 1
         verification = self.verifier.verify(state, task.completion, before=initial)
@@ -139,6 +141,11 @@ class FastPath:
 
             receipt = await self.runtime.execute(state.state_id, candidate.id, **arguments)
             metrics.actions += int(receipt.action.executed is not False)
+            if receipt.action.executed is not False:
+                if receipt.action.evidence.get("background") is True:
+                    metrics.background_actions += 1
+                elif receipt.action.evidence.get("background") is False:
+                    metrics.foreground_actions += 1
             step = self._step(number, state, decision, decision_ms, receipt.status,
                               receipt.action.message, receipt)
             steps.append(step)
@@ -223,12 +230,15 @@ class FastPath:
                             policy=decision.provider, confidence=decision.confidence,
                             decision_ms=decision_ms, status=status, reason=reason, transaction=transaction)
 
-    @staticmethod
-    def _finish(status: FastPathStatus, task: FastPathTask, reason: str, state: UIState,
+    def _finish(self, status: FastPathStatus, task: FastPathTask, reason: str, state: UIState,
                 verification: VerificationResult | None, steps: list[FastPathStep],
                 metrics: FastPathMetrics, started: float) -> FastPathResult:
         metrics.total_ms = (time.perf_counter() - started) * 1000
-        return FastPathResult(status=status, subgoal=task.subgoal, reason=reason,
-                              verification=verification, final_state=state, steps=tuple(steps), metrics=metrics,
-                              subgoal_complete=status is FastPathStatus.VERIFIED,
-                              task_complete=False)
+        result = FastPathResult(status=status, subgoal=task.subgoal, reason=reason,
+                                verification=verification, final_state=state, steps=tuple(steps), metrics=metrics,
+                                subgoal_complete=status is FastPathStatus.VERIFIED,
+                                task_complete=False)
+        self.runtime.record_event("fastpath_end", subgoal=task.subgoal, status=status.value,
+                                  reason=reason, steps=len(steps), metrics=metrics.model_dump(),
+                                  verified=bool(verification and verification.passed))
+        return result

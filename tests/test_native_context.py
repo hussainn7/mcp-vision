@@ -1,4 +1,8 @@
+import asyncio
+import sys
 from types import SimpleNamespace
+
+import pytest
 
 from mcp_vision.native_context import describe_ax, nearby_ax
 
@@ -38,6 +42,7 @@ def test_native_hierarchy_is_bounded_and_retains_handles():
     records, handles = nearby_ax(AX, root, 18)
     assert len(records) == len(handles) == 18
     assert handles[1]['AXTitle'] == records[1]['name']
+    assert records[1]['identity']['accessibility'] == 'root/0'
 
 
 def test_nameless_ax_control_gets_usable_label():
@@ -82,3 +87,57 @@ def test_bare_departure_city_continues_flight_search():
     context = submission_context(None, 'Atlanta', 'find flights to SF next week')
     assert 'from Atlanta' in context.user_request
     assert ContextTask(context).route.kind == 'browser'
+
+
+class ActionAX(AX):
+    @staticmethod
+    def AXUIElementPerformAction(element, action):
+        element['performed'] = action
+        return 0
+
+    @staticmethod
+    def AXUIElementSetAttributeValue(element, key, value):
+        element[key] = value
+        return 0
+
+
+def native_backend():
+    from mcp_vision.context import Context
+    from mcp_vision.native_context import NativeContextBackend
+    context = Context(source='macos', source_application='Fixture', title='Window',
+                      accessibility_context={'pid': 42})
+    backend = NativeContextBackend(context, allow_writes=True)
+    target = element('Export', AXActions=['AXPress'])
+    backend.sid = 's1'
+    backend.handles = {0: target}
+    backend.records = {0: {'index': 0, 'name': 'Export', 'ax_role': 'AXButton', 'value': '',
+                           'checked': None, 'x': 200, 'y': 100, 'w': 80, 'h': 24}}
+    return backend, target
+
+
+def test_native_press_prefers_background_ax_without_activation(monkeypatch):
+    backend, target = native_backend()
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
+    monkeypatch.setattr(backend, '_activate', lambda: pytest.fail('background AXPress must not activate app'))
+    receipt = asyncio.run(backend.click('s1', 0))
+    assert receipt.executed and receipt.evidence['execution_path'] == 'ax_background'
+    assert receipt.evidence['background'] is True and target['performed'] == 'AXPress'
+
+
+def test_native_value_write_prefers_background_ax_and_reads_back(monkeypatch):
+    backend, target = native_backend()
+    target['AXRole'] = 'AXTextField'
+    backend.records[0].update(name='Export', ax_role='AXTextField')
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
+    monkeypatch.setattr(backend, '_activate', lambda: pytest.fail('background AXValue must not activate app'))
+    receipt = asyncio.run(backend.fill('s1', 0, 'Draft'))
+    assert receipt.status == 'verified' and target['AXValue'] == 'Draft'
+    assert receipt.evidence['execution_path'] == 'ax_background'
+
+
+def test_native_action_rejects_moved_ax_target(monkeypatch):
+    backend, target = native_backend()
+    target['AXPosition'] = SimpleNamespace(x=250, y=100)
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
+    receipt = asyncio.run(backend.click('s1', 0))
+    assert receipt.status == 'stale' and receipt.executed is False

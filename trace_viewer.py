@@ -22,6 +22,7 @@ COLORS = {
     "approval": "#fb923c",
     "observation": "#22d3ee", "candidate": "#a78bfa",
     "transaction": "#2dd4bf", "state_diff": "#facc15", "postcondition": "#4ade80",
+    "fastpath_start": "#38bdf8", "fastpath_end": "#818cf8",
 }
 FALLBACK = "#94a3b8"
 
@@ -102,6 +103,10 @@ def render(events, title=None):
             label = f"diff · {e.get('before_state_id', '?')} → {e.get('after_state_id', '?')}"
         elif typ == "postcondition":
             label = f"assert · {e.get('kind', '?')}"
+        elif typ == "fastpath_start":
+            label = f"fastpath · {e.get('subgoal', '?')}"
+        elif typ == "fastpath_end":
+            label = f"fastpath · {e.get('status', '?')}"
         dur_txt = f"{dur_ms:.0f} ms" if dur_ms else ""
 
         detail = json.dumps({k: v for k, v in e.items() if k not in ("run_id",)},

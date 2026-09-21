@@ -60,6 +60,10 @@ class TransactionRuntime:
     def _event(self, event_type: str, **fields: Any) -> None:
         self._events.append({"ts": round(time.time(), 4), "type": event_type, **fields})
 
+    def record_event(self, event_type: str, **fields: Any) -> None:
+        """Append a bounded structured event; intended for orchestration layers."""
+        self._event(event_type, **fields)
+
     def events(self, limit: int = 50) -> list[dict[str, Any]]:
         if not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200")
@@ -134,7 +138,10 @@ class TransactionRuntime:
             )
             self._event("transaction", transaction_id=transaction_id, state_id=state_id,
                         candidate_id=candidate.id, action=receipt.action, status=status,
-                        executed=receipt.executed, dur_ms=round(result.duration_ms, 1))
+                        executed=receipt.executed,
+                        execution_path=receipt.evidence.get("execution_path"),
+                        background=receipt.evidence.get("background"),
+                        dur_ms=round(result.duration_ms, 1))
             if difference:
                 self._event("state_diff", before_state_id=difference.before_state_id,
                             after_state_id=difference.after_state_id, root_changed=difference.root_changed,

@@ -170,7 +170,7 @@ class BrowserRuntime:
                 self._check_url(self.page.url)
                 return Receipt(status="verified", action="navigate", executed=True,
                                message="Navigation observed; inspect the page before acting.",
-                               evidence={"url": self.page.url})
+                               evidence={"url": self.page.url, "execution_path": "dom", "background": True})
             except Exception as e:
                 return Receipt(status="error", action="navigate", executed=executed, message=redact(str(e)))
 
@@ -260,7 +260,8 @@ class BrowserRuntime:
                 executed = True
                 return Receipt(status="unverified", action="click", executed=True,
                     message="Click dispatched. Check an explicit postcondition before claiming completion.",
-                    evidence={"target": target.record["name"], "url": self.page.url})
+                    evidence={"target": target.record["name"], "url": self.page.url,
+                              "execution_path": "dom", "background": True})
             except ValueError as e:
                 return Receipt(status="stale", action="click", message=redact(str(e)))
             except Exception as e:
@@ -285,7 +286,8 @@ class BrowserRuntime:
                 matches = actual == value
                 return Receipt(status="verified" if matches else "unverified", action="select", executed=True,
                     message="Selected value read back." if matches else "Control did not retain the selected value.",
-                    evidence={"value_matches": matches, "selected_value": actual})
+                    evidence={"value_matches": matches, "selected_value": actual,
+                              "execution_path": "dom", "background": True})
             except ValueError as e:
                 return Receipt(status="stale", action="select", message=redact(str(e)))
             except Exception as e:
@@ -311,7 +313,8 @@ class BrowserRuntime:
                 matches = actual is checked
                 return Receipt(status="verified" if matches else "unverified", action="set_checked", executed=True,
                     message="Checked state read back." if matches else "Control did not retain the requested checked state.",
-                    evidence={"checked_matches": matches, "checked": actual})
+                    evidence={"checked_matches": matches, "checked": actual,
+                              "execution_path": "dom", "background": True})
             except ValueError as e:
                 return Receipt(status="stale", action="set_checked", message=redact(str(e)))
             except Exception as e:
@@ -349,6 +352,7 @@ class BrowserRuntime:
                 return Receipt(status="verified" if matches else "unverified", action="upload", executed=True,
                     message="Selected file read back." if matches else "File input did not retain the selected file.",
                     evidence={"file_matches": matches, "file_name": file.name,
+                              "execution_path": "dom", "background": True,
                               "bytes": uploaded[0]["size"] if uploaded else None})
             except ValueError as e:
                 return Receipt(status="stale", action="upload", executed=executed, message=redact(str(e)))
@@ -376,6 +380,7 @@ class BrowserRuntime:
                 return Receipt(status="verified" if changed else "unverified", action="scroll", executed=True,
                     message="Scroll position changed." if changed else "Scroll reached a page boundary.",
                     evidence={"before_y": position["before"], "after_y": position["after"],
+                              "execution_path": "dom", "background": True,
                               "requested_delta_y": delta_y})
             except ValueError as e:
                 return Receipt(status="stale", action="scroll", executed=executed, message=redact(str(e)))
@@ -403,7 +408,8 @@ class BrowserRuntime:
                 matches = actual == text
                 return Receipt(status="verified" if matches else "unverified", action="fill", executed=True,
                     message="Field value read back." if matches else "Field did not retain the expected value.",
-                    evidence={"value_matches": matches, "characters": len(text)})
+                    evidence={"value_matches": matches, "characters": len(text),
+                              "execution_path": "dom", "background": True})
             except ValueError as e:
                 return Receipt(status="stale", action="fill", message=redact(str(e)))
             except Exception as e:

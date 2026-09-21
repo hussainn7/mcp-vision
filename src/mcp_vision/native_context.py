@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import ContextBounds, ContextElement
+from mcp_vision.execution_ladder import AttemptOutcome, ExecutionMethod, ExecutionTrace
 from mcp_vision.redaction import redact
 
 
@@ -52,11 +53,11 @@ def describe_ax(api, element):
 
 def nearby_ax(api, root, limit=60):
     from mcp_vision.macos_ui import _ax_copy
-    queue = [(root, 0)] if root else []
+    queue = [(root, 0, "root")] if root else []
     records, handles = [], {}
     visited = 0
     while queue and visited < 180 and len(records) < limit:
-        element, depth = queue.pop(0)
+        element, depth, path = queue.pop(0)
         visited += 1
         if _ax_copy(api, element, 'AXHidden') is True:
             continue
@@ -71,10 +72,12 @@ def nearby_ax(api, root, limit=60):
                 'value': desc.value,
                 'checked': None if checked is None else checked == 'True',
                 'x': box.x, 'y': box.y, 'w': box.width, 'h': box.height,
+                'identity': {'accessibility': path}, 'ax_ref': path,
             })
             handles[index] = element
         if depth < 5:
-            queue.extend((child, depth + 1) for child in (_ax_copy(api, element, 'AXChildren') or [])[:60])
+            queue.extend((child, depth + 1, f"{path}/{offset}")
+                         for offset, child in enumerate((_ax_copy(api, element, 'AXChildren') or [])[:60]))
     return records, handles
 
 
@@ -84,6 +87,7 @@ class NativeContextBackend:
         self.indicator = indicator
         self.allow_writes = allow_writes
         self.handles = {}
+        self.records = {}
         self.sid = ''
 
     def _pid(self) -> int:
@@ -97,11 +101,31 @@ class NativeContextBackend:
         app = NSRunningApplication.runningApplicationWithProcessIdentifier_(self._pid())
         if app:
             app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+            return True
+        return False
 
     def _element(self, snapshot_id, index):
         if snapshot_id != self.sid or index not in self.handles:
             raise LookupError('stale')
         return self.handles[index]
+
+    def _fresh_element(self, snapshot_id, index, api):
+        element = self._element(snapshot_id, index)
+        original = self.records.get(index)
+        fresh = describe_ax(api, element)
+        if not original or fresh.role != original.get('ax_role') or fresh.name != original.get('name'):
+            raise LookupError('stale')
+        box = fresh.bounds
+        if not box or any(round(value) != round(original[key]) for value, key in (
+            (box.x, 'x'), (box.y, 'y'), (box.width, 'w'), (box.height, 'h'),
+        )):
+            raise LookupError('stale')
+        if fresh.value != str(original.get('value') or ''):
+            raise LookupError('stale')
+        checked = fresh.attributes.get('checked')
+        if checked is not None and (checked == 'True') is not original.get('checked'):
+            raise LookupError('stale')
+        return element
 
     def _blocked(self, action, message='Native writes are disabled.'):
         return Receipt(status='blocked', action=action, message=message, executed=False)
@@ -120,10 +144,44 @@ class NativeContextBackend:
         if title:
             self.context = self.context.model_copy(update={'title': title})
         records, self.handles = nearby_ax(AX, window or app)
+        self.records = {record['index']: record for record in records}
         self.sid = uuid4().hex
         return BrowserSnapshot(snapshot_id=self.sid, root_id=f"macos-pid-{self._pid()}", url='', title=title,
                                text='\n'.join(e['name'] + ' ' + str(e.get('value') or '') for e in records),
-                               elements=records, source='macos-accessibility')
+                               elements=records, source='macos-accessibility', identity={
+                                   'pid': self._pid(),
+                                   'application': self.context.source_application,
+                                   'window_title': title,
+                               })
+
+    async def find(self, *, role='', name='', value=''):
+        """Return semantic native matches from one fresh window-scoped observation."""
+        snapshot = await self.snapshot()
+        matches = [record for record in snapshot.elements
+                   if (not role or record.get('role') == role)
+                   and (not name or name.casefold() in str(record.get('name') or '').casefold())
+                   and (not value or value.casefold() in str(record.get('value') or '').casefold())]
+        return {'state_id': snapshot.snapshot_id, 'root_id': snapshot.root_id, 'matches': matches}
+
+    async def wait_for(self, *, role='', name='', value='', gone=False, timeout_ms=3000):
+        """Wait for an AX predicate by re-resolving the bound window; no input is delivered."""
+        import asyncio
+        import time
+        if not 0 <= timeout_ms <= 5000:
+            raise ValueError('timeout_ms must be between 0 and 5000')
+        deadline = time.monotonic() + timeout_ms / 1000
+        last = None
+        while True:
+            last = await self.find(role=role, name=name, value=value)
+            satisfied = not last['matches'] if gone else bool(last['matches'])
+            if satisfied or time.monotonic() >= deadline:
+                return {**last, 'satisfied': satisfied, 'found': bool(last['matches']),
+                        'gone': gone, 'timed_out': not satisfied}
+            await asyncio.sleep(0.05)
+
+    async def settle(self, operation=''):
+        import asyncio
+        await asyncio.sleep(0.05)
 
     async def highlight(self, snapshot_id, index, label='Next step', duration=8000):
         if snapshot_id != self.sid or index not in self.handles or not self.indicator:
@@ -147,27 +205,47 @@ class NativeContextBackend:
         if not self.allow_writes:
             return self._blocked('click')
         try:
-            element = self._element(snapshot_id, index)
+            import ApplicationServices as AX
+            element = self._fresh_element(snapshot_id, index, AX)
         except LookupError:
             return Receipt(status='stale', action='click', message='Target is no longer available.', executed=False)
         try:
-            import ApplicationServices as AX
             from mcp_vision.macos_ui import _ax_copy
-            self._activate()
+            trace = ExecutionTrace()
             actions = [str(a) for a in (_ax_copy(AX, element, 'AXActions') or [])]
             if 'AXPress' in actions or not actions:
                 err = AX.AXUIElementPerformAction(element, 'AXPress')
                 if err == 0:
+                    trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.UNKNOWN, background=True,
+                              detail='AXPress dispatched without activating the application')
                     return Receipt(status='unverified', action='click', executed=True,
-                                   message='Clicked via Accessibility. Re-observe before claiming success.')
+                                   message='Pressed via background Accessibility; verify the successor state.',
+                                   evidence=trace.evidence())
+                trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
+                          detail=f'AXPress returned {err}')
+            self._activate()
+            if 'AXPress' in actions or not actions:
+                err = AX.AXUIElementPerformAction(element, 'AXPress')
+                if err == 0:
+                    trace.add(ExecutionMethod.AX_FOREGROUND, AttemptOutcome.UNKNOWN, background=False,
+                              detail='AXPress dispatched after foreground activation')
+                    return Receipt(status='unverified', action='click', executed=True,
+                                   message='Pressed via foreground Accessibility; verify the successor state.',
+                                   evidence=trace.evidence())
+                trace.add(ExecutionMethod.AX_FOREGROUND, AttemptOutcome.DIDNT, background=False,
+                          detail=f'AXPress returned {err}')
             desc = describe_ax(AX, element)
             box = desc.bounds
             if not box:
-                return Receipt(status='error', action='click', message='No bounds for native click.', executed=False)
+                return Receipt(status='error', action='click', message='No bounds for native click.', executed=False,
+                               evidence=trace.evidence())
             from mcp_vision.core.actuate import get_actuator
             get_actuator().click(int(box.x + box.width / 2), int(box.y + box.height / 2))
+            trace.add(ExecutionMethod.FOREGROUND_POINTER, AttemptOutcome.UNKNOWN, background=False,
+                      detail='Pointer fallback dispatched at fresh AX bounds')
             return Receipt(status='unverified', action='click', executed=True,
-                           message='Clicked via pointer. Re-observe before claiming success.')
+                           message='Clicked via foreground pointer fallback; verify the successor state.',
+                           evidence=trace.evidence())
         except Exception as exc:
             return Receipt(status='error', action='click', message=redact(str(exc)), executed=None)
 
@@ -175,22 +253,62 @@ class NativeContextBackend:
         if not self.allow_writes:
             return self._blocked('fill')
         try:
-            element = self._element(snapshot_id, index)
+            import ApplicationServices as AX
+            element = self._fresh_element(snapshot_id, index, AX)
         except LookupError:
             return Receipt(status='stale', action='fill', message='Target is no longer available.', executed=False)
         try:
-            import ApplicationServices as AX
-            self._activate()
+            trace = ExecutionTrace()
             AX.AXUIElementSetAttributeValue(element, 'AXFocused', True)
             err = AX.AXUIElementSetAttributeValue(element, 'AXValue', str(text))
-            if err != 0:
-                from mcp_vision.core.actuate import get_actuator
-                get_actuator().type_text(str(text), press_enter=False)
-            fresh = describe_ax(AX, element)
-            matches = (fresh.value or '') == str(text)
-            return Receipt(status='verified' if matches else 'unverified', action='fill', executed=True,
-                           message='Filled native field.' if matches else 'Fill dispatched; value did not match yet.',
-                           evidence={'value': fresh.value})
+            if err == 0:
+                fresh = describe_ax(AX, element)
+                matches = (fresh.value or '') == str(text)
+                trace.add(ExecutionMethod.AX_BACKGROUND,
+                          AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
+                          background=True, detail='AXValue write', evidence={'value_matches': matches})
+                return Receipt(status='verified' if matches else 'unverified', action='fill', executed=True,
+                               message='Filled via background Accessibility.' if matches
+                               else 'Background AXValue dispatched; read-back did not match.',
+                               evidence={**trace.evidence(), 'value': fresh.value})
+            trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
+                      detail=f'AXValue returned {err}')
+            try:
+                from mcp_vision.macos_input import targeted_replace_text
+                targeted_replace_text(self._pid(), str(text))
+                fresh = describe_ax(AX, element)
+                matches = (fresh.value or '') == str(text)
+                trace.add(ExecutionMethod.PID_KEYBOARD,
+                          AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
+                          background=True, detail='PID-targeted replace text', evidence={'value_matches': matches})
+                return Receipt(status='verified' if matches else 'unverified', action='fill', executed=True,
+                               message='Filled via PID-targeted keyboard.' if matches
+                               else 'PID-targeted input dispatched; read-back did not match.',
+                               evidence={**trace.evidence(), 'value': fresh.value})
+            except Exception as targeted_error:
+                trace.add(ExecutionMethod.PID_KEYBOARD, AttemptOutcome.DIDNT, background=True,
+                          detail=type(targeted_error).__name__)
+            self._activate()
+            err = AX.AXUIElementSetAttributeValue(element, 'AXValue', str(text))
+            if err == 0:
+                fresh = describe_ax(AX, element)
+                matches = (fresh.value or '') == str(text)
+                trace.add(ExecutionMethod.AX_FOREGROUND,
+                          AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
+                          background=False, detail='AXValue after foreground activation')
+                return Receipt(status='verified' if matches else 'unverified', action='fill', executed=True,
+                               message='Filled via foreground Accessibility.' if matches
+                               else 'Foreground AXValue dispatched; read-back did not match.',
+                               evidence={**trace.evidence(), 'value': fresh.value})
+            trace.add(ExecutionMethod.AX_FOREGROUND, AttemptOutcome.DIDNT, background=False,
+                      detail=f'AXValue returned {err}')
+            from mcp_vision.core.actuate import get_actuator
+            get_actuator().type_text(str(text), press_enter=False)
+            trace.add(ExecutionMethod.FOREGROUND_KEYBOARD, AttemptOutcome.UNKNOWN, background=False,
+                      detail='Global keyboard fallback dispatched')
+            return Receipt(status='unverified', action='fill', executed=True,
+                           message='Foreground keyboard input dispatched; re-observe before retrying.',
+                           evidence=trace.evidence())
         except Exception as exc:
             return Receipt(status='error', action='fill', message=redact(str(exc)), executed=None)
 
@@ -206,22 +324,34 @@ class NativeContextBackend:
         if not self.allow_writes:
             return self._blocked('set_checked')
         try:
-            element = self._element(snapshot_id, index)
+            import ApplicationServices as AX
+            element = self._fresh_element(snapshot_id, index, AX)
         except LookupError:
             return Receipt(status='stale', action='set_checked', message='Target is no longer available.', executed=False)
         try:
-            import ApplicationServices as AX
-            self._activate()
+            trace = ExecutionTrace()
             current = describe_ax(AX, element).attributes.get('checked') == 'True'
             if current is bool(checked):
                 return Receipt(status='verified', action='set_checked', executed=True,
-                               message='Checkbox already in the requested state.', evidence={'checked': current})
+                               message='Checkbox already in the requested state.',
+                               evidence={'checked': current, 'execution_path': 'none', 'background': True})
             err = AX.AXUIElementPerformAction(element, 'AXPress')
             if err != 0:
-                return await self.click(snapshot_id, index)
+                trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
+                          detail=f'AXPress returned {err}')
+                self._activate()
+                err = AX.AXUIElementPerformAction(element, 'AXPress')
+                method, background = ExecutionMethod.AX_FOREGROUND, False
+            else:
+                method, background = ExecutionMethod.AX_BACKGROUND, True
             after = describe_ax(AX, element).attributes.get('checked') == 'True'
+            outcome = (AttemptOutcome.DIDNT if err != 0 else
+                       AttemptOutcome.WORKED if after is bool(checked) else AttemptOutcome.UNKNOWN)
+            trace.add(method, outcome,
+                      background=background, evidence={'checked': after})
             return Receipt(status='verified' if after is bool(checked) else 'unverified', action='set_checked',
-                           executed=True, message='Updated native checkbox.', evidence={'checked': after})
+                           executed=err == 0, message='Updated native checkbox.' if err == 0 else 'Checkbox action failed.',
+                           evidence={**trace.evidence(), 'checked': after})
         except Exception as exc:
             return Receipt(status='error', action='set_checked', message=redact(str(exc)), executed=None)
 
@@ -232,14 +362,28 @@ class NativeContextBackend:
         if snapshot_id != self.sid:
             return Receipt(status='stale', action='scroll', message='Snapshot expired.', executed=False)
         try:
+            trace = ExecutionTrace()
+            keycode = (121 if delta_y > 0 else 116) if abs(delta_y) >= 400 else (125 if delta_y > 0 else 126)
+            try:
+                from mcp_vision.macos_input import targeted_key
+                targeted_key(self._pid(), keycode)
+                trace.add(ExecutionMethod.PID_KEYBOARD, AttemptOutcome.UNKNOWN, background=True,
+                          detail='PID-targeted scroll key dispatched')
+                return Receipt(status='unverified', action='scroll', executed=True,
+                               message='Scrolled with PID-targeted keyboard; verify the successor state.',
+                               evidence=trace.evidence())
+            except Exception as targeted_error:
+                trace.add(ExecutionMethod.PID_KEYBOARD, AttemptOutcome.DIDNT, background=True,
+                          detail=type(targeted_error).__name__)
             from mcp_vision.core.actuate import get_actuator
             self._activate()
-            # Bounded wheel-style scroll via page keys when delta is large.
-            if abs(delta_y) >= 400:
-                get_actuator().press(['pagedown' if delta_y > 0 else 'pageup'])
-            else:
-                get_actuator().press(['down' if delta_y > 0 else 'up'])
-            return Receipt(status='unverified', action='scroll', executed=True, message='Scrolled native view.')
+            key = ('pagedown' if delta_y > 0 else 'pageup') if abs(delta_y) >= 400 else ('down' if delta_y > 0 else 'up')
+            get_actuator().press([key])
+            trace.add(ExecutionMethod.FOREGROUND_KEYBOARD, AttemptOutcome.UNKNOWN, background=False,
+                      detail='Global scroll key dispatched')
+            return Receipt(status='unverified', action='scroll', executed=True,
+                           message='Scrolled with foreground keyboard fallback; verify the successor state.',
+                           evidence=trace.evidence())
         except Exception as exc:
             return Receipt(status='error', action='scroll', message=redact(str(exc)), executed=None)
 
