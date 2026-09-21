@@ -589,6 +589,11 @@ class NativeBrowserRuntime(BrowserRuntime):
             from mcp_vision.core.capture import capture_display
             return await self._run(lambda: capture_display(0).png)
 
+    async def settle(self, operation: str = "") -> None:
+        # AppleScript cannot await page animation frames. A short bounded pause
+        # lets native Chrome publish autocomplete/modal changes before observe.
+        await asyncio.sleep(0.075)
+
     async def close(self):
         async with self._lock:
             await self._invalidate()

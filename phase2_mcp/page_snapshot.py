@@ -153,6 +153,7 @@ SNAPSHOT_JS = r"""(maxElements) => {
     out.push({
       index: i, role: role, name: name,
       tag: el.tagName.toLowerCase(), input_type: (el.type || '').toLowerCase(),
+      submits: !!el.form && ['submit', 'image'].includes((el.type || '').toLowerCase()),
       required: !!el.required || el.getAttribute('aria-required') === 'true',
       value: el.type === 'password' ? '' : (typeof el.value === 'string' ? el.value.slice(0, 4000) : ''),
       checked: !!el.checked,

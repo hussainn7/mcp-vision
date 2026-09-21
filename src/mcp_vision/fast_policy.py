@@ -29,6 +29,11 @@ class PolicyDecision(BaseModel):
     reason: str = ""
     provider: str = "disabled"
     latency_ms: float = 0.0
+    operation: str | None = None
+    progress: float | None = Field(default=None, ge=0.0, le=1.0)
+    stale_likelihood: float | None = Field(default=None, ge=0.0, le=1.0)
+    expected_success: float | None = Field(default=None, ge=0.0, le=1.0)
+    probabilities: dict[str, float] = Field(default_factory=dict)
 
 
 @runtime_checkable
@@ -75,19 +80,35 @@ class MockPolicy:
 
 
 class RulePolicy:
-    """Conservative zero-network policy for obvious, non-consequential presses."""
+    """Conservative zero-network policy for obvious routine operations and targets."""
 
     async def choose(self, goal: str, state: UIState,
                      candidates: tuple[ActionCandidate, ...] | None = None) -> PolicyDecision:
         choices = candidates or state.candidates
-        words = {word.strip(".,!?()[]{}\"").lower() for word in goal.split() if len(word) > 2}
+        import re
+
+        words = {word for word in re.findall(r"[a-z0-9]+", goal.casefold()) if len(word) > 1}
+        operation_words = {
+            Operation.PRESS: {"press", "click", "open", "choose", "select", "set", "change"},
+            Operation.TYPE: {"type", "enter", "fill", "set", "change", "write"},
+            Operation.SELECT: {"select", "choose", "set", "change"},
+            Operation.SET_CHECKED: {"check", "uncheck", "enable", "disable", "toggle", "set"},
+            Operation.SCROLL: {"scroll", "below", "down", "up"},
+            Operation.WAIT: {"wait", "loading", "settle"},
+        }
         ranked: list[tuple[int, ActionCandidate]] = []
         for candidate in choices:
-            if candidate.operation is not Operation.PRESS or candidate.risk is Policy.RESTRICTED_ACTION:
+            if candidate.risk is Policy.RESTRICTED_ACTION or candidate.operation in {
+                Operation.REPLAN, Operation.REOBSERVE,
+            }:
                 continue
             target = state.element(candidate.target_ref or "")
-            label_words = {word.lower() for word in (target.name if target else "").split()}
-            score = len(words & label_words)
+            label_words = set(re.findall(r"[a-z0-9]+", (target.name if target else candidate.label).casefold()))
+            overlap = len(words & label_words)
+            operation_match = bool(words & operation_words.get(candidate.operation, set()))
+            score = overlap * 3 + int(operation_match)
+            if candidate.operation in {Operation.SCROLL, Operation.WAIT} and not operation_match:
+                score = 0
             if score:
                 ranked.append((score, candidate))
         ranked.sort(key=lambda pair: pair[0], reverse=True)
@@ -97,7 +118,8 @@ class RulePolicy:
         candidate = ranked[0][1]
         return PolicyDecision(state_id=state.state_id, candidate_id=candidate.id,
                               disposition="candidate", confidence=min(0.95, 0.65 + ranked[0][0] * 0.1),
-                              needs_system2=False, reason="Unique semantic label match.", provider="rules")
+                              needs_system2=False, reason="Unique semantic operation and label match.",
+                              provider="rules", operation=candidate.operation.value)
 
 
 class JevPolicy:
@@ -119,10 +141,35 @@ class JevPolicy:
         if not key:
             return PolicyDecision(state_id=state.state_id, disposition="replan", needs_system2=True,
                                   reason="TYPESAFE_API_KEY is not configured.", provider="jev")
-        criteria = {item.id: item.label for item in safe}
-        criteria.update(REOBSERVE="The observation may be stale.", REPLAN="System-2 judgment is required.")
-        body = {"model": self.model, "state": {"goal": goal, "url": state.url, "title": state.title,
-                "text": state.text[:6000]}, "questions": {"next_action": {"type": "choice", "criteria": criteria}}}
+        groups: dict[str, list[ActionCandidate]] = {}
+        for item in safe:
+            groups.setdefault(item.operation.value, []).append(item)
+        operation_criteria = {
+            operation: f"Execute one supplied {operation} candidate."
+            for operation in groups
+        }
+        questions: dict[str, Any] = {
+            "operation": {"type": "choice", "criteria": operation_criteria,
+                          "instructions": {"goal": goal, "rule": "Choose one bounded next operation."}},
+            "progress": {"type": "choice", "criteria": {
+                "0": "No visible progress", "25": "Started", "50": "Partly complete",
+                "75": "Mostly complete", "100": "Visibly complete"}},
+            "needs_system2": {"type": "choice", "criteria": {
+                "no": "Routine bounded action is sufficient", "yes": "Judgment or authorization is required"}},
+            "stale": {"type": "choice", "criteria": {
+                "no": "Observation appears current", "yes": "Reobserve before any action"}},
+            "expected_success": {"type": "choice", "criteria": {
+                "no": "Selected action is unlikely to progress", "yes": "Selected action should progress"}},
+        }
+        for operation, items in groups.items():
+            questions[f"{operation}_target"] = {
+                "type": "choice",
+                "criteria": {item.id: self._serialize_candidate(item, state) for item in items},
+                "instructions": {"goal": goal, "operation": operation,
+                                 "rule": "Assume this operation was chosen; select only its target."},
+            }
+        body = {"model": self.model, "state": {"goal": goal, "state_id": state.state_id,
+                "url": state.url, "title": state.title, "text": state.text[:6000]}, "questions": questions}
 
         def request() -> dict[str, Any]:
             raw = json.dumps(body).encode()
@@ -133,30 +180,77 @@ class JevPolicy:
 
         try:
             result = await asyncio.to_thread(request)
-            answer = result["answers"]["next_action"]
-            probabilities = answer["probabilities"]
-            confidence = answer.get("confidence", probabilities.get(answer.get("choice")))
-            if (answer.get("choice") not in criteria or set(probabilities) != set(criteria)
-                    or not all(type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
-                               for value in probabilities.values())
-                    or type(confidence) not in (int, float) or not math.isfinite(confidence)
-                    or not 0 <= confidence <= 1
-                    or probabilities[answer["choice"]] < max(probabilities.values()) - 1e-6
-                    or abs(sum(probabilities.values()) - 1) >= 0.02):
-                raise ValueError("invalid bounded-choice response")
-            selected = answer["choice"]
+            answers = result["answers"]
+            operation_answer = self._validated_answer(answers.get("operation", {}), set(operation_criteria))
+            operation = operation_answer["choice"]
+            target_criteria = {item.id for item in groups[operation]}
+            target_answer = self._validated_answer(answers.get(f"{operation}_target", {}), target_criteria)
+            selected = target_answer["choice"]
+            needs_system2 = self._choice_probability(answers.get("needs_system2"), "yes")
+            stale = self._choice_probability(answers.get("stale"), "yes")
+            expected_success = self._choice_probability(answers.get("expected_success"), "yes")
+            progress_answer = answers.get("progress") or {}
+            progress = (float(progress_answer.get("choice")) / 100
+                        if str(progress_answer.get("choice", "")).isdigit() else None)
+            confidence = min(float(operation_answer["confidence"]), float(target_answer["confidence"]))
+            reobserve = next((item for item in safe if item.operation is Operation.REOBSERVE), None)
+            if stale is not None and stale >= 0.5 and reobserve:
+                selected, operation = reobserve.id, Operation.REOBSERVE.value
             decision = PolicyDecision(
-                state_id=state.state_id, candidate_id=selected if selected in {c.id for c in safe} else None,
-                disposition="candidate" if selected in {c.id for c in safe} else selected.lower(),
-                confidence=float(confidence),
-                needs_system2=selected == "REPLAN", reason="Bounded Jev choice.", provider="jev",
+                state_id=state.state_id, candidate_id=None if needs_system2 is not None and needs_system2 >= 0.5 else selected,
+                disposition="replan" if needs_system2 is not None and needs_system2 >= 0.5 else "candidate",
+                confidence=confidence, needs_system2=bool(needs_system2 is not None and needs_system2 >= 0.5),
+                reason="Parallel bounded Jev operation/target choice.", provider="jev", operation=operation,
                 latency_ms=(time.perf_counter() - started) * 1000,
+                progress=progress, stale_likelihood=stale, expected_success=expected_success,
+                probabilities=dict(target_answer["probabilities"]),
             )
             return validate_decision(decision, state, safe)
         except Exception as exc:
             return PolicyDecision(state_id=state.state_id, disposition="replan", needs_system2=True,
                                   reason=f"Jev unavailable or invalid: {type(exc).__name__}", provider="jev",
                                   latency_ms=(time.perf_counter() - started) * 1000)
+
+    @staticmethod
+    def _serialize_candidate(candidate: ActionCandidate, state: UIState) -> dict[str, Any]:
+        element = state.element(candidate.target_ref or "")
+        return {
+            "action": candidate.label,
+            "target": candidate.target_ref,
+            "role": element.role if element else None,
+            "name": element.name if element else None,
+            "value": element.value if element else None,
+            "checked": element.checked if element else None,
+            "bounds": element.bounds.model_dump() if element else None,
+            "capabilities": [cap.value for cap in element.capabilities] if element else [],
+        }
+
+    @staticmethod
+    def _validated_answer(answer: dict[str, Any], choices: set[str]) -> dict[str, Any]:
+        probabilities = answer.get("probabilities")
+        selected = answer.get("choice")
+        confidence = answer.get("confidence", probabilities.get(selected) if isinstance(probabilities, dict) else None)
+        valid = (
+            selected in choices and isinstance(probabilities, dict) and set(probabilities) == choices
+            and all(type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
+                    for value in probabilities.values())
+            and type(confidence) in (int, float) and math.isfinite(confidence) and 0 <= confidence <= 1
+            and probabilities[selected] >= max(probabilities.values()) - 1e-6
+            and abs(sum(probabilities.values()) - 1) < 0.02
+        )
+        if not valid:
+            raise ValueError("invalid bounded-choice response")
+        return {**answer, "confidence": confidence}
+
+    @classmethod
+    def _choice_probability(cls, answer: dict[str, Any] | None, choice: str) -> float | None:
+        if not answer:
+            return None
+        try:
+            valid = cls._validated_answer(answer, {"yes", "no"})
+            return float(valid["probabilities"][choice])
+        except ValueError:
+            return None
 
 
 def create_fast_policy(name: str) -> FastPolicy:

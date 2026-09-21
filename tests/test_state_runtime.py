@@ -106,3 +106,53 @@ def test_fast_policies_only_return_supplied_safe_candidates(monkeypatch):
         jev = await JevPolicy().choose("press Continue", state)
         assert jev.candidate_id is None and jev.needs_system2
     asyncio.run(run())
+
+
+def test_button_submit_risk_requires_real_form_association():
+    loose = snapshot("s1")
+    loose.elements[1]["input_type"] = "submit"
+    loose.elements[1]["submits"] = False
+    safe = compile_state(loose, epoch=1)
+    press = next(item for item in safe.candidates if item.operation is Operation.PRESS)
+    assert not press.requires_confirmation
+
+    loose.elements[1]["submits"] = True
+    restricted = compile_state(loose, epoch=2)
+    press = next(item for item in restricted.candidates if item.operation is Operation.PRESS)
+    assert press.requires_confirmation
+
+
+def test_jev_parallel_heads_use_only_selected_operation_target(monkeypatch):
+    async def run():
+        state = compile_state(snapshot("s1"), epoch=1)
+        press = next(item for item in state.candidates if item.operation is Operation.PRESS)
+        operations = {item.operation.value for item in state.candidates}
+        remaining = (1 - 0.7) / (len(operations) - 1)
+        operation_probabilities = {operation: remaining for operation in operations}
+        operation_probabilities["press"] = 0.7
+        response = {"answers": {
+            "operation": {"choice": "press", "confidence": 0.91,
+                          "probabilities": operation_probabilities},
+            "press_target": {"choice": press.id, "confidence": 0.88,
+                             "probabilities": {press.id: 1.0}},
+            # An invalid unused head must not invalidate the selected press head.
+            "type_target": {"choice": "invented", "probabilities": {"invented": 1.0}},
+            "progress": {"choice": "25"},
+            "needs_system2": {"choice": "no", "confidence": 0.9,
+                              "probabilities": {"no": 0.9, "yes": 0.1}},
+            "stale": {"choice": "no", "confidence": 0.95,
+                      "probabilities": {"no": 0.95, "yes": 0.05}},
+            "expected_success": {"choice": "yes", "confidence": 0.8,
+                                 "probabilities": {"no": 0.2, "yes": 0.8}},
+        }}
+
+        async def fake_to_thread(_fn):
+            return response
+
+        monkeypatch.setattr("mcp_vision.fast_policy.asyncio.to_thread", fake_to_thread)
+        decision = await JevPolicy(api_key="test").choose("press Continue", state)
+        assert decision.candidate_id == press.id and decision.operation == "press"
+        assert decision.confidence == 0.88 and decision.progress == 0.25
+        assert decision.stale_likelihood == 0.05 and decision.expected_success == 0.8
+
+    asyncio.run(run())

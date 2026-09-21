@@ -438,3 +438,52 @@ def test_state_scoped_transaction_returns_successor_diff_and_postcondition():
         assert stale.status == "stale" and stale.action.executed is False
 
     run_case(case)
+
+
+DYNAMIC_AUTOCOMPLETE_HTML = '''<html><body>
+<main id="app">
+  <label for="destination">Destination airport</label>
+  <input id="destination" aria-label="Destination airport" oninput="suggest(this.value)">
+  <div id="suggestions"></div><p id="status">Choose a destination</p>
+</main>
+<script>
+let timer;
+function suggest(value) {
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    document.querySelector('#suggestions').innerHTML = value
+      ? '<button role="option" onclick="choose()">San Francisco (SFO)</button>' : '';
+  }, 20);
+}
+function choose() {
+  document.querySelector('#app').innerHTML = `
+    <label for="destination-v2">Destination airport</label>
+    <input id="destination-v2" aria-label="Destination airport" value="SFO">
+    <p id="status">Destination set to SFO</p>`;
+  history.pushState({}, '', '/flights?destination=SFO');
+}
+</script></body></html>'''
+
+
+def test_fastpath_completes_dynamic_autocomplete_and_survives_rerender():
+    from mcp_vision.fast_policy import RulePolicy
+    from mcp_vision.fastpath import FastPath, FastPathStatus, FastPathTask
+    from mcp_vision.transactions import TransactionRuntime
+    from mcp_vision.verification import VerificationPredicate
+
+    async def case(runtime, page):
+        fastpath = FastPath(TransactionRuntime(runtime), RulePolicy())
+        result = await fastpath.run(FastPathTask(
+            subgoal="Change the destination airport to SFO",
+            inputs={"Destination airport": "San Francisco"},
+            completion=VerificationPredicate(kind="value_equals", role="textbox",
+                                             name="Destination airport", expected="SFO"),
+        ))
+        assert result.status is FastPathStatus.VERIFIED and result.subgoal_complete
+        assert not result.task_complete
+        assert [step.operation for step in result.steps] == ["type", "press"]
+        assert result.metrics.actions == 2 and result.metrics.observations == 3
+        assert await page.input_value("#destination-v2") == "SFO"
+        assert page.url.endswith("/flights?destination=SFO")
+
+    run_case(case, DYNAMIC_AUTOCOMPLETE_HTML)

@@ -25,7 +25,7 @@ def test_state_runtime_tools_publish_valid_mcp_schemas() -> None:
         names = {tool.name for tool in tools}
         expected = {
             "browser_observe", "browser_choose_candidate",
-            "browser_execute_candidate", "browser_transaction_log",
+            "browser_execute_candidate", "browser_transaction_log", "browser_fastpath",
         }
         assert expected <= names
         execute = next(tool for tool in tools if tool.name == "browser_execute_candidate")

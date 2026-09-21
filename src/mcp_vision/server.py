@@ -11,8 +11,10 @@ from contextlib import asynccontextmanager
 from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.execution import create_execution_backend
 from mcp_vision.fast_policy import create_fast_policy
+from mcp_vision.fastpath import FastPath, FastPathConfig, FastPathResult, FastPathTask
 from mcp_vision.state import UIState
 from mcp_vision.transactions import Postcondition, TransactionReceipt, TransactionRuntime
+from mcp_vision.verification import VerificationPredicate
 
 from mcp_vision.core.actuate import get_actuator, set_actuator
 from mcp_vision.core.capture import Frame, Grabber, capture_display
@@ -31,8 +33,9 @@ RUNTIME_INSTRUCTIONS = (
     "After every action, inspect again and verify a task-specific postcondition. "
     "A dispatched or locally verified primitive does not prove the user's whole task is complete. "
     "Never blindly retry when executed is null. Sensitive and desktop actions require operator approval. "
-    "Prefer browser_observe and browser_execute_candidate: candidates are bounded to an immutable state, "
-    "and execution returns a successor state, diff, and optional semantic postcondition."
+    "Prefer browser_fastpath for a bounded routine subgoal with explicit completion evidence. "
+    "Use browser_observe and browser_execute_candidate for manual bounded control: candidates are tied to an "
+    "immutable state, and execution returns a successor state, diff, and optional semantic postcondition."
 )
 
 _screen_lock = RLock()
@@ -304,6 +307,32 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), brows
     async def browser_transaction_log(limit: int = 50) -> list[dict]:
         """Return the bounded state/candidate/action/diff/assertion timeline for debugging or replay."""
         return semantic.events(limit)
+
+    @mcp.tool()
+    async def browser_fastpath(
+        subgoal: str,
+        completion_kind: Literal[
+            "element_exists", "element_missing", "text_equals", "text_contains",
+            "value_equals", "url_matches", "window_exists", "window_closed",
+            "attribute_equals", "state_changed",
+        ],
+        expected: str | bool | int | float | None = None,
+        target_ref: str | None = None,
+        role: str | None = None,
+        name: str | None = None,
+        attribute: str | None = None,
+        inputs: dict[str, str | bool | int] | None = None,
+        max_steps: int = 8,
+    ) -> FastPathResult:
+        """Run a bounded routine subgoal without waking System-2 for each action; completion must verify."""
+        task = FastPathTask(
+            subgoal=subgoal,
+            inputs=inputs or {},
+            completion=VerificationPredicate(kind=completion_kind, expected=expected,
+                                             target_ref=target_ref, role=role, name=name,
+                                             attribute=attribute),
+        )
+        return await FastPath(semantic, policy, config=FastPathConfig(max_steps=max_steps)).run(task)
 
     @mcp.tool()
     async def browser_click(snapshot_id: str, index: int) -> Receipt:

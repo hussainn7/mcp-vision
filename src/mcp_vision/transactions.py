@@ -112,6 +112,9 @@ class TransactionRuntime:
             condition = None
             if receipt.executed is not False:
                 try:
+                    settle = getattr(self.backend, "settle", None)
+                    if settle is not None:
+                        await settle(candidate.operation.value)
                     successor = await self.observe()
                     difference = diff_states(state, successor)
                     if expect:

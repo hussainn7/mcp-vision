@@ -132,7 +132,9 @@ def _capabilities(record: dict[str, Any]) -> tuple[Operation, ...]:
     role = str(record.get("role") or "").lower()
     input_type = str(record.get("input_type") or "").lower()
     caps: list[Operation] = []
-    if role in {"button", "link", "menuitem", "tab", "option", "label"}:
+    # Labels contribute accessible names but are not independent semantic
+    # actions; clicking them can toggle/focus a different control implicitly.
+    if role in {"button", "link", "menuitem", "tab", "option"}:
         caps.append(Operation.PRESS)
     if role in {"textbox", "searchbox", "spinbutton"} and input_type not in {"checkbox", "radio", "file"}:
         caps.append(Operation.TYPE)
@@ -146,7 +148,7 @@ def _capabilities(record: dict[str, Any]) -> tuple[Operation, ...]:
 def _risk(record: dict[str, Any], operation: Operation) -> Policy:
     name = str(record.get("name") or "").lower()
     input_type = str(record.get("input_type") or "").lower()
-    if input_type in {"password", "file", "submit", "image"}:
+    if input_type in {"password", "file"} or record.get("submits"):
         return Policy.RESTRICTED_ACTION
     if operation is Operation.PRESS and any(word in name for word in (
         "submit", "send", "purchase", "buy", "book", "delete", "remove", "accept", "confirm",

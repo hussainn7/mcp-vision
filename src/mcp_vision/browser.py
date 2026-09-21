@@ -197,6 +197,7 @@ class BrowserRuntime:
                     rec["checked"] = bool(state["checked"])
                 elif state["type"] == "file":
                     rec["input_type"] = "file"
+                rec["submits"] = bool(state.get("form") and state.get("type") in {"submit", "image"})
                 identity = state.get("domId") or state.get("testId") or state.get("fieldName")
                 if identity:
                     rec["identity"] = {"dom": f'{state["tag"]}:{identity}'}
@@ -466,6 +467,23 @@ class BrowserRuntime:
             if self.page.url != "about:blank":
                 self._check_url(self.page.url)
             return await self.page.screenshot(type="png")
+
+    async def settle(self, operation: str = "") -> None:
+        """Let event handlers and two paint frames publish the next observable state."""
+        await self._ensure()
+        try:
+            await self.page.evaluate("""operation => new Promise(resolve => {
+                let done = false;
+                const finish = () => { if (!done) { done = true; resolve(); } };
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    if (operation === 'type') setTimeout(finish, 75);
+                    else finish();
+                }));
+                setTimeout(finish, operation === 'type' ? 150 : 75);
+            })""", operation)
+        except Exception:
+            # Navigation can destroy the execution context after successful input.
+            await asyncio.sleep(0.075)
 
     async def close(self):
         async with self._lock:
