@@ -161,23 +161,66 @@ $("demo-form").addEventListener("submit", async event => {
   finally { $("run-demo").disabled = false; $("demo-progress").hidden = true; }
 });
 function renderDemo(result) {
+  const session = result.session;
   const summary = element("div", "result-summary" + (result.demo_passed ? "" : " failed"));
-  summary.append(element("strong", "", result.demo_passed ? "✓ All sandbox checks passed" : "A sandbox check failed"), element("span", "mono", `${(result.duration_ms / 1000).toFixed(1)}s · ${result.receipts.length} receipts`));
-  const grid = element("div", "demo-results-grid"), receipts = element("div"), preview = element("div");
-  const labels = ["Open the workspace", "Fill and read back the draft", "Reject an old observation", "Click Preview", "Verify the preview appeared", "Block the final submission"];
-  result.receipts.forEach((receipt, i) => {
-    const row = element("article", "receipt"), head = element("div", "receipt-head");
-    head.append(element("span", "", `${String(i + 1).padStart(2, "0")}  ${labels[i]}`), element("span", `receipt-status ${receipt.status}`, receipt.status));
-    const details = element("details"); details.append(element("summary", "", "Inspect receipt"), element("pre", "", JSON.stringify(receipt, null, 2)));
-    row.append(head, element("p", "", receipt.message), details); receipts.append(row);
+  summary.append(element("strong", "", result.demo_passed ? "✓ Subgoal verified; boundary held" : "The session needs inspection"), element("span", "mono", `${(result.duration_ms / 1000).toFixed(1)}s · ${session.metrics.actions} actions · ${session.metrics.observations} observations`));
+  const mission = element("section", "session-mission"), missionCopy = element("div");
+  missionCopy.append(element("span", "session-kicker", "CURRENT GOAL"), element("h3", "", session.goal), element("p", "", session.subgoal));
+  const status = element("div", `session-status ${session.status}`);
+  status.append(element("span", "local-dot"), element("strong", "", session.status), element("small", "", session.reason));
+  mission.append(missionCopy, status);
+
+  const workspace = element("div", "session-workspace"), computer = element("section", "computer-pane");
+  const computerBar = element("div", "computer-bar");
+  computerBar.append(element("span", "computer-dots", "● ● ●"), element("span", "mono", "demo.mcp-vision.invalid"));
+  const viewport = element("div", "computer-viewport"), screenshot = element("img", "demo-screenshot"), highlight = element("span", "target-highlight");
+  screenshot.src = "data:image/png;base64," + result.screenshot; screenshot.alt = "Chromium after FastPath completed the draft preview."; highlight.hidden = true;
+  viewport.append(screenshot, highlight); computer.append(computerBar, viewport);
+
+  const inspector = element("aside", "step-inspector"), timeline = element("div", "session-timeline"), details = element("div", "step-detail");
+  const showStep = (step, button) => {
+    timeline.querySelectorAll("button").forEach(item => item.classList.toggle("active", item === button));
+    details.replaceChildren(
+      element("span", "session-kicker", `STEP ${String(step.number).padStart(2, "0")} · ${step.policy.toUpperCase()}`),
+      element("h3", "", `${(step.operation || "decision").replaceAll("_", " ")} ${step.target?.name || ""}`.trim()),
+      element("p", "", step.reason || "Bounded action selected from the current state's candidates."),
+      metricRow("Confidence", `${Math.round(step.confidence * 100)}%`),
+      metricRow("Execution", step.execution_path || "not dispatched"),
+      metricRow("Focus", step.background === true ? "Stayed in background" : step.background === false ? "Used foreground" : "No focus claim"),
+      metricRow("Observed change", step.diff?.changed ? summarizeDiff(step.diff) : "No semantic change")
+    );
+    const raw = element("details", "step-raw");
+    raw.append(element("summary", "", "Inspect step metadata"), element("pre", "", JSON.stringify(step, null, 2))); details.append(raw);
+    if (step.target?.bounds) {
+      const box = step.target.bounds;
+      Object.assign(highlight.style, {left: `${box.x / 10}%`, top: `${box.y / 7.2}%`, width: `${box.w / 10}%`, height: `${box.h / 7.2}%`});
+      highlight.hidden = false;
+    } else highlight.hidden = true;
+  };
+  session.steps.forEach((step, i) => {
+    const button = element("button", "timeline-step"); button.type = "button";
+    button.append(element("span", "timeline-index", String(step.number).padStart(2, "0")), element("span", "", (step.operation || "decision").replaceAll("_", " ")), element("b", `receipt-status ${step.status}`, step.status));
+    button.addEventListener("click", () => showStep(step, button)); timeline.append(button);
+    if (i === 0) queueMicrotask(() => showStep(step, button));
   });
-  const screenshot = element("img", "demo-screenshot"); screenshot.src = "data:image/png;base64," + result.screenshot; screenshot.alt = "Actual Chromium screenshot after the demo, showing the retained draft and Preview ready.";
-  preview.append(screenshot, element("p", "small muted", result.checks.draft_retained && result.checks.form_unsubmitted ? "Captured from the real browser after execution. The draft was retained; the form was not submitted." : "Captured after execution. One or more final checks failed; inspect the receipts before drawing conclusions."));
-  const exportButton = element("button", "secondary", "Export action receipts ↓");
-  exportButton.addEventListener("click", () => { const {screenshot, ...report} = result; download("mcp-vision-receipts.json", JSON.stringify(report, null, 2), "application/json"); });
-  preview.append(exportButton); grid.append(receipts, preview);
-  $("demo-result").replaceChildren(summary, grid);
+  inspector.append(element("span", "session-kicker", "FASTPATH TIMELINE"), timeline, details); workspace.append(computer, inspector);
+
+  const evidence = element("section", "session-evidence");
+  evidence.append(
+    evidenceCard("Verification", session.verification?.passed ? "Passed" : "Not passed", session.verification?.passed ? `Observed “${session.verification.expected}” in successor state ${session.verification.state_id.slice(0, 8)}.` : session.reason, session.verification?.passed),
+    evidenceCard("Execution", `${session.metrics.background_actions} background`, `${session.metrics.policy_ms.toFixed(1)} ms policy time · ${session.metrics.stale_rejections} stale retries`, true),
+    evidenceCard("Guardrails", `${session.guardrails.filter(item => item.passed).length}/${session.guardrails.length} held`, session.guardrails.map(item => `${item.passed ? "✓" : "×"} ${item.name}`).join(" · "), session.guardrails.every(item => item.passed))
+  );
+  const footer = element("div", "session-footer"), compareButton = element("button", "secondary", "Show before");
+  let showingBefore = false;
+  compareButton.addEventListener("click", () => { showingBefore = !showingBefore; screenshot.src = "data:image/png;base64," + (showingBefore ? result.before_screenshot : result.screenshot); compareButton.textContent = showingBefore ? "Show verified result" : "Show before"; highlight.hidden = showingBefore; });
+  const exportButton = element("button", "secondary", "Export session evidence ↓");
+  exportButton.addEventListener("click", () => { const {screenshot: _after, before_screenshot: _before, ...report} = result; download("mcp-vision-session.json", JSON.stringify(report, null, 2), "application/json"); });
+  footer.append(compareButton, exportButton); $("demo-result").replaceChildren(summary, mission, workspace, evidence, footer);
 }
+function metricRow(label, value) { const row = element("div", "metric-row"); row.append(element("span", "", label), element("strong", "", value)); return row; }
+function summarizeDiff(diff) { const parts = []; if (diff.updated?.length) parts.push(`${diff.updated.length} updated`); if (diff.added?.length) parts.push(`${diff.added.length} added`); if (diff.removed?.length) parts.push(`${diff.removed.length} removed`); if (diff.text_changed) parts.push("page text changed"); return parts.join(" · ") || "State changed"; }
+function evidenceCard(label, value, description, passed) { const card = element("article", `evidence-card ${passed ? "passed" : "failed"}`); card.append(element("span", "session-kicker", label.toUpperCase()), element("strong", "", value), element("p", "", description || "No additional evidence.")); return card; }
 api("/api/info").then(info => {
   recipes = info.recipes; serverEntry = info.server;
   $("home-recipes").replaceChildren(...recipes.map(recipeCard)); showRecipes(); connectionConfig();
