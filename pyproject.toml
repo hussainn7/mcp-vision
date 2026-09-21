@@ -27,7 +27,7 @@ dependencies = [
 [project.optional-dependencies]
 hud = ["pyside6>=6.6.0"]
 ocr = ["pytesseract>=0.3.10"]
-dev = ["pytest>=8.0.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.14,<1"]
 
 [project.scripts]
 mcp-vision = "mcp_vision.cli:cli"
@@ -70,6 +70,14 @@ packages = ["src/mcp_vision", "phase1_vision", "phase2_mcp"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Start with correctness rules that the complete legacy tree can satisfy. New
+# modules are still formatted and reviewed separately during development.
+select = ["E9", "F63", "F7", "F82"]
 
 [tool.uv]
 package = true

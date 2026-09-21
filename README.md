@@ -160,6 +160,13 @@ while the runtimes keep ownership of reality and safety. The model owns
 judgment; the runtime owns real execution, permissions, and verification.
 See [docs/REASONING_HARNESS.md](docs/REASONING_HARNESS.md).
 
+## State-scoped actions
+
+The bounded runtime path exposes immutable UI states, state-owned `@e` element
+references, compiled action candidates, optional fast-policy selection, and
+single-action transactions with successor diffs and semantic postconditions.
+See [docs/STATE_RUNTIME.md](docs/STATE_RUNTIME.md).
+
 ## License
 
 MIT

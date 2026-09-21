@@ -35,6 +35,7 @@ class Receipt(BaseModel):
 
 class BrowserSnapshot(BaseModel):
     snapshot_id: str
+    root_id: str = ""
     url: str
     title: str
     text: str
@@ -61,6 +62,9 @@ _STATE_JS = r"""el => ({
     value: o.value, label: o.textContent.trim(), disabled: o.disabled
   })) : [],
   labels: el.labels ? Array.from(el.labels).map(n => n.textContent) : [],
+  domId: el.id || null,
+  testId: el.getAttribute('data-testid') || el.getAttribute('data-test') || null,
+  fieldName: el.getAttribute('name') || null,
   labelledBy: (el.getAttribute('aria-labelledby') || '').split(/\s+/)
     .map(id => document.getElementById(id)?.textContent || ''),
   form: el.form ? {action: el.form.action, method: el.form.method} : null,
@@ -106,6 +110,7 @@ class BrowserRuntime:
         self._targets = {}
         self._observed_at = 0.0
         self._lock = asyncio.Lock()
+        self._root_id = f"browser-{uuid.uuid4().hex[:16]}"
 
     def _check_url(self, url):
         value = origin(url)
@@ -192,10 +197,13 @@ class BrowserRuntime:
                     rec["checked"] = bool(state["checked"])
                 elif state["type"] == "file":
                     rec["input_type"] = "file"
+                identity = state.get("domId") or state.get("testId") or state.get("fieldName")
+                if identity:
+                    rec["identity"] = {"dom": f'{state["tag"]}:{identity}'}
                 self._targets[rec["index"]] = Target(handle, _signature(state), rec)
                 records.append(rec)
             text = await self.page.locator("body").inner_text(timeout=5000)
-            self._snapshot = BrowserSnapshot(snapshot_id=uuid.uuid4().hex,
+            self._snapshot = BrowserSnapshot(snapshot_id=uuid.uuid4().hex, root_id=self._root_id,
                 url=self.page.url, title=await self.page.title(), text=text[:12000],
                 elements=records, pruned=raw.get("pruned", {}),
                 facts=raw.get("facts") or [], identity=raw.get("identity") or {})

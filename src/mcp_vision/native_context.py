@@ -121,7 +121,7 @@ class NativeContextBackend:
             self.context = self.context.model_copy(update={'title': title})
         records, self.handles = nearby_ax(AX, window or app)
         self.sid = uuid4().hex
-        return BrowserSnapshot(snapshot_id=self.sid, url='', title=title,
+        return BrowserSnapshot(snapshot_id=self.sid, root_id=f"macos-pid-{self._pid()}", url='', title=title,
                                text='\n'.join(e['name'] + ' ' + str(e.get('value') or '') for e in records),
                                elements=records, source='macos-accessibility')
 

@@ -52,8 +52,10 @@ def _contextual_ui_ready(port: int) -> bool:
 @click.option("--driver", "live_driver", type=click.Choice(["native", "cdp"]), default="native", show_default=True,
               help="live mode: native AppleScript (no automation banner) or CDP (shows banner).")
 @click.option("--cdp-endpoint", default=None, help="Optional loopback endpoint for --driver cdp.")
+@click.option("--fast-policy", type=click.Choice(["rules", "jev", "local", "system2", "disabled"]),
+              default="rules", show_default=True, help="Bounded routine-action chooser; execution remains local.")
 def serve(allow_browser_writes: bool, headed: bool, origin: tuple[str, ...], browser_mode: str,
-          live_driver: str, cdp_endpoint: str | None) -> None:
+          live_driver: str, cdp_endpoint: str | None, fast_policy: str) -> None:
     """Run the MCP server on stdio (stdout is JSON-RPC only)."""
     from mcp_vision.server import main
     if cdp_endpoint and browser_mode != "live":
@@ -61,7 +63,8 @@ def serve(allow_browser_writes: bool, headed: bool, origin: tuple[str, ...], bro
     if cdp_endpoint:
         live_driver = "cdp"
     main(allow_browser_writes=allow_browser_writes, headless=not headed, allowed_origins=origin,
-         browser_mode=browser_mode, cdp_endpoint=cdp_endpoint, live_driver=live_driver)
+         browser_mode=browser_mode, cdp_endpoint=cdp_endpoint, live_driver=live_driver,
+         fast_policy=fast_policy)
 
 
 @cli.command()

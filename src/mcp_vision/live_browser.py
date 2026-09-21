@@ -80,6 +80,7 @@ class LiveBrowserRuntime(BrowserRuntime):
                 self._check_url(target.url)
                 await self._invalidate()
                 self.page = target
+                self._root_id = f"chrome-tab-{tab_id}"
                 return Receipt(status="verified", action="use_tab", executed=True,
                                message="Selected the existing tab; inspect before acting.",
                                evidence={"tab_id": tab_id, "url": target.url})
@@ -103,6 +104,7 @@ class LiveBrowserRuntime(BrowserRuntime):
                 self._check_url(self.page.url)
                 key = uuid.uuid4().hex[:12]
                 self._tabs[key] = self.page
+                self._root_id = f"chrome-tab-{key}"
                 return Receipt(status="verified", action="open_tab", executed=True,
                                message="Opened a tab in the existing Chrome profile.",
                                evidence={"tab_id": key, "url": self.page.url})

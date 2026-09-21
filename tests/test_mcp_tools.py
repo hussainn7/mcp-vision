@@ -8,12 +8,30 @@ from mcp_vision.core.actuate import RecordingActuator, get_actuator
 from mcp_vision.core.models import ActionResult, ScreenInspectionResult
 from mcp_vision.overlay.hud import set_forced_result
 from mcp_vision.server import (
+    _mcp,
     click_element,
     inspect_screen,
     press_key_combination,
     set_grabber,
     type_text,
 )
+
+
+def test_state_runtime_tools_publish_valid_mcp_schemas() -> None:
+    import asyncio
+
+    async def check():
+        tools = await _mcp(fast_policy="rules").list_tools()
+        names = {tool.name for tool in tools}
+        expected = {
+            "browser_observe", "browser_choose_candidate",
+            "browser_execute_candidate", "browser_transaction_log",
+        }
+        assert expected <= names
+        execute = next(tool for tool in tools if tool.name == "browser_execute_candidate")
+        assert {"state_id", "candidate_id", "expected_kind"} <= set(execute.parameters["properties"])
+
+    asyncio.run(check())
 
 
 def _ui() -> Image.Image:

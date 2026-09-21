@@ -159,6 +159,7 @@ class NativeBrowserRuntime(BrowserRuntime):
                 target.url = here or target.url
                 self._current = target
                 self.page = _PageRef(self)
+                self._root_id = f"chrome-native-{target.window}-{target.tab}"
                 await self._invalidate()
                 return Receipt(status="verified", action="use_tab", executed=True,
                                message="Selected the existing tab (native; no automation banner).",
@@ -196,6 +197,7 @@ class NativeBrowserRuntime(BrowserRuntime):
                 self._tabs[key] = tab
                 self._current = tab
                 self.page = _PageRef(self)
+                self._root_id = f"chrome-native-{tab.window}-{tab.tab}"
                 await self._invalidate()
                 return Receipt(status="verified", action="open_tab", executed=True,
                                message="Opened a tab in the existing Chrome profile (native).",
@@ -313,7 +315,8 @@ class NativeBrowserRuntime(BrowserRuntime):
                 self._current.url = url
                 self._current.title = title
             self._snapshot = BrowserSnapshot(
-                snapshot_id=uuid.uuid4().hex, url=url, title=title, text=text[:12000],
+                snapshot_id=uuid.uuid4().hex, root_id=self._root_id,
+                url=url, title=title, text=text[:12000],
                 elements=records, pruned=data.get("pruned") or {},
                 facts=data.get("facts") or [], identity=data.get("identity") or {},
                 source="dom-accessibility-native")

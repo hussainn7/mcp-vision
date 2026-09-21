@@ -413,3 +413,28 @@ def test_live_field_change_invalidates_observation():
         assert receipt.status == "stale" and receipt.executed is False
         assert await page.input_value("#title") == "Changed by someone else"
     run_case(case)
+
+
+def test_state_scoped_transaction_returns_successor_diff_and_postcondition():
+    from mcp_vision.state import Operation
+    from mcp_vision.transactions import Postcondition, TransactionRuntime
+
+    async def case(runtime, page):
+        semantic = TransactionRuntime(runtime)
+        state = await semantic.observe()
+        fill = next(item for item in state.candidates
+                    if item.operation is Operation.TYPE
+                    and state.element(item.target_ref).name == "Issue title")
+        result = await semantic.execute(
+            state.state_id, fill.id, text="Paris",
+            expect=Postcondition(kind="value_equals", value="Paris", target_ref=fill.target_ref),
+        )
+        assert result.status == "verified" and result.postcondition.verified
+        assert result.successor_state.state_id != state.state_id
+        assert result.diff.changed and not result.task_complete
+        assert await page.input_value("#title") == "Paris"
+        other = next(item for item in state.candidates if item.operation is Operation.PRESS)
+        stale = await semantic.execute(state.state_id, other.id)
+        assert stale.status == "stale" and stale.action.executed is False
+
+    run_case(case)

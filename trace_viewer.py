@@ -20,6 +20,8 @@ COLORS = {
     "plan": "#c084fc", "llm_call": "#60a5fa", "tool_call": "#34d399",
     "verify": "#fbbf24", "reflect": "#f472b6", "judge": "#a3e635",
     "approval": "#fb923c",
+    "observation": "#22d3ee", "candidate": "#a78bfa",
+    "transaction": "#2dd4bf", "state_diff": "#facc15", "postcondition": "#4ade80",
 }
 FALLBACK = "#94a3b8"
 
@@ -90,6 +92,16 @@ def render(events, title=None):
             label = f"llm · {e.get('model', '?')}"
         elif typ == "verify":
             label = f"verify · {e.get('tool', '?')}"
+        elif typ == "observation":
+            label = f"state · {e.get('state_id', '?')}"
+        elif typ == "candidate":
+            label = f"candidate · {e.get('candidate_id', '?')}"
+        elif typ == "transaction":
+            label = f"action · {e.get('action', '?')}"
+        elif typ == "state_diff":
+            label = f"diff · {e.get('before_state_id', '?')} → {e.get('after_state_id', '?')}"
+        elif typ == "postcondition":
+            label = f"assert · {e.get('kind', '?')}"
         dur_txt = f"{dur_ms:.0f} ms" if dur_ms else ""
 
         detail = json.dumps({k: v for k, v in e.items() if k not in ("run_id",)},
@@ -109,10 +121,13 @@ def render(events, title=None):
     n_llm = sum(1 for e in events if e["type"] == "llm_call")
     n_err = sum(1 for e in events
                 if e.get("status") == "error" or str(e.get("result", "")).startswith(("error", "ERROR")))
+    n_verified = sum(1 for e in events if e.get("type") == "postcondition" and e.get("verified") is True)
+    n_blocked = sum(1 for e in events if e.get("status") in {"blocked", "stale"})
     meta = (f'task <b>{html.escape(str(start.get("task", "?")))}</b> · '
             f'specialist <b>{html.escape(str(start.get("specialist", "?")))}</b> · '
             f'status <b class="{cls}">{html.escape(str(status))}</b> · '
-            f'{total:.1f}s · {n_llm} llm calls · {n_tools} tool calls · {n_err} errors')
+            f'{total:.1f}s · {n_llm} llm calls · {n_tools} tool calls · '
+            f'{n_verified} verified assertions · {n_blocked} blocked/stale · {n_err} errors')
     legend = "".join(f'<span><i style="background:{c}"></i>{t}</span>'
                      for t, c in COLORS.items() if t not in ("run_start", "run_end"))
 

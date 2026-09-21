@@ -29,6 +29,7 @@ from mcp_vision.reasoning.intent import analyze
 from mcp_vision.reasoning.memory import ingest_observation
 from mcp_vision.reasoning.model_routing import Meta, meta_reason_due, route_tier
 from mcp_vision.reasoning.report import compact_state, final_report
+from mcp_vision.reasoning.reasoners import Reasoner
 from mcp_vision.reasoning.schemas import (
     AgentState,
     Completion,
