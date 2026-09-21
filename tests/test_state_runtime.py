@@ -90,6 +90,13 @@ def test_transaction_observes_successor_and_requires_semantic_postcondition_for_
         assert [event["type"] for event in runtime.events()] == [
             "observation", "candidate", "observation", "transaction", "state_diff", "postcondition",
         ]
+        replay = runtime.replay()
+        assert replay["schema"] == 1 and len(replay["states"]) == 2
+        choice = next(event for event in replay["events"] if event["type"] == "candidate")
+        assert choice["selected"]["operation"] == "type"
+        assert any(item["operation"] == "press" for item in choice["alternatives"])
+        change = next(event for event in replay["events"] if event["type"] == "state_diff")
+        assert change["updated"] == [{"ref": "@e0", "fields": ["value"]}]
         repeated = await runtime.execute(state.state_id, fill.id, text="Paris")
         assert repeated.status == "stale" and repeated.action.executed is False
     asyncio.run(run())

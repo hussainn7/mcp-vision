@@ -69,12 +69,23 @@ class TransactionRuntime:
             raise ValueError("limit must be between 1 and 200")
         return list(self._events)[-limit:]
 
+    def replay(self, limit: int = 200) -> dict[str, Any]:
+        """Return a bounded, serializable replay bundle without screenshots or hidden reasoning."""
+        events = self.events(limit)
+        state_ids = {str(event[key]) for event in events for key in (
+            "state_id", "before_state_id", "after_state_id",
+        ) if event.get(key)}
+        states = [state.model_dump(mode="json") for state in self.states.states()
+                  if state.state_id in state_ids]
+        return {"schema": 1, "events": events, "states": states}
+
     async def observe(self) -> UIState:
         snapshot = await self.backend.snapshot()
         state = self.states.add(snapshot)
         self._event("observation", state_id=state.state_id, root_id=state.root_id,
                     epoch=state.epoch, source=state.source, elements=len(state.elements),
-                    candidates=len(state.candidates), content_hash=state.content_hash)
+                    candidates=len(state.candidates), content_hash=state.content_hash,
+                    url=state.url, title=state.title)
         return state
 
     async def execute(self, state_id: str, candidate_id: str, *, text: str | None = None,
@@ -102,7 +113,15 @@ class TransactionRuntime:
             self._consumed.add(token)  # consume before dispatch; uncertain input must never be replayed
             self._event("candidate", state_id=state_id, candidate_id=candidate.id,
                         operation=candidate.operation.value, target_ref=candidate.target_ref,
-                        risk=candidate.risk.value)
+                        risk=candidate.risk.value, selected={
+                            "id": candidate.id, "label": candidate.label,
+                            "operation": candidate.operation.value, "target_ref": candidate.target_ref,
+                            "risk": candidate.risk.value,
+                        }, alternatives=[{
+                            "id": option.id, "label": option.label,
+                            "operation": option.operation.value, "target_ref": option.target_ref,
+                            "risk": option.risk.value,
+                        } for option in state.candidates if option.id != candidate.id])
             try:
                 receipt = await self._dispatch(candidate, state, text=text, value=value, checked=checked,
                                                delta_y=delta_y, milliseconds=milliseconds)
@@ -141,12 +160,15 @@ class TransactionRuntime:
                         executed=receipt.executed,
                         execution_path=receipt.evidence.get("execution_path"),
                         background=receipt.evidence.get("background"),
+                        message=receipt.message, evidence=receipt.evidence,
                         dur_ms=round(result.duration_ms, 1))
             if difference:
                 self._event("state_diff", before_state_id=difference.before_state_id,
                             after_state_id=difference.after_state_id, root_changed=difference.root_changed,
-                            added=len(difference.added), removed=len(difference.removed),
-                            updated=len(difference.updated), changed=difference.changed)
+                            added=list(difference.added), removed=list(difference.removed),
+                            updated=[change.model_dump(mode="json") for change in difference.updated],
+                            url_changed=difference.url_changed, title_changed=difference.title_changed,
+                            text_changed=difference.text_changed, changed=difference.changed)
             if condition:
                 self._event("postcondition", transaction_id=transaction_id, kind=condition.kind,
                             verified=condition.verified, expected=condition.expected,

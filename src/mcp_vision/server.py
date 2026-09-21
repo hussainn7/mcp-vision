@@ -309,6 +309,11 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), brows
         return semantic.events(limit)
 
     @mcp.tool()
+    async def browser_replay_bundle(limit: int = 200) -> dict:
+        """Return states, candidate alternatives, policy choices, diffs, receipts, and verification evidence."""
+        return semantic.replay(limit)
+
+    @mcp.tool()
     async def browser_fastpath(
         subgoal: str,
         completion_kind: Literal[

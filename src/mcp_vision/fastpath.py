@@ -98,6 +98,7 @@ class FastPath:
         initial = state = await self.runtime.observe()
         metrics.observations += 1
         verification = self.verifier.verify(state, task.completion, before=initial)
+        self.runtime.record_event("verification", **verification.model_dump(mode="json"))
         if verification.passed:
             return self._finish(FastPathStatus.VERIFIED, task, "Completion already satisfied.",
                                 state, verification, steps, metrics, started)
@@ -113,6 +114,12 @@ class FastPath:
                                     state, verification, steps, metrics, started)
             decision_ms = (time.perf_counter() - decision_started) * 1000
             metrics.policy_ms += decision_ms
+            self.runtime.record_event(
+                "policy_decision", state_id=state.state_id, policy=decision.provider,
+                confidence=decision.confidence, candidate_id=decision.candidate_id,
+                operation=decision.operation, reason=decision.reason,
+                decision_ms=round(decision_ms, 2), needs_system2=decision.needs_system2,
+            )
             if decision.needs_system2 or not decision.candidate_id:
                 steps.append(self._step(number, state, decision, decision_ms, "replan"))
                 return self._finish(FastPathStatus.REPLAN, task, decision.reason or "Policy requested System-2.",
@@ -176,6 +183,7 @@ class FastPath:
             else:
                 noops = 0
             verification = self.verifier.verify(state, task.completion, before=initial)
+            self.runtime.record_event("verification", **verification.model_dump(mode="json"))
             if verification.passed:
                 return self._finish(FastPathStatus.VERIFIED, task, "Completion predicate verified.",
                                     state, verification, steps, metrics, started)
