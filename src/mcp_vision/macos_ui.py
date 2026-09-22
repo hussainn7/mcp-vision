@@ -76,9 +76,17 @@ def capture_native_context() -> Context:
             err, pid_ref = AX.AXUIElementGetPid(element, None)
             if err == 0 and pid_ref:
                 pid = int(pid_ref)
-                matched = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-                if matched:
-                    app = matched
+                front_pid = int(front.processIdentifier()) if front else None
+                if front_pid is not None and pid != front_pid:
+                    # A stationary pointer may sit over another application's
+                    # window. Context stays bound to the app the user invoked.
+                    pid = front_pid
+                    focused_app = AX.AXUIElementCreateApplication(front_pid)
+                    element = _ax_copy(AX, focused_app, AX.kAXFocusedUIElementAttribute)
+                elif front is None:
+                    matched = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+                    if matched:
+                        app = matched
         except Exception:
             pass
         window = _ax_copy(AX, element, AX.kAXWindowAttribute) or _ax_copy(AX, element, "AXTopLevelUIElement")
