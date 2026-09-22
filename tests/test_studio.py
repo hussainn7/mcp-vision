@@ -111,6 +111,7 @@ def test_context_reaches_runtime_and_ask_returns_response(studio):
     runtime = json.loads(body)
     assert status == 200 and runtime["latestApplication"] == "Google Chrome"
     assert runtime["latestTitle"] == "Example"
+    assert runtime["latestFocused"] is None
     studio.provider = "definitely-unavailable"
     status, body = request(studio, "/api/ask", {
         "contextId": context_id, "request": "What does this mean?"

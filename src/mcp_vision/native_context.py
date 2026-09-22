@@ -63,7 +63,12 @@ def nearby_ax(api, root, limit=60):
             continue
         desc = describe_ax(api, element)
         box = desc.bounds
-        if box and box.width > 0 and box.height > 0 and (desc.name or desc.value or desc.attributes.get('checked') is not None):
+        semantic_control = desc.role in {
+            'AXButton', 'AXTextField', 'AXTextArea', 'AXCheckBox', 'AXRadioButton',
+            'AXPopUpButton', 'AXComboBox', 'AXSlider', 'AXIncrementor',
+        }
+        if box and box.width > 0 and box.height > 0 and (
+                desc.name or desc.value or desc.attributes.get('checked') is not None or semantic_control):
             index = len(records)
             name = desc.name.strip() or desc.value.strip()[:80] or role_label(desc.role)
             checked = desc.attributes.get('checked')

@@ -124,6 +124,9 @@ class Handler(BaseHTTPRequestHandler):
                               "latestContext": latest.context_id if latest else None,
                               "latestApplication": latest.source_application if latest else None,
                               "latestTitle": latest.title if latest else None,
+                              "latestFocused": ({"role": latest.focused_element.role,
+                                                 "name": latest.focused_element.name}
+                                                if latest and latest.focused_element else None),
                               "permissions": self.server.permissions()})
             return
         assets = {"/": ("index.html", "text/html; charset=utf-8"),

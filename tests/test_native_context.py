@@ -53,6 +53,14 @@ def test_nameless_ax_control_gets_usable_label():
     assert handles[0]['AXValue'] == 'Draft note'
 
 
+def test_blank_editable_ax_control_is_not_dropped():
+    root = element('', AXRole='AXTextArea', AXValue='', AXChildren=[])
+    records, handles = nearby_ax(AX, root, 5)
+    assert len(records) == 1
+    assert records[0]['name'] == 'Text Area' and records[0]['role'] == 'textbox'
+    assert handles[0] is root
+
+
 def test_native_act_backend_is_bound_for_macos():
     import asyncio
     from mcp_vision.context import Context
