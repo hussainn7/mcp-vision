@@ -9,6 +9,7 @@ import asyncio
 import json
 import math
 import os
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.request import Request, urlopen
 
@@ -46,6 +47,14 @@ class _JevSettings(BaseSettings):
     typesafe_api_key: str | None = None
     typesafe_endpoint: str = "https://api.typesafe.ai/v1/systemone"
     typesafe_model: str = "jev-latest"
+
+
+def _jev_settings(load_env: bool = True) -> _JevSettings:
+    if not load_env:
+        return _JevSettings(_env_file=None)
+    candidates = (Path.cwd() / ".env", Path(__file__).resolve().parents[2] / ".env")
+    env_file = next((path for path in candidates if path.is_file()), None)
+    return _JevSettings(_env_file=env_file)
 
 
 @runtime_checkable
@@ -139,7 +148,7 @@ class JevPolicy:
 
     def __init__(self, *, api_key: str | None = None, endpoint: str | None = None,
                  model: str | None = None, load_env: bool = True):
-        settings = _JevSettings(_env_file=".env" if load_env else None)
+        settings = _jev_settings(load_env)
         self.api_key = api_key or settings.typesafe_api_key
         self.endpoint = endpoint or settings.typesafe_endpoint
         self.model = model or settings.typesafe_model
@@ -272,7 +281,7 @@ class JevPolicy:
 
 def jev_status() -> dict[str, Any]:
     """Expose configuration presence only; never return credentials."""
-    settings = _JevSettings()
+    settings = _jev_settings()
     return {"configured": bool(settings.typesafe_api_key), "model": settings.typesafe_model}
 
 

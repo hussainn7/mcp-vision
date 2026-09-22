@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from mcp_vision.browser import BrowserSnapshot, Receipt
-from mcp_vision.fast_policy import JevPolicy, MockPolicy, RulePolicy
+from mcp_vision.fast_policy import JevPolicy, MockPolicy, RulePolicy, jev_status
 from mcp_vision.state import Operation, StateStore, compile_state, diff_states
 from mcp_vision.transactions import Postcondition, TransactionRuntime
 
@@ -213,3 +213,9 @@ def test_jev_system2_head_escalates_without_execution(monkeypatch):
         assert decision.provider_call == "successful" and decision.fallback == "system2"
 
     asyncio.run(run())
+
+
+def test_jev_status_loads_repo_style_dotenv_without_exposing_key(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("TYPESAFE_API_KEY=test-secret\nTYPESAFE_MODEL=jev-test\n")
+    monkeypatch.chdir(tmp_path)
+    assert jev_status() == {"configured": True, "model": "jev-test"}
