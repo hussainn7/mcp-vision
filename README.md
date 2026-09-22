@@ -173,6 +173,10 @@ loop budgets and evidence-based completion. Reproduce the local dynamic-browser
 comparison in [docs/BENCHMARKS.md](docs/BENCHMARKS.md); the checked-in report is
 deliberately explicit about what was and was not measured.
 
+For the execution ladder, perception fallback, Studio/replay experience,
+dogfooding evidence, and current limitations, see
+[docs/COMPUTER_USE_RUNTIME.md](docs/COMPUTER_USE_RUNTIME.md).
+
 ## License
 
 MIT
