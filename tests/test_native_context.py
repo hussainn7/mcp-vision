@@ -58,7 +58,21 @@ def test_blank_editable_ax_control_is_not_dropped():
     records, handles = nearby_ax(AX, root, 5)
     assert len(records) == 1
     assert records[0]['name'] == 'Text Area' and records[0]['role'] == 'textbox'
+    assert records[0]['ax_name'] == ''
     assert handles[0] is root
+
+
+def test_blank_editable_generated_label_remains_fresh(monkeypatch):
+    from mcp_vision.context import Context
+    from mcp_vision.native_context import NativeContextBackend
+
+    target = element('', AXRole='AXTextArea', AXValue='', AXChildren=[])
+    records, handles = nearby_ax(AX, target, 5)
+    backend = NativeContextBackend(Context(source='macos', accessibility_context={'pid': 42}), allow_writes=True)
+    backend.sid, backend.handles = 's1', handles
+    backend.records = {record['index']: record for record in records}
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', AX)
+    assert backend._fresh_element('s1', 0, AX) is target
 
 
 def test_native_act_backend_is_bound_for_macos():

@@ -74,6 +74,7 @@ def nearby_ax(api, root, limit=60):
             checked = desc.attributes.get('checked')
             records.append({
                 'index': index, 'name': name, 'role': normalize_role(desc.role), 'ax_role': desc.role,
+                'ax_name': desc.name,
                 'value': desc.value,
                 'checked': None if checked is None else checked == 'True',
                 'x': box.x, 'y': box.y, 'w': box.width, 'h': box.height,
@@ -118,7 +119,8 @@ class NativeContextBackend:
         element = self._element(snapshot_id, index)
         original = self.records.get(index)
         fresh = describe_ax(api, element)
-        if not original or fresh.role != original.get('ax_role') or fresh.name != original.get('name'):
+        if (not original or fresh.role != original.get('ax_role')
+                or fresh.name != original.get('ax_name', original.get('name'))):
             raise LookupError('stale')
         box = fresh.bounds
         if not box or any(round(value) != round(original[key]) for value, key in (
