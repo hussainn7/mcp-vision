@@ -54,7 +54,8 @@ async def _runtime(prefer_live: bool, headed: bool):
 async def task_ebay(runtime) -> dict:
     name = "ebay_research"
     urls = [
-        "https://www.ebay.com/sch/i.html?_nkw=mechanical+keyboard&_ipg=25",
+        ("https://www.ebay.com/sch/i.html?_from=R40&_trksid=p2334524.m570.l1313"
+         "&_nkw=mechanical+keyboard&_sacat=0"),
         "https://www.ebay.co.uk/sch/i.html?_nkw=mechanical+keyboard&_ipg=25",
         "https://www.google.com/search?tbm=shop&q=mechanical+keyboard",
     ]
@@ -86,7 +87,7 @@ async def task_ebay(runtime) -> dict:
                 blocked += 1
         ok = "error page" not in snap.title.lower() and (len(prices) >= 1 or len(snap.elements) > 10)
         last = _scrub(
-            f"host={urlsplit(url).hostname} elements={len(snap.elements)} "
+            f"host={urlsplit(snap.url).hostname} elements={len(snap.elements)} "
             f"prices={len(prices)} buy_blocked={blocked}/{tested} title={snap.title}"
         )
         if ok:
