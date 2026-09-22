@@ -143,6 +143,13 @@ def submission_context(captured: Context | None, request: str, pending_request: 
     """Go must never re-capture the foreground popup as task context."""
     context = captured or Context(source="macos")
     if pending_request:
+        from mcp_vision.contextual import infer_capability
+        from mcp_vision.request_routing import route_request
+        fresh_mode = infer_capability(request)
+        fresh_route = route_request(request, fresh_mode)
+        if fresh_mode == "act" and fresh_route.kind not in {"context", "input"}:
+            pending_request = None
+    if pending_request:
         import re
         from mcp_vision.request_routing import route_request
         if route_request(pending_request, 'ask').missing == 'departure' and not re.search(r'\bfrom\b', request, re.I):
@@ -200,6 +207,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.server = None
             self.monitors = []
             self.task = None
+            self.task_generation = 0
             self.history = []
             self.pending_request = None
             self.source_path = None
@@ -552,11 +560,19 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
         def _hotkey_down(self):
             if self.task:
                 self.task.cancel()
+                self.task_generation += 1
+                self.task = None
+                self.compact_task = False
+                self.input.setEnabled_(True)
+                self.send.setEnabled_(True)
+                self.choose_button.setEnabled_(True)
+                self.modes.setEnabled_(True)
+                self.providers.setEnabled_(True)
+                self.cancel_button.setEnabled_(False)
+                self.cancel_button.setHidden_(True)
                 if self.interaction:
                     self.interaction.mark("cancelled")
-                self.show_activity("cancelled", "Stopping after the current safe boundary")
-                self.hide_activity_later(1.5)
-                return
+                self.show_activity("understanding", "Interrupting · hold to speak")
             if self.hold.state != "idle":
                 return
             from mcp_vision.interaction_metrics import InteractionTimeline
@@ -683,7 +699,9 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.submit_(None)
 
         @objc.python_method
-        def show_task_phase(self, phase, message):
+        def show_task_phase(self, phase, message, task_generation=None):
+            if task_generation is not None and task_generation != self.task_generation:
+                return
             if not self.compact_task:
                 return
             if self.interaction and phase == "acting":
@@ -862,10 +880,14 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             mode = (None, "ask", "guide", "act")[self.modes.selectedSegment()]
             choice = LABELS[max(0, self.providers.indexOfSelectedItem())][1]
             selected_provider = resolve_provider(provider or choice)
+            self.task_generation += 1
+            task_generation = self.task_generation
             task = ContextTask(context, mode=mode, provider=selected_provider, source_path=self.source_path,
                                history=self.history,
-                               progress=lambda message: AppHelper.callAfter(self.show_progress, message),
-                               phase=lambda name, message: AppHelper.callAfter(self.show_task_phase, name, message))
+                               progress=lambda message: AppHelper.callAfter(
+                                   self.show_progress, message, task_generation),
+                               phase=lambda name, message: AppHelper.callAfter(
+                                   self.show_task_phase, name, message, task_generation))
             self.task = task
             self.compact_task = self.voice_submission
             if self.interaction:
@@ -902,25 +924,30 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                         await task.backend.close()
             def work():
                 result = asyncio.run(run())
-                AppHelper.callAfter(self.show_answer, result)
+                AppHelper.callAfter(self.show_answer, result, task, task_generation)
             threading.Thread(target=work, daemon=True).start()
 
         @objc.python_method
-        def show_progress(self, message):
+        def show_progress(self, message, task_generation=None):
+            if task_generation is not None and task_generation != self.task_generation:
+                return
             if self.task and not self.task.cancelled.is_set():
                 self.status.setStringValue_(message)
 
         @objc.python_method
-        def show_answer(self, result):
+        def show_answer(self, result, completed_task=None, task_generation=None):
+            if task_generation is not None and task_generation != self.task_generation:
+                return
+            completed_task = completed_task or self.task
             compact = self.compact_task
-            if self.task and result.get("capability") == "ask":
-                self.history.extend([{"role": "user", "content": self.task.context.user_request},
+            if completed_task and result.get("capability") == "ask":
+                self.history.extend([{"role": "user", "content": completed_task.context.user_request},
                                      {"role": "assistant", "content": result["answer"]}])
                 self.history = self.history[-6:]
-            self.pending_request = (self.task.context.user_request if self.task and result.get("state") == "input"
-                                    and (self.task.route.missing or (self.task.mode in {"act", "guide"}
-                                         and self.task.route.kind == "surface")) else None)
-            self.task = None
+            self.pending_request = (completed_task.context.user_request if completed_task and result.get("state") == "input"
+                                    and completed_task.route.missing else None)
+            if self.task is completed_task:
+                self.task = None
             self.compact_task = False
             self.voice_submission = False
             self.input.setEnabled_(True)
@@ -981,6 +1008,8 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
     server = StudioServer(port, invocation_handler=lambda context: AppHelper.callAfter(controller.show_context, context),
                           provider=provider, permission_handler=native_permission_snapshot,
                           permission_request_handler=request_screen_recording)
+    from mcp_vision.paths import state_dir
+    (state_dir() / "ui-startup.log").unlink(missing_ok=True)
     controller.server = server
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

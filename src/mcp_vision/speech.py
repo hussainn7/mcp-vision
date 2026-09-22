@@ -10,7 +10,7 @@ from typing import Any
 class HoldToTalk:
     """Distinguish a shortcut tap from a hold without depending on AppKit."""
 
-    def __init__(self, schedule: Callable[[float, Callable[[], None]], Any], *, threshold: float = 0.2,
+    def __init__(self, schedule: Callable[[float, Callable[[], None]], Any], *, threshold: float = 0.12,
                  on_tap: Callable[[Any], None], on_hold: Callable[[Any], None],
                  on_release: Callable[[], None]):
         self.schedule = schedule
@@ -70,7 +70,7 @@ class AppleSpeechSession:
 
     def __init__(self, *, partial: Callable[[str, int], None], final: Callable[[str, bool, int], None],
                  level: Callable[[float, int], None], status: Callable[[str, int], None],
-                 timeout: float = 2.5):
+                  timeout: float = 1.25):
         self.partial_callback = partial
         self.final_callback = final
         self.level_callback = level
@@ -163,7 +163,7 @@ class AppleSpeechSession:
                 request.appendAudioPCMBuffer_(buffer)
                 self.level_callback(self._level(buffer) if meter_float32 else 0.0, generation)
 
-            input_node.installTapOnBus_bufferSize_format_block_(0, 1024, audio_format, audio)
+            input_node.installTapOnBus_bufferSize_format_block_(0, 512, audio_format, audio)
             engine.prepare()
             ok, error = engine.startAndReturnError_(None)
             if not ok:

@@ -14,6 +14,8 @@ import subprocess
 import sys
 import sysconfig
 
+from PIL import Image
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', default='outputs/MCP-Vision.app')
 parser.add_argument('--planning-model', default=None)
@@ -24,7 +26,9 @@ root = Path(__file__).resolve().parents[1]
 app = Path(args.output).resolve()
 install_path = Path('/Applications/MCP-Vision.app')
 macos = app / 'Contents' / 'MacOS'
+resources = app / 'Contents' / 'Resources'
 macos.mkdir(parents=True, exist_ok=True)
+resources.mkdir(parents=True, exist_ok=True)
 stamp_name = hashlib.sha256(str(app).encode()).hexdigest()[:12] + '.sha256'
 stamp = root / 'outputs' / 'signing' / stamp_name
 stamp.parent.mkdir(parents=True, exist_ok=True)
@@ -34,6 +38,7 @@ info = {
     'CFBundleName': 'MCP-Vision',
     'CFBundleDisplayName': 'MCP-Vision',
     'CFBundleExecutable': 'MCP-Vision',
+    'CFBundleIconFile': 'MCPVision.icns',
     'CFBundlePackageType': 'APPL',
     'CFBundleVersion': '1',
     'CFBundleShortVersionString': '1.0',
@@ -44,6 +49,40 @@ info = {
 }
 plist_data = plistlib.dumps(info)
 (app / 'Contents' / 'Info.plist').write_bytes(plist_data)
+
+icon_source = root / 'dist' / 'logoW.png'
+if not icon_source.is_file():
+    raise SystemExit(f'App icon is unavailable: {icon_source}')
+cropped_icon = root / 'outputs' / 'MCPVision.icon.png'
+with Image.open(icon_source).convert('RGBA') as source_image:
+    visible_alpha = source_image.getchannel('A').point(lambda value: 255 if value > 10 else 0)
+    bounds = visible_alpha.getbbox()
+    if bounds is None:
+        raise SystemExit(f'App icon has no visible pixels: {icon_source}')
+    left, top, right, bottom = bounds
+    side = min(source_image.width, source_image.height, int(max(right - left, bottom - top) * 1.2))
+    center_x = (left + right) // 2
+    center_y = (top + bottom) // 2
+    crop_left = max(0, min(source_image.width - side, center_x - side // 2))
+    crop_top = max(0, min(source_image.height - side, center_y - side // 2))
+    source_image.crop((crop_left, crop_top, crop_left + side, crop_top + side)).save(cropped_icon)
+iconset = root / 'outputs' / 'MCPVision.iconset'
+if iconset.exists():
+    shutil.rmtree(iconset)
+iconset.mkdir(parents=True)
+for points in (16, 32, 128, 256, 512):
+    for scale in (1, 2):
+        pixels = points * scale
+        suffix = '' if scale == 1 else '@2x'
+        subprocess.run([
+            'sips', '-z', str(pixels), str(pixels), str(cropped_icon),
+            '--out', str(iconset / f'icon_{points}x{points}{suffix}.png'),
+        ], check=True, stdout=subprocess.DEVNULL)
+subprocess.run([
+    'iconutil', '-c', 'icns', str(iconset), '-o', str(resources / 'MCPVision.icns'),
+], check=True)
+shutil.rmtree(iconset)
+cropped_icon.unlink()
 
 library = Path(sys.base_prefix) / 'lib' / sysconfig.get_config_var('LDLIBRARY')
 if not library.exists():
@@ -112,7 +151,7 @@ int main(int argc, char **argv) {
 
 launcher = root / 'outputs' / 'MCPVisionLauncher.m'
 launcher.write_text(source)
-digest = hashlib.sha256(source.encode() + plist_data).hexdigest()
+digest = hashlib.sha256(source.encode() + plist_data + icon_source.read_bytes()).hexdigest()
 binary = macos / 'MCP-Vision'
 need_rebuild = args.force or not binary.exists() or not stamp.exists() or stamp.read_text().strip() != digest
 
@@ -122,14 +161,15 @@ if need_rebuild:
         '-o', str(binary), '-framework', 'AppKit', '-framework', 'ApplicationServices', '-framework', 'Carbon',
         '-framework', 'AVFoundation', '-framework', 'Speech',
     ], check=True)
-    # Identifier is fixed; still ad-hoc, but we avoid resigning on every Python change.
+    # An explicit designated requirement keeps TCC identity stable across
+    # launcher and resource rebuilds even though the ad-hoc CDHash changes.
     subprocess.run([
-        'codesign', '--force', '--sign', '-', '--identifier', 'org.mcpvision.contextual', str(app),
+        'codesign', '--force', '--sign', '-', '--identifier', 'org.mcpvision.contextual',
+        '--requirements', '=designated => identifier "org.mcpvision.contextual"', str(app),
     ], check=True)
     stamp.write_text(digest + '\n')
     print('Native launcher rebuilt and signed.')
-    print('An ad-hoc rebuild changes the app code identity. If prompted, re-grant Accessibility,')
-    print('Microphone, and Speech Recognition access to /Applications/MCP-Vision.app.')
+    print('The stable bundle requirement preserves privacy identity across future rebuilds.')
 else:
     print('Native launcher unchanged — keeping existing code signature (Accessibility identity preserved).')
 

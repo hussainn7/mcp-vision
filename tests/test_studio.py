@@ -123,6 +123,48 @@ def test_context_reaches_runtime_and_ask_returns_response(studio):
     assert "selected sentence" in result["answer"]
 
 
+def test_ask_endpoint_routes_native_actions_without_a_model(studio, monkeypatch):
+    calls = []
+    monkeypatch.setattr("mcp_vision.native_apps.perform", lambda action, value, pid=0, bundle_id="":
+                        calls.append((action, value)) or
+                        {"ok": True, "verified": True, "message": "Opened Notes."})
+    headers = {"Content-Type": "application/json", "X-MCP-Vision": "studio"}
+    status, body = request(studio, "/api/ask", {"request": "Can you open up Notes for me?"}, headers)
+    result = json.loads(body)
+    assert status == 200 and result["state"] == "review"
+    assert result["answer"] == "Opened Notes."
+    assert calls == [("open_app", "Notes")]
+
+
+def test_ask_endpoint_binds_generic_surface_actions(studio, monkeypatch):
+    from mcp_vision.context import Context
+
+    class Backend:
+        closed = False
+        async def close(self):
+            self.closed = True
+
+    backend = Backend()
+    bound = []
+    async def bind(context, **options):
+        bound.append((context.source_application, options["mode"]))
+        return backend
+    async def run(self):
+        assert self.backend is backend
+        return self.result("review", "Created through the observed interface.")
+    monkeypatch.setattr("mcp_vision.execution.bind_context_backend", bind)
+    monkeypatch.setattr("mcp_vision.tasks.ContextTask.run", run)
+    context = studio.accept_context(Context(
+        source="macos", source_application="Fixture", accessibility_context={"pid": 42}))
+    headers = {"Content-Type": "application/json", "X-MCP-Vision": "studio"}
+    status, body = request(studio, "/api/ask", {
+        "contextId": context.context_id, "request": "Create a new document",
+    }, headers)
+    result = json.loads(body)
+    assert status == 200 and result["state"] == "review"
+    assert bound == [("Fixture", "act")] and backend.closed is True
+
+
 def test_chrome_extension_origin_is_limited_to_context_endpoint(studio):
     headers = {"Host": f"127.0.0.1:{studio.server_port}",
                "Origin": "chrome-extension://example",

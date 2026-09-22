@@ -11,6 +11,8 @@ from mcp_vision.server import (
     _mcp,
     click_element,
     inspect_screen,
+    open_application,
+    prepare_flight_search,
     press_key_combination,
     set_grabber,
     type_text,
@@ -26,12 +28,31 @@ def test_state_runtime_tools_publish_valid_mcp_schemas() -> None:
         expected = {
             "browser_observe", "browser_choose_candidate",
             "browser_execute_candidate", "browser_transaction_log", "browser_fastpath",
+            "open_application", "prepare_flight_search",
         }
         assert expected <= names
         execute = next(tool for tool in tools if tool.name == "browser_execute_candidate")
         assert {"state_id", "candidate_id", "expected_kind"} <= set(execute.parameters["properties"])
 
     asyncio.run(check())
+
+
+def test_open_application_uses_verified_native_action(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr("mcp_vision.native_apps.perform", lambda action, value: calls.append((action, value)) or {
+        "ok": True, "verified": True, "message": "Opened Notes.",
+    })
+    result = open_application("Notes")
+    assert result["verified"] is True
+    assert calls == [("open_app", "Notes")]
+
+
+def test_prepare_flight_search_clarifies_then_returns_url() -> None:
+    missing = prepare_flight_search("find me a flight to SF")
+    assert missing["ready"] is False and missing["missing"] == "departure"
+    ready = prepare_flight_search("find flights from ATL to SF next week")
+    assert ready["ready"] is True
+    assert ready["url"].startswith("https://www.google.com/travel/flights?")
 
 
 def _ui() -> Image.Image:

@@ -12,7 +12,6 @@ from pydantic import ValidationError
 
 from mcp_vision.missions import Mission, RECIPES, brief
 from mcp_vision.context import Context
-from mcp_vision.contextual import answer_context
 from mcp_vision.redaction import redact
 from mcp_vision.utils.config_sync import _entry
 from mcp_vision.fast_policy import jev_status
@@ -52,12 +51,27 @@ class StudioServer(ThreadingHTTPServer):
                 return self.contexts.get(context_id)
             return next(reversed(self.contexts.values()), None) if self.contexts else None
 
-    def answer(self, request: str, context_id: str = "") -> dict[str, str]:
+    def answer(self, request: str, context_id: str = "") -> dict:
         context = self.get_context(context_id)
         if context is None:
             context = self.accept_context(Context(source="api"))
         context = context.model_copy(update={"user_request": request.strip()})
-        return answer_context(context, provider=self.provider)
+        # Keep API, popup, and voice requests on one router. Calling
+        # answer_context directly here silently reduced this surface to text-only.
+        from mcp_vision.tasks import ContextTask
+        from mcp_vision.execution import bind_context_backend
+
+        async def execute():
+            task = ContextTask(context, provider=self.provider)
+            if task.route.kind == "surface":
+                task.backend = await bind_context_backend(context, mode=task.mode)
+            try:
+                return await task.run()
+            finally:
+                if task.backend and hasattr(task.backend, "close"):
+                    await task.backend.close()
+
+        return asyncio.run(execute())
 
 
 class Handler(BaseHTTPRequestHandler):

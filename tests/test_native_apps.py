@@ -24,6 +24,13 @@ def test_filesystem_resolution_finds_an_installed_app(tmp_path):
 def test_intent_parsing_is_conservative():
     assert parse_intent("open Notes").action == "open_app"
     assert parse_intent("open my notes").action == "open_app"
+    assert parse_intent("Please open the Notes app").action == "open_app"
+    assert parse_intent("Launch my Voice Memos app").value == "Voice Memos"
+    assert parse_intent("Can you open up Notes for me?").value == "Notes"
+    assert parse_intent("Please go ahead and open the Notes app").value == "Notes"
+    assert parse_intent("Hey, could you please just open the Notes application real quick?").value == "Notes"
+    assert parse_intent("I need you to directly open Notes right now").value == "Notes"
+    assert parse_intent("Would you be able to go ahead and open up Notes for me, please?").value == "Notes"
     assert parse_intent("Launch Calculator").action == "open_app"
     assert parse_intent("switch tabs").action == "switch_tab"
     assert parse_intent("Switch to the next tab").value == "next"
@@ -39,7 +46,7 @@ def test_intent_parsing_is_conservative():
 
 
 def test_native_intents_are_actions_not_questions():
-    for prompt in ("Open Notes", "switch tabs", "Switch to tab 3", "next window"):
+    for prompt in ("Open Notes", "Please open the Notes app", "switch tabs", "Switch to tab 3", "next window"):
         assert infer_capability(prompt) == "act"
         assert route_request(prompt, "act").kind == "native"
 
@@ -47,6 +54,11 @@ def test_native_intents_are_actions_not_questions():
 def test_browser_open_still_wins_for_web_products():
     assert route_request("Open Gmail", "act").kind == "browser_open"
     assert route_request("Open https://example.com", "act").kind == "browser_open"
+
+
+def test_native_app_command_overrides_stale_ask_mode():
+    route = route_request("Could you just open up the Notes app for me?", "ask")
+    assert route.kind == "native" and route.value == "Notes"
 
 
 def test_shortcut_selection_matches_app_family():

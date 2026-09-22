@@ -31,6 +31,8 @@ def test_capability_is_inferred_without_forcing_a_choice():
     assert infer_capability("Turn this off") == "act"
     assert infer_capability("Complete this application") == "act"
     assert infer_capability("Full out this form") == "act"
+    assert infer_capability("Are you able to create a new note?") == "act"
+    assert infer_capability("Would you be able to make a new tab?") == "act"
 
 
 def test_packaged_context_marks_the_exact_cursor_target():

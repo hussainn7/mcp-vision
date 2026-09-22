@@ -7,7 +7,7 @@ from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import Context, ContextBounds, ContextElement
 from mcp_vision.execution import bind_context_backend
 from mcp_vision.guidance import overlay_script, resolve_target
-from mcp_vision.tasks import ContextTask, ModelPlanner, Step, explicit_native_fill
+from mcp_vision.tasks import ContextTask, ModelPlanner, Step, explicit_native_fill, explicit_semantic_click
 
 
 class Backend:
@@ -216,6 +216,28 @@ def test_model_planner_accepts_wrapped_valid_json(monkeypatch):
     assert step.action == 'fill' and step.name == 'Name' and step.value == 'Jane'
 
 
+@pytest.mark.parametrize(('prompt', 'label'), [
+    ('Are you able to create a new note?', 'New Note'),
+    ('Could you make a new tab for me?', 'New Tab'),
+])
+def test_simple_native_action_grounds_unique_observed_control(prompt, label):
+    snapshot = BrowserSnapshot(snapshot_id='s1', source='macos-accessibility', url='', title='', text='', elements=[
+        {'index': 0, 'role': 'button', 'name': label},
+        {'index': 1, 'role': 'button', 'name': 'Delete'},
+        {'index': 2, 'role': 'button', 'name': 'Button'},
+    ])
+    step = explicit_semantic_click(Context(source='macos', user_request=prompt), snapshot)
+    assert step is not None and step.action == 'click' and step.name == label
+
+
+def test_simple_native_action_never_fast_paths_consequential_control():
+    snapshot = BrowserSnapshot(snapshot_id='s1', source='macos-accessibility', url='', title='', text='', elements=[
+        {'index': 0, 'role': 'button', 'name': 'Delete Note'},
+    ])
+    assert explicit_semantic_click(
+        Context(source='macos', user_request='Delete this note'), snapshot) is None
+
+
 def test_review_reports_empty_required_fields():
     backend = Backend()
     result = asyncio.run(task(backend, lambda _: Step(action='review')).run())
@@ -301,13 +323,20 @@ def test_stale_action_is_resolved_again_before_retry():
     assert calls == ['1', '2']
 
 
-def test_hotkey_chrome_binds_captured_title_to_structured_browser():
+def test_hotkey_chrome_binds_application_controls_to_native_backend():
+    from mcp_vision.native_context import NativeContextBackend
+
+    context = Context(source='macos', source_application='Google Chrome', title='Form',
+                      accessibility_context={'pid': 42, 'bundle_id': 'com.google.Chrome'})
+    result = asyncio.run(bind_context_backend(
+        context, mode='act', factory=lambda **_k: pytest.fail('macOS app chrome must not bind to page DOM')))
+    assert isinstance(result, NativeContextBackend)
+
+
+def test_extension_chrome_context_still_binds_page_dom():
     backend = Backend()
-    async def tabs():
-        return {'connected': True, 'tabs': [{'tab_id': '1', 'url': backend.url, 'title': 'Form'}]}
-    backend.tabs = tabs
-    context = Context(source='macos', source_application='Google Chrome', title='Form')
-    result = asyncio.run(bind_context_backend(context, mode='act', factory=lambda **k: backend))
+    context = Context(source='chrome', source_application='Google Chrome', url=backend.url, title='Form')
+    result = asyncio.run(bind_context_backend(context, mode='act', factory=lambda **_k: backend))
     assert result is backend
 
 

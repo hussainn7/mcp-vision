@@ -9,7 +9,11 @@ import re
 from dataclasses import dataclass
 
 
-_PREFIX = re.compile(r"^\s*(?:(?:please|can you|could you|would you|help me(?: to)?)\s+)*", re.I)
+_PREFIX = re.compile(
+    r"^\s*(?:(?:please|can you(?: help me(?: to)?)?|could you(?: help me(?: to)?)?|"
+    r"would you(?: be able to)?|are you able to|will you|help me(?: to)?)\s+)*",
+    re.I,
+)
 _CONTROLS = r"button|field|tab|menu|checkbox|control|form|input|dropdown|setting|link"
 _FRESHNESS = re.compile(
     r"\b(?:now|currently|current|latest|newest|recent(?:ly)?|today|tonight|tomorrow|"
@@ -56,6 +60,13 @@ class RequestRoute:
 
 
 def route_request(request: str, mode: str) -> RequestRoute:
+    # An unambiguous native command remains actionable in Ask/Auto. This avoids
+    # a stale UI mode degrading "open Notes" into a text-only refusal.
+    if mode != 'guide':
+        from mcp_vision.native_apps import parse_intent
+        intent = parse_intent(request)
+        if intent is not None:
+            return RequestRoute('native', intent.summary, action=intent.action, value=intent.value)
     if mode == 'guide':
         return RequestRoute('surface')
     # Explicit Act still uses the read-only mission for information gathering.
@@ -63,13 +74,6 @@ def route_request(request: str, mode: str) -> RequestRoute:
     text = request_text(request)
     if re.fullmatch(r'(?:do|handle|solve|fix)\s+(?:something|anything)[?.!]*', text):
         return RequestRoute('input', 'What would you like me to work on? Point at it or describe the outcome you want.', 'goal')
-    # Native desktop intents (open an installed app, switch tabs/windows) are
-    # deterministic and verified; never hand them to a language model.
-    if mode == 'act':
-        from mcp_vision.native_apps import parse_intent
-        intent = parse_intent(request)
-        if intent is not None:
-            return RequestRoute('native', intent.summary, action=intent.action, value=intent.value)
     from mcp_vision.plan import product_mention
     if mode == 'act' and re.match(r'(?:open|go to|navigate to)\s+', text):
         destination = re.sub(r'^(?:open|go to|navigate to)\s+', '', _PREFIX.sub('', request.strip()), flags=re.I).strip()

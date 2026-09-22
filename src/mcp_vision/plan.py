@@ -175,7 +175,7 @@ def _flight_term(q: str) -> str:
         )
         clean = re.sub(re.escape(phrase), "", clean, flags=re.I)
         clean = re.sub(
-            r"\b(?:flights?|tickets?|trip)\s+([a-z0-9][a-z0-9 .'-]*?)\s+to\s+",
+            r"\b(?:flights?|tickets?|trip)\s+(?:from\s+)?([a-z0-9][a-z0-9 .'-]*?)\s+to\s+",
             r"flights from \1 to ",
             clean,
             flags=re.I,

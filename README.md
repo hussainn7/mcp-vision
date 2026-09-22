@@ -78,6 +78,7 @@ Examples in the popup:
 - “Find flights to SFO next week” → asks for the missing departure airport;
   your next reply continues that request.
 - “Open Gmail” → opens or reuses the service and verifies the destination.
+- “Open the Notes app” → launches Notes and verifies that it is frontmost.
 - “Where is the export button?” → Guide on the captured app.
 - “Fill this using my résumé, don’t submit” → factual filling and review.
 
@@ -87,6 +88,11 @@ credentials, OS permissions, sign-in and CAPTCHA remain explicit setup/user step
 It does not silently change providers or download model weights. This is a bounded
 assistant, not universal automation: unsupported controls and uncertain outcomes
 stop with a blocker; sending, booking and purchasing remain gated.
+
+While a task is running, hold **Option-Space** and start speaking to interrupt it
+at the next safe boundary and replace it with the new request. Partial speech is
+shown mid-sentence; actions still wait for a final transcript to avoid executing
+an incomplete command.
 
 For Chrome, open `chrome://extensions`, enable Developer mode, choose **Load
 unpacked**, and select this repository's `chrome_relay` folder. Right-click a page

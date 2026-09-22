@@ -53,6 +53,12 @@ def test_next_week_becomes_a_concrete_search_window():
     assert end.isoformat() == '2026-09-27'
 
 
+def test_relative_date_term_does_not_duplicate_from():
+    term = _flight_term("find flights from ATL to SF next week")
+    assert "from from" not in term.lower()
+    assert "flights from ATL to SF" in term
+
+
 def test_shorthand_route_and_ordinal_date_are_complete():
     prompt = "get flights ATL to SF on the 28th"
     assert route_request(prompt, "ask").kind == "browser"

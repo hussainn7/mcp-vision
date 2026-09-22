@@ -52,6 +52,28 @@ def test_capture_and_submission_helpers_exist():
     assert inspect.isroutine(ui.submission_context) or callable(ui.submission_context)
 
 
+def test_native_command_starts_fresh_instead_of_joining_research_clarification():
+    from mcp_vision.context import Context
+
+    context = ui.submission_context(
+        Context(source="macos"),
+        "Please just open the Notes app for me",
+        "Find flights to San Francisco next week",
+    )
+    assert context.user_request == "Please just open the Notes app for me"
+
+
+def test_generic_ui_action_starts_fresh_instead_of_joining_research_clarification():
+    from mcp_vision.context import Context
+
+    context = ui.submission_context(
+        Context(source="macos", source_application="Notes"),
+        "Are you able to create a new note?",
+        "Find flights to San Francisco next week",
+    )
+    assert context.user_request == "Are you able to create a new note?"
+
+
 def test_input_supports_standard_editing_without_system_focus_ring():
     src = _source()
     assert 'self.input.setMenu_(_edit_menu())' in src
@@ -87,3 +109,12 @@ def test_launcher_declares_voice_permissions_and_release_event():
     assert "source.encode() + plist_data" in src
     assert "stamp_name" in src
     assert "--no-install" in src
+
+
+def test_launcher_builds_icon_and_uses_stable_designated_requirement():
+    from pathlib import Path
+
+    src = Path("scripts/build_macos_app.py").read_text()
+    assert "dist' / 'logoW.png" in src
+    assert "CFBundleIconFile" in src and "iconutil" in src
+    assert 'designated => identifier "org.mcpvision.contextual"' in src

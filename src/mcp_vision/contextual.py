@@ -45,7 +45,7 @@ def infer_capability(request: str) -> Capability:
         return "ask"
     if re.match(
         r"\s*(?:(?:please|can you|could you)\s+)*"
-        r"(fill|full out|complete|click|press|type|send|submit|book|buy|apply|change|delete|move|create|"
+        r"(fill|full out|complete|click|press|type|send|submit|book|buy|apply|change|delete|move|create|make|add|"
         r"export|download|open|organize|enable|disable|toggle|attach|upload|search|find|"
         r"look up|look for|navigate|go to|select|check|uncheck|set|write|paste|login|log in|"
         r"sign in|turn)\b",
@@ -99,8 +99,8 @@ def answer_context(context: Context, *, provider: str | None = None, history: li
         "ask which website the user is using unless that is actually needed for their goal. "
         "Do not tell the user to switch modes. Do not invent screen content that was not provided. "
         "You run as a desktop agent on macOS: never claim you cannot open applications, switch tabs or "
-        "windows, or control the computer. Those requests are handled by the action layer before they "
-        "reach you, so answer the underlying question instead of refusing. "
+        "windows, or control the computer. Recognized desktop requests are handled by the action layer; "
+        "if one reaches you, state the exact missing detail rather than inventing a capability limitation. "
         "If the request depends on missing context, say exactly what is missing. Keep the answer under 180 words."
     )
     try:

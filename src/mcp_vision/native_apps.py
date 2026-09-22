@@ -15,7 +15,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
-_PREFIX = re.compile(r"^\s*(?:(?:please|can you|could you|would you|help me(?: to)?)\s+)*", re.I)
+_PREFIX = re.compile(
+    r"^\s*(?:(?:hey[,.]?|please|can you|could you|would you(?: be able to)?|"
+    r"help me(?: to)?|i (?:want|need) you to)\s+)*",
+    re.I,
+)
 
 
 def _normalize(name: str) -> str:
@@ -153,7 +157,8 @@ _WIN_NEXT = re.compile(r"\b(?:next|switch|cycle)\s+windows?\b", re.I)
 _WIN_PREV = re.compile(r"\b(?:previous|prev|last)\s+window\b", re.I)
 _OPEN = re.compile(
     r"^\s*(?:(?:please|can you|could you|would you)\s+)*"
-    r"(?:open|launch|start|bring up|switch to|focus)\s+(.+?)\s*[.!]?$",
+    r"(?:(?:go ahead and|just|actually|quickly|directly)\s+)*"
+    r"(?:open(?:\s+up)?|launch|start|bring up|switch to|focus)\s+(.+?)\s*[.?!]?$",
     re.I,
 )
 _UI_WORDS = re.compile(
@@ -192,7 +197,14 @@ def parse_intent(request: str) -> NativeIntent | None:
     match = _OPEN.match(text)
     if match:
         destination = match.group(1).strip().strip("“”\"'")
-        candidate = re.sub(r"^my\s+", "", destination)
+        destination = re.sub(
+            r"(?:\s*[,;]?\s+(?:for me|please|right now|now|real quick|if you can))+$",
+            "",
+            destination,
+        )
+        # Articles belong to the command, not the installed application name.
+        candidate = re.sub(r"^(?:the|my)\s+", "", destination)
+        candidate = re.sub(r"\s+(?:app|application)\s*$", "", candidate)
         if _looks_like_app_name(candidate):
             target = resolve_app(candidate)
             if target:
@@ -222,9 +234,9 @@ def _matches(target: AppTarget, bundle_id: str, name: str) -> bool:
 def _open_command(target: AppTarget) -> bool:
     if target.path:
         command = ["open", "-a", target.path]
-    elif target.bundle_id:
-        command = ["open", "-b", target.bundle_id]
     else:
+        # `open -b` launches by bundle id but can leave an existing app in the
+        # background. Opening by application name also requests activation.
         command = ["open", "-a", target.name]
     return subprocess.run(command, capture_output=True, timeout=15).returncode == 0
 
