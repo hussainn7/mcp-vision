@@ -50,11 +50,19 @@ mcp-vision doctor
 mcp-vision ui
 ```
 
-Press **Option-Space** anywhere to open the small MCP-Vision popup beside the
-cursor. It collects the foreground application, window, selection, and focused
-accessibility element when macOS makes those fields reliably available. A simple
-Ask is answered in place; the inferred Ask · Guide · Act labels do not create a
-second automation engine.
+Tap **Option-Space** anywhere to open the MCP-Vision text panel. Hold
+**Option-Space** to speak: a compact top-center panel streams the transcript,
+and releasing the shortcut submits the final text. It stays compact through
+understanding, acting, verification, and normal completion; clarification and
+errors open the detailed panel. The app collects the foreground application,
+window, selection, and focused accessibility element when macOS makes those
+fields reliably available. A simple Ask is answered in place; the inferred
+Ask · Guide · Act labels do not create a second automation engine.
+
+The first voice interaction asks for Microphone and Speech Recognition access.
+macOS chooses on-device recognition when available and may use Apple Speech as
+a fallback. Audio is not saved. Privacy-safe latency milestones are written to
+`~/.local/share/mcp-vision/interaction_metrics.jsonl` without transcript text.
 
 Auto chooses the behavior separately for each request. Ask can answer general
 questions or gather read-only browser evidence; Guide points at controls; Act

@@ -26,6 +26,9 @@ from mcp_vision.tasks import ContextTask
     ('Can you fill this form?', 'act', 'surface'),
     ('Open Gmail', 'act', 'browser_open'),
     ('Open https://example.com', 'act', 'browser_open'),
+    ('Open Notes', 'act', 'native'),
+    ('switch tabs', 'act', 'native'),
+    ('Switch to tab 3', 'act', 'native'),
     ('Send an email in Gmail', 'act', 'surface'),
 ])
 def test_first_filter(prompt, mode, route):

@@ -17,6 +17,10 @@ def native_permission_snapshot() -> dict[str, Any]:
         "executablePath": sys.executable,
         "accessibility": True,
         "screenRecording": True,
+        "microphone": None,
+        "microphoneStatus": "unavailable",
+        "speechRecognition": None,
+        "speechRecognitionStatus": "unavailable",
         "scope": "current-process",
     }
     if sys.platform != "darwin":
@@ -45,6 +49,24 @@ def native_permission_snapshot() -> dict[str, Any]:
         snapshot["screenRecording"] = bool(CGPreflightScreenCaptureAccess())
     except Exception:
         snapshot["screenRecording"] = None
+    try:
+        import AVFoundation
+
+        status = int(AVFoundation.AVCaptureDevice.authorizationStatusForMediaType_(AVFoundation.AVMediaTypeAudio))
+        names = {0: "not-determined", 1: "restricted", 2: "denied", 3: "authorized"}
+        snapshot["microphoneStatus"] = names.get(status, "unknown")
+        snapshot["microphone"] = True if status == 3 else False if status in {1, 2} else None
+    except Exception:
+        pass
+    try:
+        import Speech
+
+        status = int(Speech.SFSpeechRecognizer.authorizationStatus())
+        names = {0: "not-determined", 1: "denied", 2: "restricted", 3: "authorized"}
+        snapshot["speechRecognitionStatus"] = names.get(status, "unknown")
+        snapshot["speechRecognition"] = True if status == 3 else False if status in {1, 2} else None
+    except Exception:
+        pass
     return snapshot
 
 

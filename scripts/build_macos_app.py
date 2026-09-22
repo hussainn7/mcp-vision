@@ -18,13 +18,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--output', default='outputs/MCP-Vision.app')
 parser.add_argument('--planning-model', default=None)
 parser.add_argument('--force', action='store_true', help='Force native rebuild + resign')
+parser.add_argument('--no-install', action='store_true', help='Build and sign without replacing /Applications/MCP-Vision.app')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 app = Path(args.output).resolve()
 install_path = Path('/Applications/MCP-Vision.app')
 macos = app / 'Contents' / 'MacOS'
 macos.mkdir(parents=True, exist_ok=True)
-stamp = root / 'outputs' / 'signing' / 'launcher.sha256'
+stamp_name = hashlib.sha256(str(app).encode()).hexdigest()[:12] + '.sha256'
+stamp = root / 'outputs' / 'signing' / stamp_name
 stamp.parent.mkdir(parents=True, exist_ok=True)
 
 info = {
@@ -37,8 +39,11 @@ info = {
     'CFBundleShortVersionString': '1.0',
     'LSUIElement': True,
     'NSAppleEventsUsageDescription': 'MCP-Vision reads and controls your selected Chrome tab when you ask it to.',
+    'NSMicrophoneUsageDescription': 'MCP-Vision listens only while you hold the talk shortcut.',
+    'NSSpeechRecognitionUsageDescription': 'MCP-Vision transcribes speech into the request you ask it to perform.',
 }
-(app / 'Contents' / 'Info.plist').write_bytes(plistlib.dumps(info))
+plist_data = plistlib.dumps(info)
+(app / 'Contents' / 'Info.plist').write_bytes(plist_data)
 
 library = Path(sys.base_prefix) / 'lib' / sysconfig.get_config_var('LDLIBRARY')
 if not library.exists():
@@ -59,17 +64,21 @@ static EventHandlerRef gHotKeyHandler;
 static EventHotKeyRef gHotKeyOptionSpace;
 static EventHotKeyRef gHotKeyControlOptionSpace;
 
-static OSStatus HotKeyPressed(EventHandlerCallRef next, EventRef event, void *data) {
-    (void)next; (void)event; (void)data;
+static OSStatus HotKeyChanged(EventHandlerCallRef next, EventRef event, void *data) {
+    (void)next; (void)data;
+    NSString *phase = GetEventKind(event) == kEventHotKeyPressed ? @"down" : @"up";
     [[NSDistributedNotificationCenter defaultCenter]
         postNotificationName:@"org.mcpvision.contextual.hotkey"
-        object:nil userInfo:nil deliverImmediately:YES];
+        object:nil userInfo:@{@"phase": phase} deliverImmediately:YES];
     return noErr;
 }
 
 static void InstallHotKeys(void) {
-    EventTypeSpec spec = {kEventClassKeyboard, kEventHotKeyPressed};
-    InstallEventHandler(GetEventDispatcherTarget(), HotKeyPressed, 1, &spec, NULL, &gHotKeyHandler);
+    EventTypeSpec specs[] = {
+        {kEventClassKeyboard, kEventHotKeyPressed},
+        {kEventClassKeyboard, kEventHotKeyReleased},
+    };
+    InstallEventHandler(GetEventDispatcherTarget(), HotKeyChanged, 2, specs, NULL, &gHotKeyHandler);
     EventHotKeyID opt = {'MCPV', 1};
     EventHotKeyID ctrl = {'MCPV', 2};
     RegisterEventHotKey(kVK_Space, optionKey, opt, GetEventDispatcherTarget(), 0, &gHotKeyOptionSpace);
@@ -103,7 +112,7 @@ int main(int argc, char **argv) {
 
 launcher = root / 'outputs' / 'MCPVisionLauncher.m'
 launcher.write_text(source)
-digest = hashlib.sha256(source.encode()).hexdigest()
+digest = hashlib.sha256(source.encode() + plist_data).hexdigest()
 binary = macos / 'MCP-Vision'
 need_rebuild = args.force or not binary.exists() or not stamp.exists() or stamp.read_text().strip() != digest
 
@@ -111,6 +120,7 @@ if need_rebuild:
     subprocess.run([
         'clang', '-fmodules-cache-path=' + str(root / 'outputs' / 'clang-cache'), str(launcher),
         '-o', str(binary), '-framework', 'AppKit', '-framework', 'ApplicationServices', '-framework', 'Carbon',
+        '-framework', 'AVFoundation', '-framework', 'Speech',
     ], check=True)
     # Identifier is fixed; still ad-hoc, but we avoid resigning on every Python change.
     subprocess.run([
@@ -118,13 +128,15 @@ if need_rebuild:
     ], check=True)
     stamp.write_text(digest + '\n')
     print('Native launcher rebuilt and signed.')
-    print('If Accessibility breaks: System Settings → Privacy → Accessibility → remove old MCP-Vision entries,')
-    print('then add /Applications/MCP-Vision.app once and enable it.')
+    print('An ad-hoc rebuild changes the app code identity. If prompted, re-grant Accessibility,')
+    print('Microphone, and Speech Recognition access to /Applications/MCP-Vision.app.')
 else:
     print('Native launcher unchanged — keeping existing code signature (Accessibility identity preserved).')
 
-if install_path.exists():
-    shutil.rmtree(install_path)
-shutil.copytree(app, install_path, symlinks=True)
-print(install_path)
+if not args.no_install and app != install_path:
+    if install_path.exists():
+        shutil.rmtree(install_path)
+    shutil.copytree(app, install_path, symlinks=True)
+if not args.no_install:
+    print(install_path)
 print(app)

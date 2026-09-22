@@ -48,9 +48,11 @@ def needs_browser(request: str) -> bool:
 
 @dataclass(frozen=True)
 class RequestRoute:
-    kind: str  # context, browser, browser_open, surface, input
+    kind: str  # context, browser, browser_open, surface, native, input
     message: str = ''
     missing: str = ''
+    action: str = ''
+    value: str = ''
 
 
 def route_request(request: str, mode: str) -> RequestRoute:
@@ -61,6 +63,13 @@ def route_request(request: str, mode: str) -> RequestRoute:
     text = request_text(request)
     if re.fullmatch(r'(?:do|handle|solve|fix)\s+(?:something|anything)[?.!]*', text):
         return RequestRoute('input', 'What would you like me to work on? Point at it or describe the outcome you want.', 'goal')
+    # Native desktop intents (open an installed app, switch tabs/windows) are
+    # deterministic and verified; never hand them to a language model.
+    if mode == 'act':
+        from mcp_vision.native_apps import parse_intent
+        intent = parse_intent(request)
+        if intent is not None:
+            return RequestRoute('native', intent.summary, action=intent.action, value=intent.value)
     from mcp_vision.plan import product_mention
     if mode == 'act' and re.match(r'(?:open|go to|navigate to)\s+', text):
         destination = re.sub(r'^(?:open|go to|navigate to)\s+', '', _PREFIX.sub('', request.strip()), flags=re.I).strip()

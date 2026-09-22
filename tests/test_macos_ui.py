@@ -62,3 +62,28 @@ def test_input_supports_standard_editing_without_system_focus_ring():
 
 def test_popup_names_the_control_under_the_cursor():
     assert 'under cursor:' in _source()
+
+
+def test_hold_to_talk_and_compact_activity_panel_are_wired():
+    src = _source()
+    assert "NSEventMaskKeyUp" in src
+    assert "HoldToTalk" in src and "AppleSpeechSession" in src
+    assert "NSWindowStyleMaskNonactivatingPanel" in src
+    assert '"listening": "LISTENING"' in src
+    assert '"verifying": "VERIFYING"' in src
+
+
+def test_top_center_geometry_handles_offset_displays():
+    assert ui.top_center_origin((100, -900, 1200, 800), (400, 88)) == (500, -198)
+
+
+def test_launcher_declares_voice_permissions_and_release_event():
+    from pathlib import Path
+
+    src = Path("scripts/build_macos_app.py").read_text()
+    assert "NSMicrophoneUsageDescription" in src
+    assert "NSSpeechRecognitionUsageDescription" in src
+    assert "kEventHotKeyReleased" in src
+    assert "source.encode() + plist_data" in src
+    assert "stamp_name" in src
+    assert "--no-install" in src

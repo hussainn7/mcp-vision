@@ -91,6 +91,16 @@ def test_cancel_after_dispatch_prevents_next_action():
     assert backend.actions == 1
 
 
+def test_task_emits_structured_activity_phases():
+    backend = Backend()
+    steps = iter([Step(action='fill', name='Name', role='textbox', value='Jane'), Step(action='review')])
+    phases = []
+    result = asyncio.run(task(backend, lambda _: next(steps),
+                              phase=lambda name, message: phases.append((name, message))).run())
+    assert result['state'] == 'review'
+    assert [name for name, _message in phases] == ['understanding', 'acting', 'verifying']
+
+
 @pytest.mark.parametrize('confidence,expected', [(0.4, 'input'), (.95, 'guided')])
 def test_guide_confidence(confidence, expected):
     backend = Backend()

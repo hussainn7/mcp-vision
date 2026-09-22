@@ -50,7 +50,7 @@ def test_status_reports_permission_identity_from_native_process():
     server = StudioServer(0, permission_handler=lambda: {
         "scope": "current-process", "bundleId": "org.mcpvision.contextual",
         "bundlePath": "/Applications/MCP-Vision.app", "accessibility": True,
-        "screenRecording": False,
+        "screenRecording": False, "microphone": True, "speechRecognition": None,
     })
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -62,6 +62,8 @@ def test_status_reports_permission_identity_from_native_process():
         assert permissions["bundleId"] == "org.mcpvision.contextual"
         assert permissions["accessibility"] is True
         assert permissions["screenRecording"] is False
+        assert permissions["microphone"] is True
+        assert permissions["speechRecognition"] is None
     finally:
         server.shutdown()
         server.server_close()

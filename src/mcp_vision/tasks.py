@@ -139,7 +139,7 @@ def read_source(path):
 
 class ContextTask:
     def __init__(self, context, *, mode=None, backend=None, planner=None, provider=None,
-                 source_path=None, progress=None, history=None, max_steps=24):
+                 source_path=None, progress=None, phase=None, history=None, max_steps=24):
         self.context = context
         self.mode = mode or infer_capability(context.user_request)
         if self.mode not in {'ask', 'guide', 'act'}:
@@ -166,6 +166,7 @@ class ContextTask:
         self.provider = provider
         self.source_path = source_path
         self.progress = progress or (lambda message: None)
+        self.phase = phase or (lambda name, message: None)
         self.history = history or []
         self.cancelled = threading.Event()
         self.max_steps = min(max_steps, 40)
@@ -184,9 +185,10 @@ class ContextTask:
             except RuntimeError:
                 pass
 
-    def emit(self, message):
+    def emit(self, message, phase="understanding"):
         self.events.append(message)
         self.progress(message)
+        self.phase(phase, message)
 
     def result(self, state, answer):
         return {'capability': self.mode, 'state': state, 'answer': answer, 'verified': self.verified}
@@ -252,6 +254,17 @@ class ContextTask:
             browser_backend = None
             if self.route.kind == 'input':
                 return self.result('input', self.route.message)
+            if self.route.kind == 'native':
+                from mcp_vision import native_apps
+                self.emit(self.route.message + '…', 'acting')
+                accessibility = self.context.accessibility_context or {}
+                outcome = await asyncio.to_thread(
+                    native_apps.perform, self.route.action, self.route.value,
+                    int(accessibility.get('pid') or 0), str(accessibility.get('bundle_id') or ''))
+                self.check_cancel()
+                self.emit('Checking the resulting state…', 'verifying')
+                message = str(outcome.get('message') or '')
+                return self.result('review' if outcome.get('ok') else 'input', message)
             if self.route.kind == 'browser':
                 from mcp_vision.readiness import ensure_model_ready
                 from mcp_vision.providers import resolve_provider
@@ -408,7 +421,8 @@ class ContextTask:
                 if step.action == 'upload' and not self.source_path:
                     return self.result('input', 'Choose the file to attach first.')
                 self.emit({'fill': 'Filling', 'select': 'Selecting', 'set_checked': 'Updating',
-                           'upload': 'Attaching', 'click': 'Opening', 'scroll': 'Inspecting'}.get(step.action, 'Working on') + ' ' + (step.name or 'the page') + '…')
+                           'upload': 'Attaching', 'click': 'Opening', 'scroll': 'Inspecting'}.get(step.action, 'Working on') + ' ' + (step.name or 'the page') + '…',
+                          "acting")
                 if target and hasattr(self.backend, 'highlight'):
                     await self.backend.highlight(snapshot.snapshot_id, target['index'], 'MCP-Vision · Acting', 2200)
                 self.check_cancel()
@@ -417,7 +431,7 @@ class ContextTask:
                     return self.result('input', 'The action requires approval or is unavailable under the current policy. ' + receipt.message)
                 if receipt.status == 'error' and receipt.executed is False:
                     return self.result('input', 'I could not perform that step. ' + receipt.message)
-                self.emit('Checking the resulting state…')
+                self.emit('Checking the resulting state…', "verifying")
                 expected_navigation = ''
                 if step.action == 'click' and target and target.get('href'):
                     from urllib.parse import urljoin

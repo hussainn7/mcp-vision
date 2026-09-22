@@ -158,6 +158,8 @@ function renderPermissions(permissions) {
   const rows = available ? [
     ["Accessibility", permissions.accessibility, "Required for native app control"],
     ["Screen recording", permissions.screenRecording, "Required for desktop visual context"],
+    ["Microphone", permissions.microphone, `Hold-to-talk · ${permissions.microphoneStatus || "unknown"}`],
+    ["Speech recognition", permissions.speechRecognition, `Streaming transcript · ${permissions.speechRecognitionStatus || "unknown"}`],
   ] : [["Native helper", false, "Launch /Applications/MCP-Vision.app"]];
   $("permission-checks").replaceChildren(...rows.map(([name, ok, detail]) => {
     const row = element("div", `permission-row ${ok === true ? "ready" : ok === false ? "missing" : "unknown"}`);

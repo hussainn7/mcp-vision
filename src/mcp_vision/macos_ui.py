@@ -151,6 +151,14 @@ def submission_context(captured: Context | None, request: str, pending_request: 
     return context.model_copy(update={"user_request": request})
 
 
+def top_center_origin(visible_frame: tuple[float, float, float, float],
+                      panel_size: tuple[float, float], margin: float = 10) -> tuple[float, float]:
+    """Position a compact panel below the usable top edge of a display."""
+    x, y, width, height = visible_frame
+    panel_width, panel_height = panel_size
+    return x + (width - panel_width) / 2, y + height - panel_height - margin
+
+
 def _edit_menu():
     """Standard Edit items so Cmd+C/Cmd+V and right-click work in the popup.
 
@@ -198,7 +206,26 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.highlight_window = None
             self.marker_window = None
             self.highlight_generation = 0
+            self.activity_generation = 0
+            self.voice_submission = False
+            self.compact_task = False
+            self.voice_context = None
+            self.voice_generation = 0
+            self.interaction = None
             self._build_panel()
+            self._build_activity_panel()
+            from mcp_vision.speech import AppleSpeechSession, HoldToTalk
+            self.speech = AppleSpeechSession(
+                partial=lambda text, generation: AppHelper.callAfter(self.speech_partial, text, generation),
+                final=lambda text, reliable, generation: AppHelper.callAfter(
+                    self.speech_final, text, reliable, generation),
+                level=lambda value, generation: AppHelper.callAfter(self.update_waveform, value, generation),
+                status=lambda message, generation: AppHelper.callAfter(self.speech_status, message, generation),
+            )
+            self.hold = HoldToTalk(
+                lambda delay, callback: AppHelper.callLater(delay, callback),
+                on_tap=self.open_typed_context, on_hold=self.start_voice, on_release=self.release_voice,
+            )
             return self
 
         @objc.python_method
@@ -330,30 +357,153 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self._ensure_accessibility()
 
         @objc.python_method
-        def install_hotkey(self):
-            """Wire ⌥Space / ⌃⌥Space plus the menu-bar and native hotkey paths.
+        def _build_activity_panel(self):
+            width, height = 400, 88
+            rect = AppKit.NSMakeRect(0, 0, width, height)
+            style = AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel
+            panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                rect, style, AppKit.NSBackingStoreBuffered, False)
+            panel.setLevel_(AppKit.NSStatusWindowLevel)
+            panel.setFloatingPanel_(True)
+            panel.setHidesOnDeactivate_(False)
+            panel.setReleasedWhenClosed_(False)
+            panel.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                         AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary)
+            panel.setOpaque_(False)
+            panel.setBackgroundColor_(AppKit.NSColor.clearColor())
+            root = AppKit.NSView.alloc().initWithFrame_(rect)
+            root.setWantsLayer_(True)
+            root.layer().setBackgroundColor_(
+                AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.055, .07, .10, .97).CGColor())
+            root.layer().setCornerRadius_(22)
+            root.layer().setBorderWidth_(1)
+            root.layer().setBorderColor_(
+                AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.22, .27, .34, .9).CGColor())
+            panel.setContentView_(root)
 
-            The packaged macOS launcher registers a Carbon global hotkey and posts
-            org.mcpvision.contextual.hotkey; this also installs AppKit key monitors
-            so the same shortcuts work when started via `mcp-vision ui`.
+            self.activity_title = AppKit.NSTextField.labelWithString_("LISTENING")
+            self.activity_title.setFrame_(AppKit.NSMakeRect(20, 51, 285, 22))
+            self.activity_title.setFont_(AppKit.NSFont.systemFontOfSize_weight_(11, AppKit.NSFontWeightBold))
+            self.activity_title.setTextColor_(AppKit.NSColor.systemTealColor())
+            root.addSubview_(self.activity_title)
+            self.activity_detail = AppKit.NSTextField.labelWithString_("Speak now")
+            self.activity_detail.setFrame_(AppKit.NSMakeRect(20, 19, 285, 28))
+            self.activity_detail.setFont_(AppKit.NSFont.systemFontOfSize_(15))
+            self.activity_detail.setTextColor_(AppKit.NSColor.whiteColor())
+            self.activity_detail.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
+            root.addSubview_(self.activity_detail)
+
+            teal = AppKit.NSColor.systemTealColor().CGColor()
+            self.waveform_bars = []
+            for index in range(5):
+                bar = AppKit.NSView.alloc().initWithFrame_(AppKit.NSMakeRect(318 + index * 10, 32, 5, 18))
+                bar.setWantsLayer_(True)
+                bar.layer().setBackgroundColor_(teal)
+                bar.layer().setCornerRadius_(2.5)
+                root.addSubview_(bar)
+                self.waveform_bars.append(bar)
+            self.activity_button = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(309, 26, 76, 30))
+            self.activity_button.setTitle_("Details")
+            self.activity_button.setBezelStyle_(AppKit.NSBezelStyleRounded)
+            self.activity_button.setTarget_(self)
+            self.activity_button.setAction_("expandActivity:")
+            self.activity_button.setHidden_(True)
+            root.addSubview_(self.activity_button)
+            panel.setAccessibilityLabel_("MCP-Vision activity")
+            self.activity_panel = panel
+
+        @objc.python_method
+        def _activity_screen(self, context=None):
+            point = getattr(context, "cursor_position", None)
+            if point is not None:
+                location = AppKit.NSMakePoint(point.x, point.y)
+            else:
+                location = AppKit.NSEvent.mouseLocation()
+            return next((screen for screen in AppKit.NSScreen.screens()
+                         if AppKit.NSPointInRect(location, screen.frame())), AppKit.NSScreen.mainScreen())
+
+        @objc.python_method
+        def show_activity(self, phase, detail=""):
+            labels = {
+                "listening": "LISTENING", "understanding": "UNDERSTANDING",
+                "acting": "ACTING", "verifying": "VERIFYING", "done": "DONE",
+                "input": "NEEDS INPUT", "error": "COULD NOT COMPLETE", "cancelled": "CANCELLED",
+            }
+            self.activity_generation += 1
+            self.activity_title.setStringValue_(labels.get(phase, phase.upper()))
+            self.activity_detail.setStringValue_((detail or labels.get(phase, phase))[:100])
+            self.activity_title.setTextColor_(AppKit.NSColor.systemRedColor() if phase == "error"
+                                              else AppKit.NSColor.systemTealColor())
+            listening = phase == "listening"
+            for bar in self.waveform_bars:
+                bar.setHidden_(not listening)
+            if phase in {"understanding", "acting", "verifying"}:
+                self.activity_button.setTitle_("Stop")
+                self.activity_button.setAction_("stopActivity:")
+                self.activity_button.setHidden_(False)
+            elif phase in {"done", "input", "error"}:
+                self.activity_button.setTitle_("Details")
+                self.activity_button.setAction_("expandActivity:")
+                self.activity_button.setHidden_(False)
+            else:
+                self.activity_button.setHidden_(True)
+            screen = self._activity_screen(self.voice_context or self.context)
+            frame = screen.visibleFrame()
+            origin = top_center_origin((frame.origin.x, frame.origin.y, frame.size.width, frame.size.height), (400, 88))
+            self.activity_panel.setFrameOrigin_(AppKit.NSMakePoint(*origin))
+            self.activity_panel.orderFrontRegardless()
+            self.activity_panel.setAccessibilityValue_(labels.get(phase, phase))
+
+        @objc.python_method
+        def hide_activity(self):
+            self.activity_generation += 1
+            self.activity_panel.orderOut_(None)
+
+        @objc.python_method
+        def hide_activity_later(self, delay=4.0):
+            generation = self.activity_generation
+            def hide():
+                if generation == self.activity_generation:
+                    self.hide_activity()
+            AppHelper.callLater(delay, hide)
+
+        @objc.python_method
+        def update_waveform(self, level, generation):
+            if generation != self.voice_generation or self.hold.state not in {"listening", "finalizing"}:
+                return
+            if not self.activity_panel.isVisible():
+                return
+            if self.interaction:
+                self.interaction.mark("first_audio_frame")
+            amount = max(.08, min(1.0, float(level)))
+            for index, bar in enumerate(self.waveform_bars):
+                height = 8 + 28 * amount * (.55 + .45 * ((index * 3) % 5) / 4)
+                bar.setFrame_(AppKit.NSMakeRect(318 + index * 10, 44 - height / 2, 5, height))
+
+        @objc.python_method
+        def install_hotkey(self):
+            """Wire tap-to-type and hold-to-talk across native hotkey paths.
+
+            The packaged launcher publishes Carbon press/release notifications.
+            AppKit monitors provide the same behavior when run directly from CLI.
             """
-            mask = AppKit.NSEventMaskKeyDown
+            mask = AppKit.NSEventMaskKeyDown | AppKit.NSEventMaskKeyUp
             option = AppKit.NSEventModifierFlagOption
             control = AppKit.NSEventModifierFlagControl
+            shift = AppKit.NSEventModifierFlagShift
 
-            def invoke():
-                context = capture_native_context()
-                AppHelper.callAfter(self.show_context, context)
+            def invoke_typed():
+                AppHelper.callAfter(self.show_context, capture_native_context())
 
             def matches_primary(event):
                 flags = int(event.modifierFlags())
                 return (event.keyCode() == 49 and bool(flags & option)
-                        and not bool(flags & (AppKit.NSEventModifierFlagCommand | control)))
+                        and not bool(flags & (AppKit.NSEventModifierFlagCommand | control | shift)))
 
             def matches_fallback(event):
                 flags = int(event.modifierFlags())
                 return (event.keyCode() == 49 and bool(flags & option) and bool(flags & control)
-                        and not bool(flags & AppKit.NSEventModifierFlagCommand))
+                        and not bool(flags & (AppKit.NSEventModifierFlagCommand | shift)))
 
             def local(event):
                 # Borderless accessory apps often never dispatch ⌘C/⌘V key
@@ -361,29 +511,65 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 # directly to whichever control is first responder.
                 flags = int(event.modifierFlags())
                 cmd = AppKit.NSEventModifierFlagCommand
-                if (bool(flags & cmd) and not bool(flags & (option | control))
+                if (event.type() == AppKit.NSEventTypeKeyDown and bool(flags & cmd) and not bool(flags & (option | control))
                         and self.panel and self.panel.isVisible()):
                     action = {8: "copy:", 7: "cut:", 9: "paste:", 0: "selectAll:"}.get(event.keyCode())
                     if action:
                         AppKit.NSApp.sendAction_to_from_(action, None, None)
                         return None
-                if matches_primary(event) or matches_fallback(event):
-                    invoke()
+                release = (event.type() == AppKit.NSEventTypeKeyUp and event.keyCode() == 49
+                           and self.hold.state != "idle")
+                if matches_primary(event) or matches_fallback(event) or release:
+                    if event.type() == AppKit.NSEventTypeKeyDown:
+                        if not event.isARepeat():
+                            self._hotkey_down()
+                    else:
+                        self._hotkey_up()
                     return None
                 return event
 
             self.monitors.append(AppKit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-                mask, lambda event: invoke() if matches_primary(event) or matches_fallback(event) else None))
+                mask, lambda event: AppHelper.callAfter(
+                    self._hotkey_down if event.type() == AppKit.NSEventTypeKeyDown else self._hotkey_up)
+                if ((matches_primary(event) or matches_fallback(event))
+                    or (event.type() == AppKit.NSEventTypeKeyUp and event.keyCode() == 49
+                        and self.hold.state != "idle")) and not event.isARepeat() else None))
             self.monitors.append(AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, local))
             center = AppKit.NSDistributedNotificationCenter.defaultCenter()
             center.addObserver_selector_name_object_(
                 self, "nativeHotkey:", "org.mcpvision.contextual.hotkey", None)
-            self._menu_invoke = invoke
-            self._install_status_item(invoke)
+            self._menu_invoke = invoke_typed
+            self._install_status_item(invoke_typed)
 
-        def nativeHotkey_(self, _notification):
-            if getattr(self, "_menu_invoke", None):
-                self._menu_invoke()
+        def nativeHotkey_(self, notification):
+            info = notification.userInfo() or {}
+            if str(info.get("phase", "")) == "down":
+                self._hotkey_down()
+            elif str(info.get("phase", "")) == "up":
+                self._hotkey_up()
+
+        @objc.python_method
+        def _hotkey_down(self):
+            if self.task:
+                self.task.cancel()
+                if self.interaction:
+                    self.interaction.mark("cancelled")
+                self.show_activity("cancelled", "Stopping after the current safe boundary")
+                self.hide_activity_later(1.5)
+                return
+            if self.hold.state != "idle":
+                return
+            from mcp_vision.interaction_metrics import InteractionTimeline
+            self.interaction = InteractionTimeline("voice")
+            self.interaction.mark("hotkey_down")
+            context = self.context if self.pending_request else capture_native_context()
+            self.hold.press(context)
+
+        @objc.python_method
+        def _hotkey_up(self):
+            if self.interaction:
+                self.interaction.mark("hotkey_released")
+            self.hold.release()
 
         @objc.python_method
         def _install_status_item(self, invoke):
@@ -429,6 +615,105 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             return trusted
 
         @objc.python_method
+        def start_voice(self, context):
+            self.voice_context = context
+            self.context = context
+            if not self.pending_request:
+                self.history = []
+                self.source_path = None
+                self.modes.setSelectedSegment_(0)
+                self.choose_button.setTitle_("Attach résumé…")
+            self.voice_submission = True
+            if self.interaction:
+                self.interaction.mark("hold_recognized")
+            self.show_activity("listening", "Speak now")
+            self.voice_generation = self.speech.start()
+
+        @objc.python_method
+        def open_typed_context(self, context):
+            if self.interaction:
+                self.interaction.kind = "typed"
+            self.voice_submission = False
+            if self.pending_request:
+                self.input.setStringValue_("")
+                self.input.setPlaceholderString_("Add the missing details…")
+                self._present_panel(self.context)
+            else:
+                self.show_context(context)
+
+        @objc.python_method
+        def release_voice(self):
+            if self.interaction:
+                self.interaction.mark("capture_stopped")
+            self.show_activity("understanding", "Finishing transcript…")
+            self.speech.release()
+
+        @objc.python_method
+        def speech_partial(self, text, generation):
+            if generation != self.voice_generation or self.hold.state not in {"listening", "finalizing"}:
+                return
+            if self.interaction:
+                self.interaction.mark("first_transcript")
+            self.activity_detail.setStringValue_(str(text)[-100:])
+
+        @objc.python_method
+        def speech_status(self, message, generation):
+            if generation == self.voice_generation and self.hold.state in {"listening", "finalizing"}:
+                self.activity_detail.setStringValue_(str(message)[:100])
+                if str(message) == "Listening…" and self.interaction:
+                    self.interaction.mark("capture_started")
+
+        @objc.python_method
+        def speech_final(self, text, reliable, generation):
+            if generation != self.voice_generation or self.hold.state != "finalizing":
+                return
+            self.hold.finish()
+            if self.interaction:
+                self.interaction.mark("final_transcript", reliable=bool(reliable), has_text=bool(text))
+            self.input.setStringValue_(str(text or ""))
+            if not text or not reliable:
+                self.voice_submission = False
+                self.status.setStringValue_("Review the transcript before running it")
+                self.result_heading.setStringValue_("Speech needs review")
+                self.response.setString_("The recognizer did not return a reliable final transcript. Edit the text and press Run.")
+                self._present_panel(self.voice_context)
+                self.hide_activity()
+                return
+            self.show_activity("understanding", "Understanding your request…")
+            self.submit_(None)
+
+        @objc.python_method
+        def show_task_phase(self, phase, message):
+            if not self.compact_task:
+                return
+            if self.interaction and phase == "acting":
+                self.interaction.mark("first_visible_action")
+            if self.interaction and phase == "verifying":
+                self.interaction.mark("verification_started")
+            self.show_activity(phase, message)
+
+        def expandActivity_(self, _sender):
+            self._present_panel(self.context)
+
+        def stopActivity_(self, _sender):
+            self.cancel_(None)
+
+        @objc.python_method
+        def _present_panel(self, context=None):
+            screen = self._activity_screen(context)
+            frame = screen.visibleFrame()
+            mouse = AppKit.NSEvent.mouseLocation()
+            x = min(max(mouse.x + 12, frame.origin.x + 8), frame.origin.x + frame.size.width - 588)
+            y = mouse.y - 622
+            if y < frame.origin.y + 8:
+                y = min(mouse.y + 14, frame.origin.y + frame.size.height - 618)
+            self.panel.setFrameOrigin_(AppKit.NSMakePoint(x, y))
+            self.panel.makeKeyAndOrderFront_(None)
+            self.panel.orderFrontRegardless()
+            app.activateIgnoringOtherApps_(True)
+            self.panel.makeFirstResponder_(self.input)
+
+        @objc.python_method
         def show_context(self, context):
             if self.server and self.server.get_context(context.context_id) is None:
                 self.server.accept_context(context)
@@ -462,19 +747,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.source_button.setHidden_(True)
             self.copy_button.setEnabled_(False)
             self.modeChanged_(None)
-            mouse = AppKit.NSEvent.mouseLocation()
-            screen = next((s for s in AppKit.NSScreen.screens() if AppKit.NSPointInRect(mouse, s.frame())),
-                          AppKit.NSScreen.mainScreen())
-            frame = screen.visibleFrame()
-            x = min(max(mouse.x + 12, frame.origin.x + 8), frame.origin.x + frame.size.width - 588)
-            y = mouse.y - 622
-            if y < frame.origin.y + 8:
-                y = min(mouse.y + 14, frame.origin.y + frame.size.height - 618)
-            self.panel.setFrameOrigin_(AppKit.NSMakePoint(x, y))
-            self.panel.makeKeyAndOrderFront_(None)
-            self.panel.orderFrontRegardless()
-            app.activateIgnoringOtherApps_(True)
-            self.panel.makeFirstResponder_(self.input)
+            self._present_panel(context)
 
         def chooseSource_(self, _sender):
             panel = AppKit.NSOpenPanel.openPanel()
@@ -489,11 +762,22 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
         def dismiss_(self, _sender):
             self.cancel_(None)
             self.panel.orderOut_(None)
+            self.hide_activity()
 
         def cancel_(self, _sender):
+            active = self.hold.state != "idle" or self.task is not None
+            if self.hold.state != "idle":
+                self.hold.cancel()
+                self.speech.cancel()
+                self.voice_submission = False
             if self.task:
                 self.task.cancel()
                 self.status.setStringValue_("Cancelling · finishing any in-flight operation…")
+            if self.interaction:
+                self.interaction.mark("cancelled")
+            if active:
+                self.show_activity("cancelled", "Stopped")
+                self.hide_activity_later(1.2)
             self.hide_indicator()
 
         @objc.python_method
@@ -579,8 +863,13 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             choice = LABELS[max(0, self.providers.indexOfSelectedItem())][1]
             selected_provider = resolve_provider(provider or choice)
             task = ContextTask(context, mode=mode, provider=selected_provider, source_path=self.source_path,
-                               history=self.history, progress=lambda message: AppHelper.callAfter(self.show_progress, message))
+                               history=self.history,
+                               progress=lambda message: AppHelper.callAfter(self.show_progress, message),
+                               phase=lambda name, message: AppHelper.callAfter(self.show_task_phase, name, message))
             self.task = task
+            self.compact_task = self.voice_submission
+            if self.interaction:
+                self.interaction.mark("intent_detected", capability=task.mode, route=task.route.kind)
             self.result_heading.setStringValue_(request)
             self.source_button.setHidden_(True)
             self.copy_button.setEnabled_(False)
@@ -623,13 +912,17 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
 
         @objc.python_method
         def show_answer(self, result):
+            compact = self.compact_task
             if self.task and result.get("capability") == "ask":
                 self.history.extend([{"role": "user", "content": self.task.context.user_request},
                                      {"role": "assistant", "content": result["answer"]}])
                 self.history = self.history[-6:]
             self.pending_request = (self.task.context.user_request if self.task and result.get("state") == "input"
-                                    and self.task.route.missing else None)
+                                    and (self.task.route.missing or (self.task.mode in {"act", "guide"}
+                                         and self.task.route.kind == "surface")) else None)
             self.task = None
+            self.compact_task = False
+            self.voice_submission = False
             self.input.setEnabled_(True)
             self.send.setEnabled_(True)
             self.choose_button.setEnabled_(True)
@@ -650,7 +943,21 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 f"{ {'answered': 'Answer ready', 'input': 'Needs your input', 'review': 'Ready for review', 'guided': 'Guidance ready', 'error': 'Could not complete'}.get(result.get('state'), result.get('state', 'Ready').capitalize())} · {result.get('capability', 'ask').capitalize()}"
                 f" · {result.get('provider', 'local').capitalize()}")
             self.input.setStringValue_("")
-            self.panel.makeFirstResponder_(self.input)
+            state = result.get("state", "error")
+            if self.interaction:
+                self.interaction.mark("result_visible", state=state, capability=result.get("capability", "ask"))
+            if compact and state in {"input", "error"}:
+                self.show_activity(state, result["answer"])
+                self._present_panel(self.context)
+            elif compact and state == "cancelled":
+                self.show_activity("cancelled", "Stopped")
+                self.hide_activity_later(1.2)
+            elif compact:
+                summary = " ".join(str(result["answer"]).split())[:100]
+                self.show_activity("done", summary or "Finished")
+                self.hide_activity_later(5.0)
+            else:
+                self.panel.makeFirstResponder_(self.input)
 
         def modeChanged_(self, _sender):
             hints = ("Auto chooses whether to answer, guide, or take action.",

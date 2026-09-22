@@ -25,6 +25,11 @@ def infer_capability(request: str) -> Capability:
     # Ask questions about meaning/choice before treating verbs inside the sentence as Act.
     if re.match(r"\s*(what|why|which|is|are|does|can i|should i|summarize|explain|maybe)\b", text):
         return "ask"
+    # Deterministic native-desktop intents (open an app, switch tabs/windows)
+    # are actions, not questions.
+    from mcp_vision.native_apps import parse_intent
+    if parse_intent(request):
+        return "act"
     positive = re.split(r"\b(?:but|only|do not|don't|never)\b", text)[0]
     # "find/search/look up X" as an *informational query* (not a UI action) → ask.
     # Exclude when the object contains a UI-element word (button, field, checkbox…),
@@ -93,6 +98,9 @@ def answer_context(context: Context, *, provider: str | None = None, history: li
         "when the request can be answered directly. Never describe the launcher or "
         "ask which website the user is using unless that is actually needed for their goal. "
         "Do not tell the user to switch modes. Do not invent screen content that was not provided. "
+        "You run as a desktop agent on macOS: never claim you cannot open applications, switch tabs or "
+        "windows, or control the computer. Those requests are handled by the action layer before they "
+        "reach you, so answer the underlying question instead of refusing. "
         "If the request depends on missing context, say exactly what is missing. Keep the answer under 180 words."
     )
     try:
