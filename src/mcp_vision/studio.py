@@ -20,13 +20,20 @@ from mcp_vision.utils.config_sync import _entry
 class StudioServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port=7331, *, invocation_handler=None, provider=None):
+    def __init__(self, port=7331, *, invocation_handler=None, provider=None,
+                 permission_handler=None):
         super().__init__(("127.0.0.1", port), Handler)
         self.demo_lock = threading.Lock()
         self.context_lock = threading.Lock()
         self.contexts = OrderedDict()
         self.invocation_handler = invocation_handler
         self.provider = provider
+        self.permission_handler = permission_handler
+
+    def permissions(self):
+        if self.permission_handler is None:
+            return {"scope": "studio-process", "available": False}
+        return {"available": True, **self.permission_handler()}
 
     def accept_context(self, context: Context) -> Context:
         with self.context_lock:
@@ -106,12 +113,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/info":
             self._reply(200, {"recipes": RECIPES, "server": _entry(browser_mode="live"),
                               "execution": "host", "demo": "isolated-chromium",
-                              "contextual": True})
+                              "contextual": True, "permissions": self.server.permissions()})
             return
         if self.path == "/api/status":
             latest = self.server.get_context()
             self._reply(200, {"runtime": "ready", "contextual": True,
-                              "latestContext": latest.context_id if latest else None})
+                              "latestContext": latest.context_id if latest else None,
+                              "permissions": self.server.permissions()})
             return
         assets = {"/": ("index.html", "text/html; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),

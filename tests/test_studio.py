@@ -46,6 +46,28 @@ def test_assets_and_brief(studio):
     assert status == 200 and json.loads(body)["executed"] is False
 
 
+def test_status_reports_permission_identity_from_native_process():
+    server = StudioServer(0, permission_handler=lambda: {
+        "scope": "current-process", "bundleId": "org.mcpvision.contextual",
+        "bundlePath": "/Applications/MCP-Vision.app", "accessibility": True,
+        "screenRecording": False,
+    })
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body = request(server, "/api/status")
+        permissions = json.loads(body)["permissions"]
+        assert status == 200
+        assert permissions["available"] is True
+        assert permissions["bundleId"] == "org.mcpvision.contextual"
+        assert permissions["accessibility"] is True
+        assert permissions["screenRecording"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_rejects_cross_origin_and_untrusted_hosts(studio):
     assert request(studio, "/api/info", headers={"Host": "attacker.test"})[0] == 403
     assert request(studio, "/api/brief", {"goal": "Inspect"},

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import shutil
 import sys
+import json
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.request import urlopen
 
 from mcp_vision.log import get_logger
 
@@ -35,24 +37,41 @@ def _mss() -> Check:
         return Check("display", False, str(e))
 
 
-def _screen_recording() -> Check:
+def _helper_permissions(port: int = 7331) -> dict | None:
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/api/status", timeout=.35) as response:
+            payload = json.load(response)
+        permissions = payload.get("permissions")
+        return permissions if payload.get("contextual") is True and isinstance(permissions, dict) and permissions.get("available") else None
+    except Exception:
+        return None
+
+
+def _screen_recording(helper: dict | None = None) -> Check:
     if sys.platform != "darwin":
         return Check("screen-recording", True, f"{sys.platform}: no TCC gate")
     try:
         from Quartz import CGPreflightScreenCaptureAccess
-        ok = bool(CGPreflightScreenCaptureAccess())
-        return Check("screen-recording", ok, "granted" if ok else "enable in System Settings → Privacy → Screen Recording")
+        ok = helper.get("screenRecording") if helper else bool(CGPreflightScreenCaptureAccess())
+        identity = "MCP-Vision.app" if helper else "this CLI process"
+        return Check("screen-recording", bool(ok), f"{identity}: " + ("granted" if ok else "not granted"))
     except Exception as e:
         return Check("screen-recording", True, f"could not probe TCC ({e})")
 
 
-def _accessibility() -> Check:
+def _accessibility(helper: dict | None = None) -> Check:
     if sys.platform != "darwin":
         return Check("accessibility", True, f"{sys.platform}: no AX gate")
     try:
         from ApplicationServices import AXIsProcessTrusted
-        ok = bool(AXIsProcessTrusted())
-        return Check("accessibility", ok, "granted" if ok else "enable in System Settings → Privacy → Accessibility")
+        ok = helper.get("accessibility") if helper else bool(AXIsProcessTrusted())
+        identity = "MCP-Vision.app" if helper else "this CLI process"
+        detail = f"{identity}: " + ("granted" if ok else "not granted")
+        if not ok and helper:
+            detail += " — enable /Applications/MCP-Vision.app in System Settings → Privacy → Accessibility"
+        elif not ok:
+            detail += " — start MCP-Vision.app to check the stable helper identity"
+        return Check("accessibility", bool(ok), detail)
     except Exception as e:
         return Check("accessibility", True, f"could not probe AX ({e})")
 
@@ -111,7 +130,8 @@ def _which() -> Check:
 
 
 def status_checks() -> list[Check]:
-    return [_screen_recording(), _accessibility(), _contextual_ui(), _chrome_extension(), _ollama()]
+    helper = _helper_permissions()
+    return [_screen_recording(helper), _accessibility(helper), _contextual_ui(), _chrome_extension(), _ollama()]
 
 
 def run_doctor() -> list[Check]:

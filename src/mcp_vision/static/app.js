@@ -151,6 +151,26 @@ document.querySelectorAll("[data-host]").forEach(button => button.addEventListen
 $("writes").addEventListener("change", connectionConfig);
 $("browser-session").addEventListener("change", connectionConfig);
 $("copy-config").addEventListener("click", () => copy($("host-config").textContent));
+function renderPermissions(permissions) {
+  const available = permissions?.available === true;
+  const identity = available ? (permissions.bundlePath || permissions.executablePath || permissions.process) : "MCP-Vision.app is not serving this Studio session.";
+  $("permission-identity").textContent = available ? `${permissions.process || "MCP-Vision"} · ${identity}` : identity;
+  const rows = available ? [
+    ["Accessibility", permissions.accessibility, "Required for native app control"],
+    ["Screen recording", permissions.screenRecording, "Required for desktop visual context"],
+  ] : [["Native helper", false, "Launch /Applications/MCP-Vision.app"]];
+  $("permission-checks").replaceChildren(...rows.map(([name, ok, detail]) => {
+    const row = element("div", `permission-row ${ok === true ? "ready" : ok === false ? "missing" : "unknown"}`);
+    row.append(element("span", "permission-mark", ok === true ? "✓" : ok === false ? "!" : "?"), element("strong", "", name), element("small", "", detail));
+    return row;
+  }));
+}
+$("refresh-permissions").addEventListener("click", async () => {
+  $("refresh-permissions").disabled = true;
+  try { renderPermissions((await api("/api/status")).permissions); }
+  catch (error) { toast(error.message); }
+  finally { $("refresh-permissions").disabled = false; }
+});
 $("open-demo").addEventListener("click", () => $("demo-dialog").showModal());
 $("demo-form").addEventListener("submit", async event => {
   event.preventDefault(); $("run-demo").disabled = true; $("demo-progress").hidden = false; $("demo-result").replaceChildren();
@@ -223,7 +243,7 @@ function summarizeDiff(diff) { const parts = []; if (diff.updated?.length) parts
 function evidenceCard(label, value, description, passed) { const card = element("article", `evidence-card ${passed ? "passed" : "failed"}`); card.append(element("span", "session-kicker", label.toUpperCase()), element("strong", "", value), element("p", "", description || "No additional evidence.")); return card; }
 api("/api/info").then(info => {
   recipes = info.recipes; serverEntry = info.server;
-  $("home-recipes").replaceChildren(...recipes.map(recipeCard)); showRecipes(); connectionConfig();
+  $("home-recipes").replaceChildren(...recipes.map(recipeCard)); showRecipes(); connectionConfig(); renderPermissions(info.permissions);
 }).catch(error => {
   toast("Could not reach the local runtime. " + error.message);
   $("home-recipes").append(element("p", "error-message", "Start mcp-vision studio, then reload this page."));

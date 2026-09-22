@@ -8,6 +8,7 @@ from typing import Any
 
 from mcp_vision.context import Context, ContextElement, IdentityState, Point
 from mcp_vision.native_context import describe_ax, nearby_ax
+from mcp_vision.native_permissions import native_permission_snapshot
 
 
 def _ax_copy(api: Any, element: Any, attribute: str) -> Any:
@@ -663,7 +664,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
 
     controller = Controller.alloc().init()
     server = StudioServer(port, invocation_handler=lambda context: AppHelper.callAfter(controller.show_context, context),
-                          provider=provider)
+                          provider=provider, permission_handler=native_permission_snapshot)
     controller.server = server
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
