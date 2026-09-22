@@ -46,3 +46,12 @@ def native_permission_snapshot() -> dict[str, Any]:
     except Exception:
         snapshot["screenRecording"] = None
     return snapshot
+
+
+def request_screen_recording() -> dict[str, Any]:
+    """Ask macOS for screen capture access after an explicit local UI action."""
+    if sys.platform == "darwin":
+        from Quartz import CGRequestScreenCaptureAccess
+
+        CGRequestScreenCaptureAccess()
+    return native_permission_snapshot()

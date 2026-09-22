@@ -68,6 +68,19 @@ def test_status_reports_permission_identity_from_native_process():
         thread.join()
 
 
+def test_screen_recording_request_requires_native_handler():
+    headers = {"Content-Type": "application/json", "X-MCP-Vision": "studio"}
+    server = StudioServer(0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert request(server, "/api/request-screen-recording", {}, headers)[0] == 409
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_rejects_cross_origin_and_untrusted_hosts(studio):
     assert request(studio, "/api/info", headers={"Host": "attacker.test"})[0] == 403
     assert request(studio, "/api/brief", {"goal": "Inspect"},

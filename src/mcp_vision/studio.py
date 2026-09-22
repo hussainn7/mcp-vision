@@ -22,7 +22,7 @@ class StudioServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, port=7331, *, invocation_handler=None, provider=None,
-                 permission_handler=None):
+                 permission_handler=None, permission_request_handler=None):
         super().__init__(("127.0.0.1", port), Handler)
         self.demo_lock = threading.Lock()
         self.context_lock = threading.Lock()
@@ -30,6 +30,7 @@ class StudioServer(ThreadingHTTPServer):
         self.invocation_handler = invocation_handler
         self.provider = provider
         self.permission_handler = permission_handler
+        self.permission_request_handler = permission_request_handler
 
     def permissions(self):
         if self.permission_handler is None:
@@ -160,6 +161,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._reply(200, self.server.answer(request, str(data.get("contextId", ""))))
             elif self.path == "/api/brief":
                 self._reply(200, brief(Mission(**data)))
+            elif self.path == "/api/request-screen-recording":
+                if self.server.permission_request_handler is None:
+                    self._reply(409, {"error": "Launch /Applications/MCP-Vision.app to request macOS access."})
+                else:
+                    self._reply(200, {"permissions": {"available": True,
+                                                      **self.server.permission_request_handler()}})
             elif self.path == "/api/demo":
                 title = data.get("title", "My first mission")
                 if not isinstance(title, str) or not 1 <= len(title.strip()) <= 200:

@@ -164,6 +164,7 @@ function renderPermissions(permissions) {
     row.append(element("span", "permission-mark", ok === true ? "✓" : ok === false ? "!" : "?"), element("strong", "", name), element("small", "", detail));
     return row;
   }));
+  $("request-screen").hidden = !available || permissions.screenRecording === true;
 }
 function renderProviders(providers) {
   const jev = providers?.jev || {};
@@ -176,6 +177,12 @@ $("refresh-permissions").addEventListener("click", async () => {
   try { renderPermissions((await api("/api/status")).permissions); }
   catch (error) { toast(error.message); }
   finally { $("refresh-permissions").disabled = false; }
+});
+$("request-screen").addEventListener("click", async () => {
+  $("request-screen").disabled = true;
+  try { renderPermissions((await api("/api/request-screen-recording", {})).permissions); }
+  catch (error) { toast(error.message); }
+  finally { $("request-screen").disabled = false; }
 });
 $("open-demo").addEventListener("click", () => $("demo-dialog").showModal());
 $("demo-form").addEventListener("submit", async event => {
