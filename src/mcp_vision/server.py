@@ -314,6 +314,20 @@ def _mcp(*, allow_browser_writes=False, headless=True, allowed_origins=(), brows
         return semantic.replay(limit)
 
     @mcp.tool()
+    async def browser_session_memory(keep_recent: int = 12) -> dict:
+        """Compress older replay evidence into milestones, constraints, failures, and verified outcomes."""
+        from mcp_vision.session_memory import compact_replay
+        return compact_replay(semantic.replay(200), keep_recent=keep_recent).model_dump(mode="json")
+
+    @mcp.tool()
+    async def browser_workflow_candidate() -> dict:
+        """Return a reusable semantic workflow only when the current replay has verified completion."""
+        from mcp_vision.workflows import learn_workflow
+        workflow = learn_workflow(semantic.replay(200))
+        return ({"learned": True, "workflow": workflow.model_dump(mode="json")} if workflow
+                else {"learned": False, "reason": "No verified semantic workflow is available."})
+
+    @mcp.tool()
     async def browser_fastpath(
         subgoal: str,
         completion_kind: Literal[
