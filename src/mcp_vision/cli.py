@@ -93,6 +93,24 @@ def bench_fastpath(iterations: int, headed: bool, output: Path | None) -> None:
         click.echo(rendered)
 
 
+@cli.command("bench-policies")
+@click.option("--iterations", type=click.IntRange(1, 5), default=1, show_default=True)
+@click.option("--headed", is_flag=True, help="Show the disposable browser while tasks run.")
+@click.option("--output", type=click.Path(path_type=Path), help="Optional JSON report path.")
+def bench_policies(iterations: int, headed: bool, output: Path | None) -> None:
+    """Compare Rules with live Jev on identical safe local tasks (paid Jev calls)."""
+    import asyncio
+    from mcp_vision.benchmarks import run_policy_comparison
+    result = asyncio.run(run_policy_comparison(iterations=iterations, headed=headed))
+    rendered = json.dumps(result, indent=2)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered + "\n")
+        click.echo(str(output))
+    else:
+        click.echo(rendered)
+
+
 @cli.command()
 @click.argument("goal")
 @click.option("--url", default="", help="Starting HTTP(S) page.")

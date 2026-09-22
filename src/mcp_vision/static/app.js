@@ -165,6 +165,12 @@ function renderPermissions(permissions) {
     return row;
   }));
 }
+function renderProviders(providers) {
+  const jev = providers?.jev || {};
+  const row = element("div", `permission-row ${jev.configured ? "ready" : "unknown"}`);
+  row.append(element("span", "permission-mark", jev.configured ? "✓" : "–"), element("strong", "", "Jev FastPolicy"), element("small", "", jev.configured ? `Configured · ${jev.model || "jev-latest"}` : "Optional · TYPESAFE_API_KEY not configured"));
+  $("provider-status").replaceChildren(row);
+}
 $("refresh-permissions").addEventListener("click", async () => {
   $("refresh-permissions").disabled = true;
   try { renderPermissions((await api("/api/status")).permissions); }
@@ -243,7 +249,7 @@ function summarizeDiff(diff) { const parts = []; if (diff.updated?.length) parts
 function evidenceCard(label, value, description, passed) { const card = element("article", `evidence-card ${passed ? "passed" : "failed"}`); card.append(element("span", "session-kicker", label.toUpperCase()), element("strong", "", value), element("p", "", description || "No additional evidence.")); return card; }
 api("/api/info").then(info => {
   recipes = info.recipes; serverEntry = info.server;
-  $("home-recipes").replaceChildren(...recipes.map(recipeCard)); showRecipes(); connectionConfig(); renderPermissions(info.permissions);
+  $("home-recipes").replaceChildren(...recipes.map(recipeCard)); showRecipes(); connectionConfig(); renderPermissions(info.permissions); renderProviders(info.providers);
 }).catch(error => {
   toast("Could not reach the local runtime. " + error.message);
   $("home-recipes").append(element("p", "error-message", "Start mcp-vision studio, then reload this page."));

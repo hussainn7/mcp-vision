@@ -110,8 +110,9 @@ def test_fast_policies_only_return_supplied_safe_candidates(monkeypatch):
         mock = await MockPolicy(rule.candidate_id).choose("anything", state)
         assert mock.candidate_id == rule.candidate_id
         monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
-        jev = await JevPolicy().choose("press Continue", state)
+        jev = await JevPolicy(load_env=False).choose("press Continue", state)
         assert jev.candidate_id is None and jev.needs_system2
+        assert jev.provider_call == "not_attempted" and jev.fallback == "system2"
     asyncio.run(run())
 
 
@@ -161,5 +162,54 @@ def test_jev_parallel_heads_use_only_selected_operation_target(monkeypatch):
         assert decision.candidate_id == press.id and decision.operation == "press"
         assert decision.confidence == 0.88 and decision.progress == 0.25
         assert decision.stale_likelihood == 0.05 and decision.expected_success == 0.8
+        assert decision.provider_call == "successful" and decision.fallback is None
+
+    asyncio.run(run())
+
+
+def test_jev_failures_are_explicit_and_never_select_an_action(monkeypatch):
+    async def run():
+        state = compile_state(snapshot("s1"), epoch=1)
+
+        async def timeout(_fn):
+            raise TimeoutError("secret-bearing provider detail must not escape")
+
+        monkeypatch.setattr("mcp_vision.fast_policy.asyncio.to_thread", timeout)
+        failed = await JevPolicy(api_key="test", load_env=False).choose("press Continue", state)
+        assert failed.candidate_id is None and failed.needs_system2
+        assert failed.provider_call == "failed" and failed.fallback == "system2"
+        assert failed.reason == "Jev unavailable or invalid: TimeoutError"
+
+        async def invalid(_fn):
+            return {"answers": {"operation": {"choice": "invented", "probabilities": {"invented": 1.0}}}}
+
+        monkeypatch.setattr("mcp_vision.fast_policy.asyncio.to_thread", invalid)
+        rejected = await JevPolicy(api_key="test", load_env=False).choose("press Continue", state)
+        assert rejected.candidate_id is None and rejected.provider_call == "failed"
+
+    asyncio.run(run())
+
+
+def test_jev_system2_head_escalates_without_execution(monkeypatch):
+    async def run():
+        state = compile_state(snapshot("s1"), epoch=1)
+        press = next(item for item in state.candidates if item.operation is Operation.PRESS)
+        operations = {item.operation.value for item in state.candidates}
+        operation_probs = {name: 0.0 for name in operations}
+        operation_probs["press"] = 1.0
+        response = {"answers": {
+            "operation": {"choice": "press", "confidence": 1.0, "probabilities": operation_probs},
+            "press_target": {"choice": press.id, "confidence": 1.0, "probabilities": {press.id: 1.0}},
+            "needs_system2": {"choice": "yes", "confidence": 0.9,
+                              "probabilities": {"yes": 0.9, "no": 0.1}},
+        }}
+
+        async def fake(_fn):
+            return response
+
+        monkeypatch.setattr("mcp_vision.fast_policy.asyncio.to_thread", fake)
+        decision = await JevPolicy(api_key="test", load_env=False).choose("press Continue", state)
+        assert decision.candidate_id is None and decision.needs_system2
+        assert decision.provider_call == "successful" and decision.fallback == "system2"
 
     asyncio.run(run())

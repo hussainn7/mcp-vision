@@ -13,6 +13,7 @@ from typing import Any, Protocol, runtime_checkable
 from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mcp_vision.core.models import Policy
 from mcp_vision.state import ActionCandidate, Operation, UIState
@@ -34,6 +35,17 @@ class PolicyDecision(BaseModel):
     stale_likelihood: float | None = Field(default=None, ge=0.0, le=1.0)
     expected_success: float | None = Field(default=None, ge=0.0, le=1.0)
     probabilities: dict[str, float] = Field(default_factory=dict)
+    provider_call: str = "not_attempted"
+    fallback: str | None = None
+
+
+class _JevSettings(BaseSettings):
+    """Small, provider-local config. Pydantic reads .env without exporting secrets."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    typesafe_api_key: str | None = None
+    typesafe_endpoint: str = "https://api.typesafe.ai/v1/systemone"
+    typesafe_model: str = "jev-latest"
 
 
 @runtime_checkable
@@ -126,10 +138,11 @@ class JevPolicy:
     """Optional TypeSafe/Jev adapter; credentials are read only at call time."""
 
     def __init__(self, *, api_key: str | None = None, endpoint: str | None = None,
-                 model: str | None = None):
-        self.api_key = api_key
-        self.endpoint = endpoint or os.environ.get("TYPESAFE_ENDPOINT", "https://api.typesafe.ai/v1/systemone")
-        self.model = model or os.environ.get("TYPESAFE_MODEL", "jev-latest")
+                 model: str | None = None, load_env: bool = True):
+        settings = _JevSettings(_env_file=".env" if load_env else None)
+        self.api_key = api_key or settings.typesafe_api_key
+        self.endpoint = endpoint or settings.typesafe_endpoint
+        self.model = model or settings.typesafe_model
 
     async def choose(self, goal: str, state: UIState,
                      candidates: tuple[ActionCandidate, ...] | None = None) -> PolicyDecision:
@@ -140,7 +153,8 @@ class JevPolicy:
         key = self.api_key or os.environ.get("TYPESAFE_API_KEY")
         if not key:
             return PolicyDecision(state_id=state.state_id, disposition="replan", needs_system2=True,
-                                  reason="TYPESAFE_API_KEY is not configured.", provider="jev")
+                                  reason="TYPESAFE_API_KEY is not configured.", provider="jev",
+                                  fallback="system2")
         groups: dict[str, list[ActionCandidate]] = {}
         for item in safe:
             groups.setdefault(item.operation.value, []).append(item)
@@ -204,12 +218,15 @@ class JevPolicy:
                 latency_ms=(time.perf_counter() - started) * 1000,
                 progress=progress, stale_likelihood=stale, expected_success=expected_success,
                 probabilities=dict(target_answer["probabilities"]),
+                provider_call="successful",
+                fallback="system2" if needs_system2 is not None and needs_system2 >= 0.5 else None,
             )
             return validate_decision(decision, state, safe)
         except Exception as exc:
             return PolicyDecision(state_id=state.state_id, disposition="replan", needs_system2=True,
                                   reason=f"Jev unavailable or invalid: {type(exc).__name__}", provider="jev",
-                                  latency_ms=(time.perf_counter() - started) * 1000)
+                                  latency_ms=(time.perf_counter() - started) * 1000,
+                                  provider_call="failed", fallback="system2")
 
     @staticmethod
     def _serialize_candidate(candidate: ActionCandidate, state: UIState) -> dict[str, Any]:
@@ -251,6 +268,12 @@ class JevPolicy:
             return float(valid["probabilities"][choice])
         except ValueError:
             return None
+
+
+def jev_status() -> dict[str, Any]:
+    """Expose configuration presence only; never return credentials."""
+    settings = _JevSettings()
+    return {"configured": bool(settings.typesafe_api_key), "model": settings.typesafe_model}
 
 
 def create_fast_policy(name: str) -> FastPolicy:

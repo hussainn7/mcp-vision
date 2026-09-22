@@ -15,6 +15,7 @@ from mcp_vision.context import Context
 from mcp_vision.contextual import answer_context
 from mcp_vision.redaction import redact
 from mcp_vision.utils.config_sync import _entry
+from mcp_vision.fast_policy import jev_status
 
 
 class StudioServer(ThreadingHTTPServer):
@@ -113,7 +114,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/info":
             self._reply(200, {"recipes": RECIPES, "server": _entry(browser_mode="live"),
                               "execution": "host", "demo": "isolated-chromium",
-                              "contextual": True, "permissions": self.server.permissions()})
+                              "contextual": True, "permissions": self.server.permissions(),
+                              "providers": {"jev": jev_status()}})
             return
         if self.path == "/api/status":
             latest = self.server.get_context()

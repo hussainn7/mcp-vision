@@ -52,6 +52,8 @@ class FastPathStep(BaseModel):
     decision_ms: float = 0
     status: str
     reason: str = ""
+    provider_call: str = "not_attempted"
+    fallback: str | None = None
     transaction: TransactionReceipt | None = None
 
 
@@ -119,6 +121,7 @@ class FastPath:
                 confidence=decision.confidence, candidate_id=decision.candidate_id,
                 operation=decision.operation, reason=decision.reason,
                 decision_ms=round(decision_ms, 2), needs_system2=decision.needs_system2,
+                provider_call=decision.provider_call, fallback=decision.fallback,
             )
             if decision.needs_system2 or not decision.candidate_id:
                 steps.append(self._step(number, state, decision, decision_ms, "replan"))
@@ -236,7 +239,9 @@ class FastPath:
                             operation=candidate.operation.value if candidate else None,
                             target_ref=candidate.target_ref if candidate else None,
                             policy=decision.provider, confidence=decision.confidence,
-                            decision_ms=decision_ms, status=status, reason=reason, transaction=transaction)
+                            decision_ms=decision_ms, status=status, reason=reason,
+                            provider_call=decision.provider_call, fallback=decision.fallback,
+                            transaction=transaction)
 
     def _finish(self, status: FastPathStatus, task: FastPathTask, reason: str, state: UIState,
                 verification: VerificationResult | None, steps: list[FastPathStep],
