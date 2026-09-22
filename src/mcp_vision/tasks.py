@@ -37,6 +37,33 @@ class Step(BaseModel):
     expected_text: str = Field(default='', max_length=1000)
 
 
+def explicit_native_fill(context, snapshot) -> Step | None:
+    """Compile an explicit quoted native fill without a model or invented target."""
+    if context.source != "macos":
+        return None
+    request = context.user_request.strip()
+    match = re.search(r"\b(?:type|enter|write|fill)\b.*?(['\"])(.+?)\1", request, re.I | re.S)
+    if not match or not re.search(r"\b(?:focused|this|text\s*(?:area|field)|document)\b", request, re.I):
+        return None
+    value = match.group(2)
+    if not value or len(value) > 4000:
+        return None
+    focused = context.focused_element
+    candidates = [element for element in snapshot.elements if element.get("role") == "textbox"]
+    if focused and focused.bounds:
+        bounds = focused.bounds
+        matched = [element for element in candidates if all(round(float(element.get(key, -1))) == round(expected)
+                   for key, expected in (("x", bounds.x), ("y", bounds.y),
+                                         ("w", bounds.width), ("h", bounds.height)))]
+        if len(matched) == 1:
+            candidates = matched
+    if len(candidates) != 1 or not str(candidates[0].get("name", "")).strip():
+        return None
+    target = candidates[0]
+    return Step(action="fill", name=str(target["name"]), role="textbox", value=value,
+                confidence=1.0, evidence=value, message="Use the exact text supplied by the user.")
+
+
 class ModelPlanner:
     def __init__(self, provider=None):
         from backends import get_chat
@@ -268,13 +295,15 @@ class ContextTask:
                 self.constraints = TaskConstraints(**{**asdict(self.constraints), 'factual': True, 'no_submit': True})
             if self.backend is None:
                 return self.result('input', 'No compatible execution backend is available for this surface.')
-            if self.planner is None:
+            snapshot = await self.observe()
+            direct = explicit_native_fill(self.context, snapshot) if self.mode == "act" and self.planner is None else None
+            if self.planner is None and direct is None:
                 from mcp_vision.readiness import ensure_model_ready
                 from mcp_vision.providers import resolve_provider
                 self.emit('Checking the selected model…')
                 await self.reason(ensure_model_ready, resolve_provider(self.provider))
-            planner = self.planner or ModelPlanner(self.provider)
-            snapshot = await self.observe()
+            planner = self.planner or (None if direct else ModelPlanner(self.provider))
+            direct_mode = direct is not None
             failures = 0
             feedback = ''
             for _ in range(self.max_steps):
@@ -290,7 +319,15 @@ class ContextTask:
                 if source and not self.constraints.only_field:
                     payload['context'].pop('target', None)
                     payload['context'].pop('nearby', None)
-                proposal = await self.reason(planner, payload)
+                if direct is not None:
+                    proposal, direct = direct, None
+                elif direct_mode:
+                    proposal = (Step(action="review", confidence=1.0,
+                                     message="The explicit native fill was verified.") if self.verified else
+                                Step(action="input", confidence=1.0,
+                                     message="The explicit native fill could not be verified."))
+                else:
+                    proposal = await self.reason(planner, payload)
                 self.check_cancel()
                 step = proposal if isinstance(proposal, Step) else Step.model_validate(proposal)
                 if self.mode == 'act' and step.action == 'guide':

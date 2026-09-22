@@ -4,10 +4,10 @@ from pathlib import Path
 import pytest
 
 from mcp_vision.browser import BrowserSnapshot, Receipt
-from mcp_vision.context import Context
+from mcp_vision.context import Context, ContextBounds, ContextElement
 from mcp_vision.execution import bind_context_backend
 from mcp_vision.guidance import overlay_script, resolve_target
-from mcp_vision.tasks import ContextTask, ModelPlanner, Step
+from mcp_vision.tasks import ContextTask, ModelPlanner, Step, explicit_native_fill
 
 
 class Backend:
@@ -343,3 +343,15 @@ def test_click_still_rejects_no_observed_change():
     runner = ContextTask(Context(source='chrome', url=snap.url, user_request='Open this'),
                          backend=Backend(), planner=lambda _: Step(action='review'))
     assert not runner.verify(Step(action='click', name='Open', role='button'), snap.elements[0], snap, snap)
+
+
+def test_explicit_native_fill_compiles_only_quoted_text_to_observed_focused_target():
+    bounds = ContextBounds(x=10, y=20, width=300, height=120)
+    context = Context(source='macos', user_request="Type 'safe test' into this focused text area",
+                      focused_element=ContextElement(role='AXTextArea', bounds=bounds))
+    state = BrowserSnapshot(snapshot_id='native-1', source='macos-accessibility', url='', title='Untitled', text='',
+                            elements=[dict(index=0, role='textbox', name='Document', value='',
+                                           x=10, y=20, w=300, h=120)])
+    step = explicit_native_fill(context, state)
+    assert step and step.action == 'fill' and step.name == 'Document' and step.value == 'safe test'
+    assert explicit_native_fill(context.model_copy(update={'user_request': 'Write something here'}), state) is None
