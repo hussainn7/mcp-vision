@@ -70,7 +70,10 @@ def nearby_ax(api, root, limit=60):
         if box and box.width > 0 and box.height > 0 and (
                 desc.name or desc.value or desc.attributes.get('checked') is not None or semantic_control):
             index = len(records)
-            name = desc.name.strip() or desc.value.strip()[:80] or role_label(desc.role)
+            # Editable controls need a stable semantic name: their value changes
+            # after a successful fill and must not become their identity.
+            name = (desc.name.strip() or role_label(desc.role)) if semantic_control else (
+                desc.name.strip() or desc.value.strip()[:80] or role_label(desc.role))
             checked = desc.attributes.get('checked')
             records.append({
                 'index': index, 'name': name, 'role': normalize_role(desc.role), 'ax_role': desc.role,
