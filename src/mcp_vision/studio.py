@@ -119,6 +119,8 @@ class Handler(BaseHTTPRequestHandler):
             latest = self.server.get_context()
             self._reply(200, {"runtime": "ready", "contextual": True,
                               "latestContext": latest.context_id if latest else None,
+                              "latestApplication": latest.source_application if latest else None,
+                              "latestTitle": latest.title if latest else None,
                               "permissions": self.server.permissions()})
             return
         assets = {"/": ("index.html", "text/html; charset=utf-8"),

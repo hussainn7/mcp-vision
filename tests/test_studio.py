@@ -94,6 +94,10 @@ def test_context_reaches_runtime_and_ask_returns_response(studio):
     assert status == 202
     context_id = json.loads(body)["contextId"]
     assert studio.get_context(context_id).title == "Example"
+    status, body = request(studio, "/api/status")
+    runtime = json.loads(body)
+    assert status == 200 and runtime["latestApplication"] == "Google Chrome"
+    assert runtime["latestTitle"] == "Example"
     studio.provider = "definitely-unavailable"
     status, body = request(studio, "/api/ask", {
         "contextId": context_id, "request": "What does this mean?"
