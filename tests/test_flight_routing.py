@@ -51,3 +51,19 @@ def test_next_week_becomes_a_concrete_search_window():
     start, end, _ = _relative_flight_dates('flights next week', date(2026, 9, 16))
     assert start.isoformat() == '2026-09-21'
     assert end.isoformat() == '2026-09-27'
+
+
+def test_shorthand_route_and_ordinal_date_are_complete():
+    prompt = "get flights ATL to SF on the 28th"
+    assert route_request(prompt, "ask").kind == "browser"
+    start, end, _ = _relative_flight_dates(prompt, date(2026, 9, 22))
+    assert start == end == date(2026, 9, 28)
+    term = _flight_term(prompt)
+    assert "flights from ATL to SF" in term
+    assert "on the 28th" not in term
+    assert re.search(r"[A-Z][a-z]{2} 28", term)
+
+
+def test_unqualified_ordinal_rolls_forward_instead_of_using_a_past_date():
+    start, end, _ = _relative_flight_dates("fly on the 5th", date(2026, 9, 22))
+    assert start == end == date(2026, 10, 5)

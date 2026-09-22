@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from calendar import monthrange
 from datetime import date, timedelta
 from urllib.parse import quote_plus, urlsplit
 
@@ -172,6 +173,13 @@ def _flight_term(q: str) -> str:
             r"\b(?:today|tomorrow|this week|next week|this weekend|next weekend)\b",
             "", q, flags=re.I,
         )
+        clean = re.sub(re.escape(phrase), "", clean, flags=re.I)
+        clean = re.sub(
+            r"\b(?:flights?|tickets?|trip)\s+([a-z0-9][a-z0-9 .'-]*?)\s+to\s+",
+            r"flights from \1 to ",
+            clean,
+            flags=re.I,
+        )
         clean = re.sub(r"\s+", " ", clean).strip(" ,")
         rendered = start.strftime("%b %d").replace(" 0", " ")
         if end != start:
@@ -189,7 +197,12 @@ def _flight_term(q: str) -> str:
     o = (re.sub(r"\s+", " ", origin.group(1)).strip() if origin else "")
     d = (re.sub(r"\s+", " ", dest.group(1)).strip() if dest else "")
     if not o:
-        before_to = re.search(r"\b([a-z][a-z0-9 \-']*?)\s+to\b", q, re.I)
+        shorthand = re.search(
+            r"\b(?:flights?|tickets?|trip)\s+([a-z0-9][a-z0-9 .'-]*?)\s+to\s+",
+            q,
+            re.I,
+        )
+        before_to = shorthand or re.search(r"\b([a-z][a-z0-9 \-']*?)\s+to\b", q, re.I)
         o = (re.sub(r"\s+", " ", before_to.group(1)).strip() if before_to else "")
     if not d:
         after_from = re.search(r"\bfrom\s+([a-z][a-z0-9 \-']*?)\s*$", q, re.I)
@@ -213,6 +226,22 @@ def _relative_flight_dates(q: str, today: date | None = None) -> tuple[date, dat
     if re.search(r"\btomorrow\b", low):
         day = today + timedelta(days=1)
         return day, day, "tomorrow"
+    ordinal = re.search(r"\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b", low)
+    if ordinal:
+        wanted = int(ordinal.group(1))
+        year, month = today.year, today.month
+        # An unqualified day means its next calendar occurrence, never a date
+        # that has already passed. Invalid days (for example February 31st)
+        # remain unresolved and fall back to the planner's safe default window.
+        for _ in range(13):
+            if wanted <= monthrange(year, month)[1]:
+                candidate = date(year, month, wanted)
+                if candidate >= today:
+                    return candidate, candidate, ordinal.group(0)
+            month += 1
+            if month == 13:
+                month, year = 1, year + 1
+        return None
     if re.search(r"\bnext week\b", low):
         start = today + timedelta(days=(7 - today.weekday()))
         return start, start + timedelta(days=6), "next week"

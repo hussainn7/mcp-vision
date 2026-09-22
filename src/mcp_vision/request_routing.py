@@ -17,6 +17,10 @@ _FRESHNESS = re.compile(
     r"just announced|just released|when will|when does)\b",
     re.I,
 )
+_FLIGHT_ORIGIN = re.compile(
+    r"\b(?:flights?|tickets?|trip)\s+(?:from\s+)?[a-z0-9][a-z0-9 .'-]*?\s+to\s+[a-z0-9]",
+    re.I,
+)
 
 
 def request_text(request: str) -> str:
@@ -66,11 +70,13 @@ def route_request(request: str, mode: str) -> RequestRoute:
     if needs_browser(request) and not mutation:
         if re.fullmatch(r'(?:do\s+)?(?:some\s+)?research(?:\s+(?:for|on)\s+me)?[?.!]*', text):
             return RequestRoute('input', 'What topic would you like me to research?', 'topic')
-        if re.search(r'\bflights?\b', text) and not re.search(r'\bfrom\s+\S+', text):
+        has_origin = bool(re.search(r'\bfrom\s+\S+', text) or _FLIGHT_ORIGIN.search(text))
+        if re.search(r'\bflights?\b', text) and not has_origin:
             return RequestRoute('input', 'What city or airport are you flying from? Include your departure and return dates (or say one-way) so I can search Google Flights.', 'departure')
         has_date = re.search(
             r'\b(?:today|tomorrow|week|weekend|month|anytime|any\s+time|any\s+day|flexible|whenever|any\s+(?:dates?|days?|week|month)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|'
-            r'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|\d{1,4}[-/]\d{1,2}', text)
+            r'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|'
+            r'\b(?:on\s+)?(?:the\s+)?\d{1,2}(?:st|nd|rd|th)\b|\d{1,4}[-/]\d{1,2}', text)
         if re.search(r'\bflights?\b', text) and not has_date:
             return RequestRoute('input', 'What are your departure and return dates? You can say one-way, give a flexible range, or just say any dates and I will pick.', 'dates')
         return RequestRoute('browser')
