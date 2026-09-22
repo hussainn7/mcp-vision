@@ -197,7 +197,10 @@ def compile_state(snapshot: Any, *, epoch: int) -> UIState:
             role=str(record.get("role") or "unknown"), name=str(record.get("name") or ""),
             value=str(record.get("value") or ""), description=str(record.get("description") or ""),
             bounds=box, identity=_identity(record, snapshot.source), capabilities=capabilities,
-            risk=element_risk, sources=(snapshot.source,), checked=record.get("checked"),
+            risk=element_risk, sources=tuple(record.get("sources") or (snapshot.source,)),
+            checked=record.get("checked"), visible=bool(record.get("visible", True)),
+            occluded=bool(record.get("occluded", False)), freshness=str(record.get("freshness") or "observed"),
+            confidence=float(record.get("confidence", 1.0)),
             options=tuple(record.get("options") or ()),
             metadata={key: record[key] for key in ("tag", "input_type", "required", "valid") if key in record},
         )
