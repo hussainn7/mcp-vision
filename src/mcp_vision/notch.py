@@ -8,8 +8,10 @@ from __future__ import annotations
 
 
 def top_center_origin(frame: tuple[float, float, float, float], size: tuple[float, float]) -> tuple[float, float]:
-    x, y, width, _height = frame
-    return (x + (width - size[0]) / 2, y + 12)
+    """Cocoa origin placing a panel at the top-center of a visible frame."""
+    x, y, width, height = frame
+    panel_width, panel_height = size
+    return (x + (width - panel_width) / 2, y + height - panel_height - 10)
 
 
 class NotchHUD:
@@ -77,7 +79,7 @@ class NotchHUD:
         teal = AppKit.NSColor.systemTealColor().CGColor()
         self.waveform_bars = []
         for index in range(5):
-            bar = AppKit.NSView.alloc().initWithFrame_(AppKit.NSMakeRect(388 + index * 11, 22, 5, 18))
+            bar = AppKit.NSView.alloc().initWithFrame_(AppKit.NSMakeRect(368 + index * 11, 22, 5, 18))
             bar.setWantsLayer_(True)
             bar.layer().setBackgroundColor_(teal)
             bar.layer().setCornerRadius_(2.5)
@@ -85,7 +87,20 @@ class NotchHUD:
             root.addSubview_(bar)
             self.waveform_bars.append(bar)
 
+        # Small action button (Stop during work, Details on a question/result).
+        self.action_button = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(366, 16, 78, 30))
+        self.action_button.setTitle_("Stop")
+        self.action_button.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        self.action_button.setHidden_(True)
+        root.addSubview_(self.action_button)
+
+        panel.setIgnoresMouseEvents_(False)
         self.panel = panel
+        self.on_action = None  # callable(action_name) set by the controller
+
+    def actionClicked_(self, sender):
+        if self.on_action is not None:
+            self.on_action(str(sender.title()))
 
     def _place(self, screen=None):
         AppKit = self.AppKit
@@ -167,6 +182,12 @@ class NotchHUD:
         if listening:
             self.detail.setStringValue_(detail or "Speak now")
             self._start_pulse()
+        # Action button: Stop while working, Details once a result/question is up.
+        working = kind in {"working", "listening"}
+        self.action_button.setTitle_("Stop" if working else "Details")
+        self.action_button.setAction_("actionClicked:")
+        self.action_button.setHidden_(kind == "cancelled")
+        self.detail.setFrame_(self.AppKit.NSMakeRect(46, 8, 310, 22))
         self._place()
         self.panel.orderFrontRegardless()
         self.panel.setAccessibilityValue_(heading)
@@ -182,7 +203,7 @@ class NotchHUD:
         amount = max(.08, min(1.0, float(level)))
         for index, bar in enumerate(self.waveform_bars):
             height = 8 + 30 * amount * (.55 + .45 * ((index * 3) % 5) / 4)
-            bar.setFrame_(self.AppKit.NSMakeRect(388 + index * 11, 31 - height / 2, 5, height))
+            bar.setFrame_(self.AppKit.NSMakeRect(300 + index * 11, 31 - height / 2, 5, height))
 
     def hide(self) -> None:
         self.generation += 1

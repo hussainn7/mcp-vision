@@ -244,7 +244,6 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             from mcp_vision.partial_intent import PartialIntentWatcher
             self.partial_watcher = PartialIntentWatcher()
             self._build_panel()
-            self._build_activity_panel()
             from mcp_vision.speech import AppleSpeechSession, HoldToTalk
             self.speech = AppleSpeechSession(
                 partial=lambda text, generation: AppHelper.callAfter(self.speech_partial, text, generation),
@@ -388,62 +387,6 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self._ensure_accessibility()
 
         @objc.python_method
-        def _build_activity_panel(self):
-            width, height = 400, 88
-            rect = AppKit.NSMakeRect(0, 0, width, height)
-            style = AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel
-            panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-                rect, style, AppKit.NSBackingStoreBuffered, False)
-            panel.setLevel_(AppKit.NSStatusWindowLevel)
-            panel.setFloatingPanel_(True)
-            panel.setHidesOnDeactivate_(False)
-            panel.setReleasedWhenClosed_(False)
-            panel.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                         AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary)
-            panel.setOpaque_(False)
-            panel.setBackgroundColor_(AppKit.NSColor.clearColor())
-            root = AppKit.NSView.alloc().initWithFrame_(rect)
-            root.setWantsLayer_(True)
-            root.layer().setBackgroundColor_(
-                AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.055, .07, .10, .97).CGColor())
-            root.layer().setCornerRadius_(22)
-            root.layer().setBorderWidth_(1)
-            root.layer().setBorderColor_(
-                AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(.22, .27, .34, .9).CGColor())
-            panel.setContentView_(root)
-
-            self.activity_title = AppKit.NSTextField.labelWithString_("LISTENING")
-            self.activity_title.setFrame_(AppKit.NSMakeRect(20, 51, 285, 22))
-            self.activity_title.setFont_(AppKit.NSFont.systemFontOfSize_weight_(11, AppKit.NSFontWeightBold))
-            self.activity_title.setTextColor_(AppKit.NSColor.systemTealColor())
-            root.addSubview_(self.activity_title)
-            self.activity_detail = AppKit.NSTextField.labelWithString_("Speak now")
-            self.activity_detail.setFrame_(AppKit.NSMakeRect(20, 19, 285, 28))
-            self.activity_detail.setFont_(AppKit.NSFont.systemFontOfSize_(15))
-            self.activity_detail.setTextColor_(AppKit.NSColor.whiteColor())
-            self.activity_detail.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
-            root.addSubview_(self.activity_detail)
-
-            teal = AppKit.NSColor.systemTealColor().CGColor()
-            self.waveform_bars = []
-            for index in range(5):
-                bar = AppKit.NSView.alloc().initWithFrame_(AppKit.NSMakeRect(318 + index * 10, 32, 5, 18))
-                bar.setWantsLayer_(True)
-                bar.layer().setBackgroundColor_(teal)
-                bar.layer().setCornerRadius_(2.5)
-                root.addSubview_(bar)
-                self.waveform_bars.append(bar)
-            self.activity_button = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(309, 26, 76, 30))
-            self.activity_button.setTitle_("Details")
-            self.activity_button.setBezelStyle_(AppKit.NSBezelStyleRounded)
-            self.activity_button.setTarget_(self)
-            self.activity_button.setAction_("expandActivity:")
-            self.activity_button.setHidden_(True)
-            root.addSubview_(self.activity_button)
-            panel.setAccessibilityLabel_("MCP-Vision activity")
-            self.activity_panel = panel
-
-        @objc.python_method
         def _activity_screen(self, context=None):
             point = getattr(context, "cursor_position", None)
             if point is not None:
@@ -455,42 +398,15 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
 
         @objc.python_method
         def show_activity(self, phase, detail=""):
-            labels = {
-                "listening": "●  Listening", "understanding": "◌  Understanding…",
-                "acting": "◌  Working…", "verifying": "◌  Verifying…", "done": "✓  Done",
-                "input": "?  Your answer", "error": "✕  Couldn't verify result", "cancelled": "Stopped",
-            }
             self.activity_generation += 1
+            self.notch.on_action = lambda name: AppHelper.callAfter(
+                self.stopActivity_ if name == "Stop" else self.expandActivity_)
             self.notch.set(phase, detail)
-            self.activity_title.setStringValue_(labels.get(phase, phase.upper()))
-            self.activity_detail.setStringValue_((detail or labels.get(phase, phase))[:100])
-            self.activity_title.setTextColor_(AppKit.NSColor.systemRedColor() if phase == "error"
-                                               else AppKit.NSColor.systemTealColor())
-            listening = phase == "listening"
-            for bar in self.waveform_bars:
-                bar.setHidden_(not listening)
-            if phase in {"understanding", "acting", "verifying"}:
-                self.activity_button.setTitle_("Stop")
-                self.activity_button.setAction_("stopActivity:")
-                self.activity_button.setHidden_(False)
-            elif phase in {"done", "input", "error"}:
-                self.activity_button.setTitle_("Details")
-                self.activity_button.setAction_("expandActivity:")
-                self.activity_button.setHidden_(False)
-            else:
-                self.activity_button.setHidden_(True)
-            screen = self._activity_screen(self.voice_context or self.context)
-            frame = screen.visibleFrame()
-            origin = top_center_origin((frame.origin.x, frame.origin.y, frame.size.width, frame.size.height), (400, 88))
-            self.activity_panel.setFrameOrigin_(AppKit.NSMakePoint(*origin))
-            self.activity_panel.orderFrontRegardless()
-            self.activity_panel.setAccessibilityValue_(labels.get(phase, phase))
 
         @objc.python_method
         def hide_activity(self):
             self.activity_generation += 1
             self.notch.hide()
-            self.activity_panel.orderOut_(None)
 
         @objc.python_method
         def hide_activity_later(self, delay=4.0):
@@ -504,15 +420,11 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
         def update_waveform(self, level, generation):
             if generation != self.voice_generation or self.hold.state not in {"listening", "finalizing"}:
                 return
-            if not self.activity_panel.isVisible():
+            if not self.notch.is_visible():
                 return
             if self.interaction:
                 self.interaction.mark("first_audio_frame")
             self.notch.waveform(level, self.notch.generation)
-            amount = max(.08, min(1.0, float(level)))
-            for index, bar in enumerate(self.waveform_bars):
-                height = 8 + 28 * amount * (.55 + .45 * ((index * 3) % 5) / 4)
-                bar.setFrame_(AppKit.NSMakeRect(318 + index * 10, 44 - height / 2, 5, height))
 
         @objc.python_method
         def install_hotkey(self):
@@ -718,13 +630,11 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             if self.interaction:
                 self.interaction.mark("first_transcript")
             self.notch.partial(text, self.notch.generation)
-            self.activity_detail.setStringValue_(str(text)[-100:])
             self.prepare_partial_intent(str(text))
 
         @objc.python_method
         def speech_status(self, message, generation):
             if generation == self.voice_generation and self.hold.state in {"listening", "finalizing"}:
-                self.activity_detail.setStringValue_(str(message)[:100])
                 if str(message) == "Listening…" and self.interaction:
                     self.interaction.mark("capture_started")
 
