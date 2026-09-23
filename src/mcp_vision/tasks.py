@@ -183,6 +183,9 @@ class ModelPlanner:
             'Use scroll value in pixels to inspect offscreen fields, bounded to 600. '
             'Creating a blank document, item, note, or tab is complete when the user supplied no content; do not ask '
             'what optional content it should contain. If content was supplied, continue until that exact content is visible. '
+            'input is ONLY for asking the user a question they must answer (missing origin city, unclear target). '
+            'Never use input to describe your own next move; act instead. Buttons are pressed with click in reading '
+            'order: digit buttons, operator buttons, then Equals, one click per step, and confirm the display changes. '
             'A blocked or unverified operation is not success. Messages are brief user-facing progress, not reasoning.'
         )
         result = self.chat([{'role': 'system', 'content': system},
