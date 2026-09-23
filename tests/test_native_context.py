@@ -37,6 +37,11 @@ def test_secure_native_value_is_never_packaged():
     assert result.value == ''
 
 
+def test_native_subrole_supplies_semantic_name_when_title_is_blank():
+    result = describe_ax(AX, element('', AXSubrole='AXCloseButton'))
+    assert result.name == 'Close Button'
+
+
 def test_native_hierarchy_is_bounded_and_retains_handles():
     root = element('Panel', AXChildren=[element(str(i)) for i in range(300)])
     records, handles = nearby_ax(AX, root, 18)
@@ -219,3 +224,16 @@ def test_native_action_rejects_moved_ax_target(monkeypatch):
     monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
     receipt = asyncio.run(backend.click('s1', 0))
     assert receipt.status == 'stale' and receipt.executed is False
+
+
+def test_native_screenshot_returns_only_current_observation_capture():
+    backend, _target = native_backend()
+    backend._captures = {
+        's1': SimpleNamespace(png=b'first'),
+        's2': SimpleNamespace(png=b'second'),
+    }
+    assert asyncio.run(backend.screenshot()) == b'first'
+    backend.sid = 's2'
+    assert asyncio.run(backend.screenshot()) == b'second'
+    backend.sid = 'unknown'
+    assert asyncio.run(backend.screenshot()) == b''

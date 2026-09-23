@@ -8,6 +8,9 @@ from uuid import uuid4
 from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import ContextBounds, ContextElement
 from mcp_vision.execution_ladder import AttemptOutcome, ExecutionMethod, ExecutionTrace
+from mcp_vision.native_perception import (
+    capture_window, degradation_reasons, fuse_ax_ocr, recognize_text, same_window_bounds,
+)
 from mcp_vision.redaction import redact
 
 
@@ -33,7 +36,8 @@ def describe_ax(api, element):
     from mcp_vision.macos_ui import _ax_copy
     get = lambda key: _ax_copy(api, element, key)
     role = str(get('AXRole') or '')
-    secure = 'secure' in role.lower() or str(get('AXSubrole') or '') == 'AXSecureTextField'
+    subrole = str(get('AXSubrole') or '')
+    secure = 'secure' in role.lower() or subrole == 'AXSecureTextField'
     bounds = None
     try:
         ok_p, p = api.AXValueGetValue(get('AXPosition'), api.kAXValueCGPointType, None)
@@ -50,7 +54,10 @@ def describe_ax(api, element):
     elif role in {'AXCheckBox', 'AXRadioButton'}:
         checked = value in (1, '1', True)
         value = ''
-    return ContextElement(role=role, name=str(get('AXTitle') or get('AXDescription') or ''),
+    name = str(get('AXTitle') or get('AXDescription') or get('AXHelp') or '')
+    if not name and subrole and subrole != 'AXSecureTextField':
+        name = role_label(subrole)
+    return ContextElement(role=role, name=name,
                           value=value if isinstance(value, str) else str(value or ''), bounds=bounds,
                           attributes={'checked': str(checked)} if checked is not None else {})
 
@@ -110,6 +117,7 @@ def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6,
             record = {
                 'index': -1, 'name': name, 'role': normalize_role(desc.role), 'ax_role': desc.role,
                 'ax_name': desc.name,
+                'sources': ['ax'],
                 'value': desc.value,
                 'checked': None if checked is None else checked == 'True',
                 'x': box.x if visible else 0, 'y': box.y if visible else 0,
@@ -153,6 +161,7 @@ class NativeContextBackend:
         self.handles = {}
         self.records = {}
         self.sid = ''
+        self._captures = {}
 
     def _pid(self) -> int:
         pid = self.context.accessibility_context.get('pid')
@@ -214,18 +223,11 @@ class NativeContextBackend:
         return Receipt(status='blocked', action=action, message=message, executed=False)
 
     async def snapshot(self):
+        import asyncio
         import ApplicationServices as AX
         from mcp_vision.macos_ui import _ax_copy
         if not AX.AXIsProcessTrusted():
             raise PermissionError('Enable Accessibility for /Applications/MCP-Vision.app.')
-        # The assistant popup may have taken focus from the application where
-        # Act was invoked, and a freshly launched app needs one activation.
-        # Re-activate only when the previous walk found almost nothing; steady
-        # re-activation churns focus and degrades some apps' AX trees.
-        if self.allow_writes and len(self.records) < 3:
-            self._activate()
-            import asyncio
-            await asyncio.sleep(0.2)
         app = AX.AXUIElementCreateApplication(self._pid())
         window = _ax_copy(AX, app, 'AXFocusedWindow') or _ax_copy(AX, app, 'AXMainWindow')
         title = str(_ax_copy(AX, window, 'AXTitle') or '')
@@ -234,17 +236,34 @@ class NativeContextBackend:
             raise PermissionError('The native window changed. Invoke again on the intended window.')
         if title:
             self.context = self.context.model_copy(update={'title': title})
-        records, self.handles = nearby_ax(AX, window or app)
+        window_bounds = describe_ax(AX, window).bounds if window else None
+        capture_task = None
+        if window_bounds:
+            capture_task = asyncio.create_task(asyncio.to_thread(
+                capture_window, self._pid(),
+                {'X': window_bounds.x, 'Y': window_bounds.y,
+                 'Width': window_bounds.width, 'Height': window_bounds.height},
+                title,
+            ))
+        traversal_error = False
+        try:
+            records, self.handles = await asyncio.to_thread(nearby_ax, AX, window or app)
+        except Exception:
+            records, self.handles = [], {}
+            traversal_error = True
         if len(records) < 8:
             # An app whose AX server just woke up can answer with a truncated
             # tree. Give it one short beat and walk again before concluding
             # the surface is truly this sparse.
-            import asyncio
             await asyncio.sleep(0.3)
             app = AX.AXUIElementCreateApplication(self._pid())
             window = _ax_copy(AX, app, 'AXFocusedWindow') or _ax_copy(AX, app, 'AXMainWindow')
             title = str(_ax_copy(AX, window, 'AXTitle') or '') or title
-            records2, handles2 = nearby_ax(AX, window or app)
+            try:
+                records2, handles2 = await asyncio.to_thread(nearby_ax, AX, window or app)
+            except Exception:
+                records2, handles2 = [], {}
+                traversal_error = True
             if len(records2) > len(records):
                 records, self.handles = records2, handles2
         # Some native editors (e.g. Notes blank note) are not reached by the
@@ -271,6 +290,7 @@ class NativeContextBackend:
                     record = {
                         'index': index, 'name': name, 'role': normalize_role(focused_desc.role),
                         'ax_role': focused_desc.role, 'ax_name': focused_desc.name,
+                        'sources': ['ax'],
                         'value': focused_desc.value,
                         'checked': None,
                         'x': box.x, 'y': box.y, 'w': box.width, 'h': box.height,
@@ -300,14 +320,75 @@ class NativeContextBackend:
                                 'identity': {'accessibility': path}})
                 self.handles[index] = menu_handles[old_index]
                 observed_names.add(name)
+        capture = None
+        capture_error = ''
+        if capture_task:
+            try:
+                capture = await capture_task
+            except Exception as exc:
+                capture_error = type(exc).__name__
+        else:
+            capture_error = 'MissingAXWindowBounds'
+
+        final_bounds = describe_ax(AX, window).bounds if window else None
+        window_changed = bool(capture and (
+            not final_bounds or not same_window_bounds(capture.bounds, {
+                'X': final_bounds.x, 'Y': final_bounds.y,
+                'Width': final_bounds.width, 'Height': final_bounds.height,
+            })
+        ))
+        if window_changed:
+            records, self.handles = [], {}
+            capture = None
+            capture_error = 'WindowChangedDuringObservation'
+        ocr_trigger_reasons = degradation_reasons(records, traversal_error=traversal_error)
+        fallback_reasons = list(ocr_trigger_reasons)
+        ocr_status = 'not_needed'
+        if capture_error:
+            fallback_reasons.append('window_changed_during_observation' if window_changed
+                                    else 'window_capture_unavailable')
+        elif ocr_trigger_reasons:
+            ocr_status = 'attempted'
+            try:
+                ocr_items = await asyncio.to_thread(recognize_text, capture)
+                records = fuse_ax_ocr(records, ocr_items, window_id=capture.window_id)
+                fallback_reasons = degradation_reasons(records, traversal_error=traversal_error)
+                ocr_status = 'fused' if any('ocr' in record.get('sources', ()) for record in records) else 'empty'
+                if not ocr_items:
+                    fallback_reasons.append('ocr_empty')
+            except Exception:
+                ocr_status = 'unavailable'
+                fallback_reasons.append('ocr_unavailable')
+        fallback_reasons = list(dict.fromkeys(fallback_reasons))
         self.records = {record['index']: record for record in records}
         self.sid = uuid4().hex
+        if capture:
+            self._captures[self.sid] = capture
+            while len(self._captures) > 4:
+                self._captures.pop(next(iter(self._captures)))
+        authority = ({'pid': capture.pid, 'window_id': capture.window_id,
+                      'bounds': capture.bounds, 'scale': capture.scale}
+                     if capture else {'pid': self._pid(), 'window_id': None, 'bounds': None})
+        unresolved = [
+            {'reason': reason,
+             'stage': ('capture' if reason in {'window_capture_unavailable',
+                                               'window_changed_during_observation'} else
+                       'ocr' if reason.startswith('ocr_') else 'accessibility')}
+            for reason in fallback_reasons
+        ]
         return BrowserSnapshot(snapshot_id=self.sid, root_id=f"macos-pid-{self._pid()}", url='', title=title,
                                text='\n'.join(e['name'] + ' ' + str(e.get('value') or '') for e in records),
                                elements=records, source='macos-accessibility', identity={
                                    'pid': self._pid(),
                                    'application': self.context.source_application,
                                    'window_title': title,
+                                   'window_authority': authority,
+                                   'perception': ('ax+ocr' if any('ocr' in record.get('sources', ())
+                                                                  for record in records) else 'ax'),
+                                   'ocr': {'status': ocr_status, 'trigger_reasons': ocr_trigger_reasons},
+                                   'fallback_reasons': fallback_reasons,
+                                   'unresolved_degradation': unresolved,
+                                   'capture_error': capture_error,
                                })
 
     async def find(self, *, role='', name='', value=''):
@@ -582,7 +663,8 @@ class NativeContextBackend:
         return Receipt(status='blocked', action=action, message='Unsupported native action.')
 
     async def screenshot(self):
-        return b''
+        capture = self._captures.get(self.sid)
+        return capture.png if capture else b''
 
     async def close(self):
         await self.clear_highlight()
