@@ -125,6 +125,11 @@ def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6,
         child_in_web = in_web_content or desc.role in {'AXWebArea', 'AXDocument'}
         queue.extend((child, f"{path}/{offset}", child_label, child_in_web)
                      for offset, child in enumerate(children))
+    elapsed = time.monotonic() - (deadline - max(0, time_cap))
+    if len(candidates) + len(deferred) < 8 or elapsed > time_cap * 0.9:
+        import sys
+        print(f"[nearby_ax] records={len(candidates)}+{len(deferred)} visited={visited} "
+              f"elapsed={elapsed:.2f}s cap={time_cap}s", file=sys.stderr, flush=True)
     candidates.extend(deferred)
     priority = {
         'textbox': 0, 'combobox': 0, 'checkbox': 0, 'radio': 0, 'slider': 0,
