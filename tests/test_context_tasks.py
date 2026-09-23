@@ -7,7 +7,8 @@ from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import Context, ContextBounds, ContextElement
 from mcp_vision.execution import bind_context_backend
 from mcp_vision.guidance import overlay_script, resolve_target
-from mcp_vision.tasks import (ContextTask, ModelPlanner, Step, explicit_native_fill,
+from mcp_vision.tasks import (ContextTask, ModelPlanner, Step, explicit_arithmetic_clicks,
+                              explicit_native_fill,
                               explicit_semantic_click, request_has_followup,
                               _extract_compound_fill_text)
 
@@ -276,6 +277,33 @@ def test_compound_open_app_remainder_extraction():
     assert remainder('Open Notes and type hello world', 'Notes') == 'type hello world'
     assert remainder('Open Calculator', 'Calculator') is None
     assert remainder('open spotify', 'Spotify') is None
+
+
+def calculator_snapshot(elements=None):
+    base = elements if elements is not None else [
+        dict(index=i, role='button', name=name, x=10, y=10, w=30, h=30)
+        for i, name in enumerate(['Clear', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+                                  'Multiply', 'Add', 'Subtract', 'Divide', 'Equals', 'Point'])
+    ]
+    return BrowserSnapshot(snapshot_id='calc', source='macos-accessibility', url='',
+                           title='Calculator', text='Calculator', elements=base)
+
+
+def test_arithmetic_compiles_to_grounded_button_presses():
+    steps = explicit_arithmetic_clicks('Open Calculator and calculate 1847 times 37', calculator_snapshot())
+    assert steps is not None
+    names = [s.name for s in steps]
+    assert names == ['1', '8', '4', '7', 'Multiply', '3', '7', 'Equals']
+    assert all(s.action == 'click' for s in steps)
+
+
+def test_arithmetic_requires_observed_controls():
+    limited = calculator_snapshot([
+        dict(index=0, role='button', name='1', x=10, y=10, w=30, h=30),
+        dict(index=1, role='button', name='2', x=45, y=10, w=30, h=30),
+    ])
+    assert explicit_arithmetic_clicks('calculate 1847 times 37', limited) is None
+    assert explicit_arithmetic_clicks('type hello world', calculator_snapshot()) is None
 
 
 def test_compound_open_then_calculate_completes_in_app(monkeypatch):

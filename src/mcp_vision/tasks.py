@@ -150,6 +150,89 @@ def request_has_followup(request: str) -> bool:
     ))
 
 
+_ARITHMETIC = re.compile(
+    r"\b(\d[\d,.]*)((?:\s*(?:x|×|\*|times|multiplied by|plus|\+|minus|-|less|divided by|÷|/)\s*\d[\d,.]*)+)"
+    r"(?:\s*(?:equals|is|=|please)\b)?",
+    re.I,
+)
+_OPERATOR_BUTTONS = {
+    'x': ('multiply', '×', 'x', '*'), '×': ('multiply', '×', 'x', '*'),
+    '*': ('multiply', '×', 'x', '*'), 'times': ('multiply', '×', 'x', '*'),
+    'multiplied by': ('multiply', '×', 'x', '*'),
+    'plus': ('add', '+', 'plus'), '+': ('add', '+', 'plus'),
+    'minus': ('subtract', '–', '-', 'minus'), '-': ('subtract', '–', '-', 'minus'),
+    'less': ('subtract', '–', '-', 'minus'),
+    'divided by': ('divide', '÷', '/'), '÷': ('divide', '÷', '/'), '/': ('divide', '÷', '/'),
+}
+_EQUALS_BUTTONS = ('equals', '=', 'equal', 'result')
+
+
+def explicit_arithmetic_clicks(request: str, snapshot) -> list[Step] | None:
+    """Compile arithmetic into grounded button presses on a calculator surface.
+
+    Deterministic Rules-level execution: the observed keypad must contain every
+    needed control or the compilation aborts to the model. Works for any app
+    whose buttons carry digit and operator labels.
+    """
+    if not snapshot or not snapshot.elements:
+        return None
+    match = _ARITHMETIC.search(request or '')
+    if not match:
+        return None
+    buttons = {}
+    for element in snapshot.elements:
+        if element.get('role') == 'button':
+            name = str(element.get('name') or '').strip()
+            if name:
+                buttons.setdefault(name.casefold(), element)
+    if sum(1 for name in buttons if re.fullmatch(r'\d', name)) < 6:
+        return None
+
+    def button_for(label: str):
+        target = label.casefold()
+        element = buttons.get(target)
+        if element is not None:
+            return element
+        for candidate in _OPERATOR_BUTTONS.get(target, (target,)) + (
+                _EQUALS_BUTTONS if target in {'equals', '=', 'equal'} else ()):
+            element = buttons.get(candidate)
+            if element is not None:
+                return element
+        return None
+
+    steps: list[Step] = []
+    raw = match.group(1) + match.group(2)
+    tokens = re.findall(r"\d[\d,.]*|x|×|\*|times|multiplied by|plus|\+|minus|-|less|divided by|÷|/", raw, re.I)
+    for token in tokens:
+        token = token.strip().lower()
+        if re.fullmatch(r"\d[\d,.]*", token):
+            for char in token.replace(',', ''):
+                if char == '.':
+                    element = button_for('point') or button_for('.')
+                    name = 'Point' if element else None
+                    if element is None:
+                        return None
+                    steps.append(Step(action='click', name=str(element['name']), role='button',
+                                      confidence=1.0, message=f'Press {name}.'))
+                    continue
+                element = buttons.get(char)
+                if element is None:
+                    return None
+                steps.append(Step(action='click', name=str(element['name']), role='button',
+                                  confidence=1.0, message=f'Press {char}.'))
+        else:
+            element = button_for(token)
+            if element is None:
+                return None
+            steps.append(Step(action='click', name=str(element['name']), role='button',
+                              confidence=1.0, message=f'Press {element["name"]}.'))
+    equals = next((buttons.get(name) for name in _EQUALS_BUTTONS if buttons.get(name)), None)
+    if equals is not None:
+        steps.append(Step(action='click', name=str(equals['name']), role='button',
+                          confidence=1.0, message='Press Equals.'))
+    return steps or None
+
+
 class ModelPlanner:
     def __init__(self, provider=None):
         from backends import get_chat
@@ -497,6 +580,7 @@ class ContextTask:
                 return self.result('input', 'No compatible execution backend is available for this surface.')
             snapshot = await self.observe()
             direct = None
+            queue: list[Step] = []
             if self.mode == "act" and self.planner is None:
                 direct = explicit_native_fill(self.context, snapshot) or explicit_semantic_click(self.context, snapshot)
                 if direct is None and self.context.source == 'macos':
@@ -510,7 +594,11 @@ class ContextTask:
                                   or explicit_semantic_click(self.context, snapshot))
                         if direct is not None:
                             break
-            if direct is None and self.mode == "act" and self.planner is None and self.context.source == "macos":
+                if direct is None and self.context.source == 'macos':
+                    arithmetic = explicit_arithmetic_clicks(self.context.user_request, snapshot)
+                    if arithmetic:
+                        queue.extend(arithmetic)
+            if direct is None and not queue and self.mode == "act" and self.planner is None and self.context.source == "macos":
                 # Some apps do not publish toolbar/menu commands in their AX
                 # tree. Fall back only to the small, app-agnostic desktop
                 # primitive vocabulary after observation failed to provide a
@@ -530,7 +618,7 @@ class ContextTask:
                     self.emit('Checking the resulting state…', 'verifying')
                     return self.result('review' if outcome.get('verified') else 'input',
                                        str(outcome.get('message') or 'The app command could not be verified.'))
-            if self.planner is None and direct is None:
+            if self.planner is None and direct is None and not queue:
                 from mcp_vision.readiness import ensure_model_ready
                 from mcp_vision.providers import resolve_provider
                 self.emit('Checking the selected model…')
@@ -552,7 +640,9 @@ class ContextTask:
                 if source and not self.constraints.only_field:
                     payload['context'].pop('target', None)
                     payload['context'].pop('nearby', None)
-                if direct is not None:
+                if queue:
+                    proposal, queue = queue[0], queue[1:]
+                elif direct is not None:
                     proposal, direct = direct, None
                 elif direct_mode:
                     proposal = (Step(action="review", confidence=1.0,
