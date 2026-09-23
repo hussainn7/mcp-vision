@@ -223,10 +223,24 @@ def parse_intent(request: str) -> NativeIntent | None:
         # Articles belong to the command, not the installed application name.
         candidate = re.sub(r"^(?:the|my)\s+", "", destination)
         candidate = re.sub(r"\s+(?:app|application)\s*$", "", candidate)
+        target = None
         if _looks_like_app_name(candidate):
             target = resolve_app(candidate)
-            if target:
-                return NativeIntent("open_app", target.name, f"Open {target.name}")
+        if target is None:
+            # Compound requests continue after the app name ("open Calculator
+            # and calculate 1847 times 37"). Resolve the longest leading run of
+            # words that names an installed app; the remainder stays in the
+            # request for the in-app phase of the task.
+            words = candidate.split()
+            for width in range(min(len(words), 4), 0, -1):
+                prefix = " ".join(words[:width])
+                if not _looks_like_app_name(prefix):
+                    continue
+                target = resolve_app(prefix)
+                if target:
+                    break
+        if target:
+            return NativeIntent("open_app", target.name, f"Open {target.name}")
     return None
 
 

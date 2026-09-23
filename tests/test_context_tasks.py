@@ -270,6 +270,78 @@ def test_open_app_is_the_only_native_command_outside_observed_surface_loop():
     assert runner.requires_surface_backend is False
 
 
+def test_compound_open_app_remainder_extraction():
+    remainder = ContextTask._compound_remainder
+    assert remainder('open calculator and calculate 1847 times 37', 'Calculator') == 'calculate 1847 times 37'
+    assert remainder('Open Notes and type hello world', 'Notes') == 'type hello world'
+    assert remainder('Open Calculator', 'Calculator') is None
+    assert remainder('open spotify', 'Spotify') is None
+
+
+def test_compound_open_then_calculate_completes_in_app(monkeypatch):
+    calls = []
+
+    def fake_perform(action, value, pid=0, bundle_id=''):
+        calls.append((action, value))
+        return {'ok': True, 'verified': True, 'message': 'Calculator is open.',
+                'pid': 4242, 'bundle_id': 'com.apple.calculator', 'application': 'Calculator'}
+
+    monkeypatch.setattr('mcp_vision.native_apps.perform', fake_perform)
+
+    async def fake_bind(context, **options):
+        return CalcBackend()
+
+    monkeypatch.setattr('mcp_vision.execution.bind_context_backend', fake_bind)
+
+    class CalcBackend(Backend):
+        def __init__(self):
+            super().__init__()
+            self.url = ''
+            self.press = []
+
+        async def snapshot(self):
+            self.observations += 1
+            base = [
+                dict(index=0, role='button', name='1', x=10, y=10, w=30, h=30),
+                dict(index=1, role='button', name='8', x=45, y=10, w=30, h=30),
+                dict(index=2, role='button', name='4', x=80, y=10, w=30, h=30),
+                dict(index=3, role='button', name='7', x=115, y=10, w=30, h=30),
+                dict(index=4, role='button', name='×', x=45, y=45, w=30, h=30),
+                dict(index=5, role='button', name='3', x=45, y=80, w=30, h=30),
+                dict(index=6, role='button', name='=', x=115, y=115, w=30, h=30),
+                dict(index=7, role='text', name=f'Display {len(self.press)}', value=''),
+            ]
+            return BrowserSnapshot(snapshot_id=str(self.observations), source='macos-accessibility',
+                                   url='', title='Calculator',
+                                   text=' '.join(str(e['name']) for e in base), elements=base)
+
+        async def click(self, sid, index):
+            self.actions += 1
+            self.press.append(index)
+            return Receipt(status='unverified', action='click', executed=True, message='dispatched')
+
+    steps = iter([
+        Step(action='click', name='1', role='button'),
+        Step(action='click', name='8', role='button'),
+        Step(action='click', name='4', role='button'),
+        Step(action='click', name='7', role='button'),
+        Step(action='click', name='×', role='button'),
+        Step(action='click', name='3', role='button'),
+        Step(action='click', name='7', role='button'),
+        Step(action='click', name='=', role='button'),
+        Step(action='review'),
+    ])
+
+    context = Context(source='macos', user_request='Open Calculator and calculate 1847 times 37')
+    runner = ContextTask(context, planner=lambda _: next(steps))
+    result = asyncio.run(runner.run())
+    assert result['state'] == 'review'
+    assert len(result['verified']) == 8
+    assert result['verified'][0]['action'] == 'click' and result['verified'][0]['name'] == '1'
+    assert result['native_target']['application'] == 'Calculator'
+    assert calls == [('open_app', 'Calculator')]
+
+
 def test_new_tab_executes_from_observed_control_not_shortcut_parser():
     class NativeBackend(Backend):
         def __init__(self):

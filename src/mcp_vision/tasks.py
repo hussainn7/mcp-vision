@@ -309,6 +309,54 @@ class ContextTask:
         if self.cancelled.is_set():
             raise asyncio.CancelledError()
 
+    @staticmethod
+    def _compound_remainder(request: str, application: str) -> str | None:
+        """The in-app part of 'open X and do Y' — general, no command table."""
+        text = (request or "").strip()
+        app = (application or "").strip()
+        if not text or not app:
+            return None
+        index = text.casefold().rfind(app.casefold())
+        if index < 0:
+            return None
+        remainder = text[index + len(app):].strip()
+        remainder = re.sub(r'^(?:and|then|,|;)\s+', '', remainder, flags=re.I).strip()
+        return remainder or None
+
+    async def _run_compound_followup(self, outcome, followup: str, launch_result):
+        """Continue an 'open app and do X' request on the freshly opened app."""
+        from mcp_vision.execution import bind_context_backend
+        from mcp_vision.macos_ui import native_followup_context
+        sub_context = native_followup_context(self.context, outcome)
+        sub_context = sub_context.model_copy(update={'user_request': followup})
+        self.emit(f'{outcome.get("application") or "The app"} is open. Continuing…', 'acting')
+        backend = None
+        try:
+            backend = await bind_context_backend(sub_context, mode='act')
+            sub_task = ContextTask(sub_context, mode='act', provider=self.provider,
+                                   planner=self.planner,
+                                   progress=self.progress, phase=self.phase,
+                                   history=self.history, source_path=self.source_path,
+                                   max_steps=self.max_steps)
+            sub_task.backend = backend
+            sub_task.task_generation = getattr(self, 'task_generation', 0)
+            sub_result = await sub_task.run()
+        except asyncio.CancelledError:
+            return self.result('cancelled', 'Cancelled. Completed changes remain.')
+        finally:
+            if backend is not None and hasattr(backend, 'close'):
+                try:
+                    await backend.close()
+                except Exception:
+                    pass
+        verified = list(launch_result.get('verified') or []) + list(sub_result.get('verified') or [])
+        merged = dict(sub_result)
+        merged['verified'] = verified
+        merged['native_target'] = launch_result.get('native_target')
+        if verified and sub_result.get('state') == 'review':
+            merged['answer'] = f"{launch_result.get('answer', '')} {sub_result['answer']}".strip()
+        return merged
+
     async def reason(self, fn, *args, **kwargs):
         import concurrent.futures
         future = concurrent.futures.Future()
@@ -383,6 +431,10 @@ class ContextTask:
                         'bundle_id': str(outcome.get('bundle_id') or ''),
                         'application': str(outcome.get('application') or ''),
                     }
+                    followup = self._compound_remainder(
+                        self.context.user_request, str(outcome.get('application') or ''))
+                    if followup:
+                        return await self._run_compound_followup(outcome, followup, result)
                 return result
             if self.route.kind == 'browser':
                 from mcp_vision.readiness import ensure_model_ready
@@ -687,7 +739,15 @@ class ContextTask:
                         return True
             before_controls = self._control_fingerprint(before.elements)
             after_controls = self._control_fingerprint(after.elements)
-            return bool(after_controls - before_controls)
+            if after_controls - before_controls:
+                return True
+            # Native apps often respond to a press by changing visible text
+            # (Calculator displays, status labels). On AX surfaces that is an
+            # observed effect; the web path keeps its stricter control rule.
+            if (getattr(before, 'source', '') == 'macos-accessibility'
+                    and (after.text or '') != (before.text or '')):
+                return True
+            return False
         if step.action == 'scroll':
             return before.elements != after.elements
         current = resolve_target(after.elements, step.name, step.role)
