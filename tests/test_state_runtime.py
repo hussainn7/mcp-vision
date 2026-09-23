@@ -59,6 +59,8 @@ def test_state_compiles_semantic_refs_capabilities_and_bounded_actions():
         Operation.TYPE, Operation.PRESS, Operation.SCROLL, Operation.WAIT,
         Operation.REOBSERVE, Operation.REPLAN,
     }
+    assert state.quality.sources == ("dom-accessibility",)
+    assert not state.quality.degraded
 
 
 def test_store_epochs_make_old_observation_stale_and_diff_tracks_updates():

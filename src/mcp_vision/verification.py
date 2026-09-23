@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from mcp_vision.state import UIElement, UIState
 
@@ -32,8 +33,14 @@ class VerificationPredicate(BaseModel):
     case_sensitive: bool = False
 
 
+class VerificationOutcome(str, Enum):
+    SATISFIED = "satisfied"
+    UNSATISFIED = "unsatisfied"
+    UNKNOWN = "unknown"
+
+
 class VerificationResult(BaseModel):
-    passed: bool
+    outcome: VerificationOutcome
     predicate: PredicateKind
     state_id: str
     target: str | None = None
@@ -41,6 +48,12 @@ class VerificationResult(BaseModel):
     observed: Any = None
     evidence: dict[str, Any] = Field(default_factory=dict)
     message: str
+
+    @computed_field
+    @property
+    def passed(self) -> bool:
+        """Compatibility view; callers should branch on ``outcome``."""
+        return self.outcome is VerificationOutcome.SATISFIED
 
 
 CustomVerifier = Callable[[UIState, UIState | None, VerificationPredicate], tuple[bool, Any, dict[str, Any]]]
@@ -91,25 +104,39 @@ class VerificationEngine:
         elements = self._elements(state, predicate, before)
         target = elements[0].ref if len(elements) == 1 else predicate.target_ref
         observed: Any = None
-        evidence: dict[str, Any] = {"root_id": state.root_id, "epoch": state.epoch}
+        evidence: dict[str, Any] = {
+            "root_id": state.root_id,
+            "epoch": state.epoch,
+            "observation_degraded": state.quality.degraded,
+            "degradation_reasons": list(state.quality.reasons),
+        }
+        unknown_reason = ""
 
         if predicate.kind in {"element_exists", "element_missing"}:
             observed = len(elements)
             passed = bool(elements) if predicate.kind == "element_exists" else not elements
             evidence["matches"] = [element.ref for element in elements]
+            if predicate.kind == "element_missing" and not elements and state.quality.degraded:
+                unknown_reason = "The observation is degraded, so element absence cannot be established."
         elif predicate.kind == "text_equals":
             observed = state.text
             passed = self._equal(observed, predicate.expected, predicate.case_sensitive)
+            if not passed and state.quality.degraded:
+                unknown_reason = "The observation is degraded, so missing or unequal text is inconclusive."
         elif predicate.kind == "text_contains":
             needle = str(predicate.expected or "")
             haystack = state.text if predicate.case_sensitive else state.text.casefold()
             observed = needle in state.text if predicate.case_sensitive else needle.casefold() in haystack
             passed = bool(observed)
             evidence["text_excerpt"] = self._excerpt(state.text, needle)
+            if not passed and state.quality.degraded:
+                unknown_reason = "The observation is degraded, so missing text is inconclusive."
         elif predicate.kind == "value_equals":
             observed = elements[0].value if len(elements) == 1 else None
             passed = len(elements) == 1 and self._equal(observed, predicate.expected, predicate.case_sensitive)
             evidence["matches"] = len(elements)
+            if len(elements) != 1:
+                unknown_reason = "The value target is missing or ambiguous."
         elif predicate.kind == "url_matches":
             observed = state.url
             try:
@@ -117,6 +144,7 @@ class VerificationEngine:
             except re.error:
                 passed = False
                 evidence["error"] = "invalid regular expression"
+                unknown_reason = "The URL predicate is invalid."
         elif predicate.kind in {"window_exists", "window_closed"}:
             observed = state.title
             exists = bool(state.title) and (predicate.expected is None
@@ -125,6 +153,7 @@ class VerificationEngine:
         elif predicate.kind == "attribute_equals":
             if len(elements) != 1 or not predicate.attribute:
                 observed, passed = None, False
+                unknown_reason = "The attribute target is missing or ambiguous."
             else:
                 element = elements[0]
                 observed = getattr(element, predicate.attribute, element.metadata.get(predicate.attribute))
@@ -136,19 +165,24 @@ class VerificationEngine:
             evidence["before_state_id"] = before.state_id if before else None
             evidence["before_hash"] = before.content_hash if before else None
             evidence["after_hash"] = state.content_hash
+            if before is None:
+                unknown_reason = "No baseline observation was supplied."
         else:
             verifier = self._custom.get(predicate.custom_name or "")
             if verifier is None:
                 observed, passed = None, False
                 evidence["error"] = "custom verifier is not registered"
+                unknown_reason = "The custom verifier is not registered."
             else:
                 passed, observed, custom_evidence = verifier(state, before, predicate)
                 evidence.update(custom_evidence)
 
+        outcome = (VerificationOutcome.UNKNOWN if unknown_reason else
+                   VerificationOutcome.SATISFIED if passed else VerificationOutcome.UNSATISFIED)
         return VerificationResult(
-            passed=bool(passed), predicate=predicate.kind, state_id=state.state_id,
+            outcome=outcome, predicate=predicate.kind, state_id=state.state_id,
             target=target, expected=predicate.expected, observed=observed, evidence=evidence,
-            message="Verification passed." if passed else "Verification did not pass.",
+            message=(unknown_reason or ("Verification satisfied." if passed else "Verification unsatisfied.")),
         )
 
     @staticmethod

@@ -37,6 +37,22 @@ class ElementIdentity(BaseModel):
     visual: str | None = None
 
 
+class ObservationQuality(BaseModel):
+    """How trustworthy an observation is for proving absence or non-change.
+
+    Positive evidence can still be useful in a degraded observation.  Negative
+    evidence cannot: a missing control in a truncated AX tree is not proof that
+    the control does not exist.  Keeping this on the immutable state lets every
+    verifier make that distinction without knowing backend-specific details.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    degraded: bool = False
+    reasons: tuple[str, ...] = ()
+    sources: tuple[str, ...] = ()
+
+
 class UIElement(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -87,6 +103,7 @@ class UIState(BaseModel):
     title: str = ""
     text: str = ""
     content_hash: str
+    quality: ObservationQuality = Field(default_factory=ObservationQuality)
     elements: tuple[UIElement, ...] = ()
     candidates: tuple[ActionCandidate, ...] = ()
     pruned: dict[str, int] = Field(default_factory=dict)
@@ -223,10 +240,20 @@ def compile_state(snapshot: Any, *, epoch: int) -> UIState:
     ):
         candidates.append(ActionCandidate(id=f"A{len(candidates) + 1}", state_id=state_id,
                                           operation=operation, label=label, argument=argument))
+    identity = getattr(snapshot, "identity", {}) or {}
+    reasons = tuple(str(reason) for reason in identity.get("fallback_reasons", ()) if reason)
+    sources = tuple(dict.fromkeys(
+        str(source)
+        for element in elements
+        for source in element.sources
+        if source
+    ))
     return UIState(
         state_id=state_id, root_id=root_id, epoch=epoch, source=snapshot.source,
         observed_at=time.time(), url=snapshot.url, title=snapshot.title, text=snapshot.text,
-        content_hash=_fingerprint(snapshot), elements=tuple(elements), candidates=tuple(candidates),
+        content_hash=_fingerprint(snapshot),
+        quality=ObservationQuality(degraded=bool(reasons), reasons=reasons, sources=sources),
+        elements=tuple(elements), candidates=tuple(candidates),
         pruned=dict(snapshot.pruned),
     )
 
