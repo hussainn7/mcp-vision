@@ -197,10 +197,13 @@ class NativeContextBackend:
         if not AX.AXIsProcessTrusted():
             raise PermissionError('Enable Accessibility for /Applications/MCP-Vision.app.')
         # The assistant popup may have taken focus from the application where
-        # Act was invoked. Some apps omit their editor controls from AX while
-        # inactive, so restore the already PID-bound target before observing.
-        if self.allow_writes:
+        # Act was invoked, and a freshly launched app needs one activation.
+        # Re-activate only when the previous walk found almost nothing; steady
+        # re-activation churns focus and degrades some apps' AX trees.
+        if self.allow_writes and len(self.records) < 3:
             self._activate()
+            import asyncio
+            await asyncio.sleep(0.2)
         app = AX.AXUIElementCreateApplication(self._pid())
         window = _ax_copy(AX, app, 'AXFocusedWindow') or _ax_copy(AX, app, 'AXMainWindow')
         title = str(_ax_copy(AX, window, 'AXTitle') or '')
