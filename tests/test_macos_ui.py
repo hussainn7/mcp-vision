@@ -106,11 +106,22 @@ def test_hold_to_talk_and_compact_activity_panel_are_wired():
     assert "NSEventMaskKeyUp" in src
     assert "HoldToTalk" in src and "AppleSpeechSession" in src
     assert "NotchHUD" in src
-    assert '"listening": "●  Listening"' in src
-    assert '"verifying": "◌  Verifying…"' in src
     assert "PartialIntentWatcher" in src
     assert "prepare_partial_intent" in src
     assert "_build_activity_panel" not in src
+
+
+def test_notch_declares_required_states():
+    from pathlib import Path
+
+    src = Path("src/mcp_vision/notch.py").read_text()
+    assert '"listening": "●  Listening"' in src
+    assert '"understanding": "◌  Understanding…"' in src
+    assert '"verifying": "◌  Verifying…"' in src
+    assert '"done": "✓  Done"' in src
+    assert '"error": "✕  Couldn\'t verify result"' in src
+    assert '"question": "?  Your answer"' in src
+    assert '"preparing"' in src
 
 
 def test_top_center_geometry_handles_offset_displays():
