@@ -170,8 +170,12 @@ function renderPermissions(permissions) {
 }
 function renderProviders(providers) {
   const jev = providers?.jev || {};
-  const row = element("div", `permission-row ${jev.configured ? "ready" : "unknown"}`);
-  row.append(element("span", "permission-mark", jev.configured ? "✓" : "–"), element("strong", "", "Jev FastPolicy"), element("small", "", jev.configured ? `Configured · ${jev.model || "jev-latest"}` : "Optional · TYPESAFE_API_KEY not configured"));
+  const healthy = jev.verified === true;
+  const row = element("div", `permission-row ${healthy ? "ready" : "unknown"}`);
+  const detail = healthy ? `Ready · ${jev.model || "jev-latest"}` : jev.configured ?
+    `Key found · connection not verified · ${jev.model || "jev-latest"}` :
+    "Optional · TYPESAFE_API_KEY not configured";
+  row.append(element("span", "permission-mark", healthy ? "✓" : jev.configured ? "?" : "–"), element("strong", "", "Jev FastPolicy"), element("small", "", detail));
   $("provider-status").replaceChildren(row);
 }
 $("refresh-permissions").addEventListener("click", async () => {
@@ -179,6 +183,12 @@ $("refresh-permissions").addEventListener("click", async () => {
   try { renderPermissions((await api("/api/status")).permissions); }
   catch (error) { toast(error.message); }
   finally { $("refresh-permissions").disabled = false; }
+});
+$("open-assistant").addEventListener("click", async () => {
+  $("open-assistant").disabled = true;
+  try { await api("/api/invoke", {}); toast("Desktop assistant opened."); }
+  catch (error) { toast(error.message); }
+  finally { $("open-assistant").disabled = false; }
 });
 $("request-screen").addEventListener("click", async () => {
   $("request-screen").disabled = true;

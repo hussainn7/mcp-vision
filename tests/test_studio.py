@@ -83,6 +83,22 @@ def test_screen_recording_request_requires_native_handler():
         thread.join()
 
 
+def test_visible_assistant_entry_point_invokes_native_handler():
+    captured = []
+    server = StudioServer(0, invocation_handler=captured.append)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        headers = {"Content-Type": "application/json", "X-MCP-Vision": "studio"}
+        status, body = request(server, "/api/invoke", {}, headers)
+        assert status == 202 and json.loads(body)["ok"] is True
+        assert len(captured) == 1 and captured[0].source == "api"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_rejects_cross_origin_and_untrusted_hosts(studio):
     assert request(studio, "/api/info", headers={"Host": "attacker.test"})[0] == 403
     assert request(studio, "/api/brief", {"goal": "Inspect"},
@@ -163,6 +179,35 @@ def test_ask_endpoint_binds_generic_surface_actions(studio, monkeypatch):
     result = json.loads(body)
     assert status == 200 and result["state"] == "review"
     assert bound == [("Fixture", "act")] and backend.closed is True
+
+
+def test_ask_endpoint_binds_native_in_app_actions_to_general_surface(studio, monkeypatch):
+    from mcp_vision.context import Context
+
+    class Backend:
+        closed = False
+        async def close(self):
+            self.closed = True
+
+    backend = Backend()
+    bound = []
+    async def bind(context, **options):
+        bound.append((context.source_application, options['mode']))
+        return backend
+    async def run(self):
+        assert self.route.kind == 'surface'
+        assert self.backend is backend
+        return self.result('review', 'Created through the observed interface.')
+    monkeypatch.setattr('mcp_vision.execution.bind_context_backend', bind)
+    monkeypatch.setattr('mcp_vision.tasks.ContextTask.run', run)
+    context = studio.accept_context(Context(
+        source='macos', source_application='Google Chrome', accessibility_context={'pid': 42}))
+    headers = {'Content-Type': 'application/json', 'X-MCP-Vision': 'studio'}
+    status, body = request(studio, '/api/ask', {
+        'contextId': context.context_id, 'request': 'Create a new tab',
+    }, headers)
+    assert status == 200 and json.loads(body)['state'] == 'review'
+    assert bound == [('Google Chrome', 'act')] and backend.closed is True
 
 
 def test_chrome_extension_origin_is_limited_to_context_endpoint(studio):

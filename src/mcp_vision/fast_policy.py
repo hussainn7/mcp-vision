@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -232,8 +233,9 @@ class JevPolicy:
             )
             return validate_decision(decision, state, safe)
         except Exception as exc:
+            failure = f"HTTP {exc.code}" if isinstance(exc, HTTPError) else type(exc).__name__
             return PolicyDecision(state_id=state.state_id, disposition="replan", needs_system2=True,
-                                  reason=f"Jev unavailable or invalid: {type(exc).__name__}", provider="jev",
+                                  reason=f"Jev unavailable or invalid: {failure}", provider="jev",
                                   latency_ms=(time.perf_counter() - started) * 1000,
                                   provider_call="failed", fallback="system2")
 
@@ -280,9 +282,11 @@ class JevPolicy:
 
 
 def jev_status() -> dict[str, Any]:
-    """Expose configuration presence only; never return credentials."""
+    """Expose configuration presence without pretending it is a health check."""
     settings = _jev_settings()
-    return {"configured": bool(settings.typesafe_api_key), "model": settings.typesafe_model}
+    configured = bool(settings.typesafe_api_key)
+    return {"configured": configured, "verified": False, "model": settings.typesafe_model,
+            "status": "configured_unverified" if configured else "not_configured"}
 
 
 def create_fast_policy(name: str) -> FastPolicy:

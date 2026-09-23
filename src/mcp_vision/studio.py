@@ -51,6 +51,14 @@ class StudioServer(ThreadingHTTPServer):
                 return self.contexts.get(context_id)
             return next(reversed(self.contexts.values()), None) if self.contexts else None
 
+    def invoke_assistant(self) -> Context:
+        """Open the native assistant from a visible, testable UI entry point."""
+        if self.invocation_handler is None:
+            raise RuntimeError("Launch /Applications/MCP-Vision.app to open the desktop assistant.")
+        context = self.get_context() or Context(source="api")
+        self.invocation_handler(context)
+        return context
+
     def answer(self, request: str, context_id: str = "") -> dict:
         context = self.get_context(context_id)
         if context is None:
@@ -63,7 +71,7 @@ class StudioServer(ThreadingHTTPServer):
 
         async def execute():
             task = ContextTask(context, provider=self.provider)
-            if task.route.kind == "surface":
+            if task.requires_surface_backend:
                 task.backend = await bind_context_backend(context, mode=task.mode)
             try:
                 return await task.run()
@@ -184,6 +192,9 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._reply(200, {"permissions": {"available": True,
                                                       **self.server.permission_request_handler()}})
+            elif self.path == "/api/invoke":
+                context = self.server.invoke_assistant()
+                self._reply(202, {"ok": True, "contextId": context.context_id})
             elif self.path == "/api/demo":
                 title = data.get("title", "My first mission")
                 if not isinstance(title, str) or not 1 <= len(title.strip()) <= 200:
