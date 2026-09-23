@@ -106,8 +106,10 @@ def test_hold_to_talk_and_compact_activity_panel_are_wired():
     assert "NSEventMaskKeyUp" in src
     assert "HoldToTalk" in src and "AppleSpeechSession" in src
     assert "NSWindowStyleMaskNonactivatingPanel" in src
-    assert '"listening": "LISTENING"' in src
-    assert '"verifying": "VERIFYING"' in src
+    assert '"listening": "●  Listening"' in src
+    assert '"verifying": "◌  Verifying…"' in src
+    assert "PartialIntentWatcher" in src
+    assert "prepare_partial_intent" in src
 
 
 def test_top_center_geometry_handles_offset_displays():

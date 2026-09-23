@@ -239,6 +239,10 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.voice_context = None
             self.voice_generation = 0
             self.interaction = None
+            from mcp_vision.notch import NotchHUD
+            self.notch = NotchHUD()
+            from mcp_vision.partial_intent import PartialIntentWatcher
+            self.partial_watcher = PartialIntentWatcher()
             self._build_panel()
             self._build_activity_panel()
             from mcp_vision.speech import AppleSpeechSession, HoldToTalk
@@ -452,15 +456,16 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
         @objc.python_method
         def show_activity(self, phase, detail=""):
             labels = {
-                "listening": "LISTENING", "understanding": "UNDERSTANDING",
-                "acting": "ACTING", "verifying": "VERIFYING", "done": "DONE",
-                "input": "NEEDS INPUT", "error": "COULD NOT COMPLETE", "cancelled": "CANCELLED",
+                "listening": "●  Listening", "understanding": "◌  Understanding…",
+                "acting": "◌  Working…", "verifying": "◌  Verifying…", "done": "✓  Done",
+                "input": "?  Your answer", "error": "✕  Couldn't verify result", "cancelled": "Stopped",
             }
             self.activity_generation += 1
+            self.notch.set(phase, detail)
             self.activity_title.setStringValue_(labels.get(phase, phase.upper()))
             self.activity_detail.setStringValue_((detail or labels.get(phase, phase))[:100])
             self.activity_title.setTextColor_(AppKit.NSColor.systemRedColor() if phase == "error"
-                                              else AppKit.NSColor.systemTealColor())
+                                               else AppKit.NSColor.systemTealColor())
             listening = phase == "listening"
             for bar in self.waveform_bars:
                 bar.setHidden_(not listening)
@@ -484,6 +489,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
         @objc.python_method
         def hide_activity(self):
             self.activity_generation += 1
+            self.notch.hide()
             self.activity_panel.orderOut_(None)
 
         @objc.python_method
@@ -502,6 +508,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 return
             if self.interaction:
                 self.interaction.mark("first_audio_frame")
+            self.notch.waveform(level, self.notch.generation)
             amount = max(.08, min(1.0, float(level)))
             for index, bar in enumerate(self.waveform_bars):
                 height = 8 + 28 * amount * (.55 + .45 * ((index * 3) % 5) / 4)
@@ -653,6 +660,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
         def start_voice(self, context):
             self.voice_context = context
             self.context = context
+            self.partial_watcher.reset()
             if not self.pending_request:
                 self.history = []
                 self.source_path = None
@@ -663,6 +671,26 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 self.interaction.mark("hold_recognized")
             self.show_activity("listening", "Speak now")
             self.voice_generation = self.speech.start()
+
+        @objc.python_method
+        def prepare_partial_intent(self, text):
+            prep = self.partial_watcher.observe(text)
+            if prep is None:
+                return
+            if self.interaction:
+                self.interaction.mark("partial_intent", kind=prep["kind"])
+            self.notch.set("preparing", prep["label"])
+            if self.interaction and prep["kind"] == "flights":
+                self.interaction.mark("preparation_started", kind=prep["kind"])
+
+            def warm():
+                try:
+                    from mcp_vision.providers import resolve_provider
+                    from mcp_vision.readiness import ensure_model_ready
+                    ensure_model_ready(resolve_provider())
+                except Exception:
+                    pass
+            threading.Thread(target=warm, daemon=True).start()
 
         @objc.python_method
         def open_typed_context(self, context):
@@ -689,7 +717,9 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
                 return
             if self.interaction:
                 self.interaction.mark("first_transcript")
+            self.notch.partial(text, self.notch.generation)
             self.activity_detail.setStringValue_(str(text)[-100:])
+            self.prepare_partial_intent(str(text))
 
         @objc.python_method
         def speech_status(self, message, generation):
