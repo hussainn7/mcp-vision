@@ -6,7 +6,7 @@ from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.fast_policy import MockPolicy
 from mcp_vision.fastpath import FastPath, FastPathConfig, FastPathStatus, FastPathTask
 from mcp_vision.transactions import TransactionRuntime
-from mcp_vision.verification import VerificationPredicate
+from mcp_vision.verification import VerificationOutcome, VerificationPredicate
 
 
 def snap(state_id: str, *, text: str = "Waiting", submits: bool = False):
@@ -88,4 +88,23 @@ def test_fastpath_escalates_low_confidence_and_cannot_select_restricted_action()
         restricted = Backend([snap("s1", submits=True)], [])
         escalated = await FastPath(TransactionRuntime(restricted), MockPolicy("A1")).run(task())
         assert escalated.status is FastPathStatus.REPLAN and restricted.calls == 0
+    asyncio.run(run())
+
+
+def test_fastpath_does_not_act_when_degraded_perception_makes_completion_unknown():
+    async def run():
+        degraded = snap("s1")
+        degraded.identity = {"fallback_reasons": ["ax_tree_empty", "ocr_unavailable"]}
+        backend = Backend([degraded], [])
+        result = await FastPath(TransactionRuntime(backend), MockPolicy("A1")).run(
+            FastPathTask(
+                subgoal="Dismiss the missing dialog",
+                completion=VerificationPredicate(kind="element_missing", role="dialog", name="Warning"),
+            )
+        )
+        assert result.status is FastPathStatus.UNCERTAIN
+        assert result.verification.outcome is VerificationOutcome.UNKNOWN
+        assert result.metrics.actions == 0 and backend.calls == 0
+        assert "perception is degraded" in result.reason
+
     asyncio.run(run())

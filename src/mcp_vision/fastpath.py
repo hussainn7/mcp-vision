@@ -11,7 +11,13 @@ from mcp_vision.core.models import Policy
 from mcp_vision.fast_policy import FastPolicy, PolicyDecision
 from mcp_vision.state import ActionCandidate, Operation, UIElement, UIState
 from mcp_vision.transactions import TransactionReceipt, TransactionRuntime
-from mcp_vision.verification import DEFAULT_VERIFIER, VerificationEngine, VerificationPredicate, VerificationResult
+from mcp_vision.verification import (
+    DEFAULT_VERIFIER,
+    VerificationEngine,
+    VerificationOutcome,
+    VerificationPredicate,
+    VerificationResult,
+)
 
 
 class FastPathStatus(str, Enum):
@@ -104,6 +110,12 @@ class FastPath:
         if verification.passed:
             return self._finish(FastPathStatus.VERIFIED, task, "Completion already satisfied.",
                                 state, verification, steps, metrics, started)
+        if verification.outcome is VerificationOutcome.UNKNOWN and state.quality.degraded:
+            return self._finish(
+                FastPathStatus.UNCERTAIN, task,
+                "Completion is unknown because perception is degraded; reobserve or escalate perception.",
+                state, verification, steps, metrics, started,
+            )
 
         for number in range(1, self.config.max_steps + 1):
             candidates = self._eligible_candidates(task, state)
@@ -190,6 +202,12 @@ class FastPath:
             if verification.passed:
                 return self._finish(FastPathStatus.VERIFIED, task, "Completion predicate verified.",
                                     state, verification, steps, metrics, started)
+            if verification.outcome is VerificationOutcome.UNKNOWN and state.quality.degraded:
+                return self._finish(
+                    FastPathStatus.UNCERTAIN, task,
+                    "Completion is unknown because perception is degraded; reobserve or escalate perception.",
+                    state, verification, steps, metrics, started,
+                )
 
         return self._finish(FastPathStatus.BUDGET, task, "FastPath step budget exhausted.",
                             state, verification, steps, metrics, started)
