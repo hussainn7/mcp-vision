@@ -40,6 +40,20 @@ def _window_info(_pid: int) -> list[dict[str, Any]]:
     return list(Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or [])
 
 
+def visible_window_ids(pid: int) -> tuple[int, ...]:
+    """Return visible normal WindowServer windows owned by one process."""
+    import Quartz
+
+    return tuple(sorted(
+        int(info[Quartz.kCGWindowNumber])
+        for info in _window_info(pid)
+        if int(info.get(Quartz.kCGWindowOwnerPID, -1)) == int(pid)
+        and int(info.get(Quartz.kCGWindowLayer, 0)) == 0
+        and info.get(Quartz.kCGWindowBounds)
+        and int(info.get(Quartz.kCGWindowNumber, 0)) > 0
+    ))
+
+
 def _bounds_overlap(first: dict[str, float], second: dict[str, float]) -> float:
     left = max(first.get("X", 0), second.get("X", 0))
     top = max(first.get("Y", 0), second.get("Y", 0))

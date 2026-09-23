@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from dataclasses import dataclass
 from uuid import uuid4
 
 from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import ContextBounds, ContextElement
-from mcp_vision.execution_ladder import AttemptOutcome, ExecutionMethod, ExecutionTrace
+from mcp_vision.core.governor import Governor
+from mcp_vision.core.models import Policy
+from mcp_vision.execution_ladder import (
+    AttemptOutcome, ExecutionMethod, ExecutionTrace, RefusalReason,
+)
 from mcp_vision.native_perception import (
-    capture_window, degradation_reasons, fuse_ax_ocr, recognize_text, same_window_bounds,
+    WindowCapture, capture_window, degradation_reasons, fuse_ax_ocr, recognize_text,
+    same_window_bounds, visible_window_ids,
 )
 from mcp_vision.redaction import redact
 
@@ -153,15 +159,36 @@ def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6,
     return records, handles
 
 
+@dataclass(frozen=True)
+class NativePreflight:
+    capture: WindowCapture
+    observed_capture: WindowCapture
+    window: object
+    element: object | None
+    record: dict
+    sibling_window_ids: tuple[int, ...]
+    keyboard_unambiguous: bool
+    authority: dict
+
+
+class NativePreflightError(RuntimeError):
+    def __init__(self, reason: RefusalReason, message: str, *, evidence=None):
+        super().__init__(message)
+        self.reason = reason
+        self.evidence = evidence or {}
+
+
 class NativeContextBackend:
-    def __init__(self, context, indicator=None, allow_writes=False):
+    def __init__(self, context, indicator=None, allow_writes=False, governor=None):
         self.context = context
         self.indicator = indicator
         self.allow_writes = allow_writes
+        self.governor = governor or Governor()
         self.handles = {}
         self.records = {}
         self.sid = ''
         self._captures = {}
+        self._windows = {}
 
     def _pid(self) -> int:
         pid = self.context.accessibility_context.get('pid')
@@ -218,6 +245,137 @@ class NativeContextBackend:
         if checked is not None and (checked == 'True') is not original.get('checked'):
             raise LookupError('stale')
         return element
+
+    @staticmethod
+    def _bounds_dict(bounds):
+        return {'X': bounds.x, 'Y': bounds.y, 'Width': bounds.width, 'Height': bounds.height}
+
+    async def _preflight(self, snapshot_id, index, api, *, require_element=True) -> NativePreflight:
+        import asyncio
+        from mcp_vision.macos_ui import _ax_copy
+
+        if snapshot_id != self.sid:
+            raise NativePreflightError(RefusalReason.STALE_CAPTURE, 'Observation authority has expired.')
+        observed = self._captures.get(snapshot_id)
+        window = self._windows.get(snapshot_id)
+        record = self.records.get(index)
+        if not observed or not window or not record:
+            raise NativePreflightError(
+                RefusalReason.WINDOW_AUTHORITY_MISSING,
+                'The observation has no exact target-window authority.')
+        app = api.AXUIElementCreateApplication(self._pid())
+        if _ax_copy(api, app, 'AXHidden') is True or _ax_copy(api, window, 'AXHidden') is True:
+            raise NativePreflightError(RefusalReason.WINDOW_HIDDEN, 'The target window is hidden.')
+        if _ax_copy(api, window, 'AXMinimized') is True:
+            raise NativePreflightError(RefusalReason.WINDOW_MINIMIZED, 'The target window is minimized.')
+        windows = _ax_copy(api, app, 'AXWindows') or []
+        if windows and not any(candidate == window for candidate in windows):
+            raise NativePreflightError(RefusalReason.WINDOW_NOT_FOUND,
+                                       'The observed Accessibility window is no longer available.')
+        current_bounds = describe_ax(api, window).bounds
+        if not current_bounds or not same_window_bounds(observed.bounds, self._bounds_dict(current_bounds)):
+            raise NativePreflightError(RefusalReason.WINDOW_MOVED, 'The target window moved after observation.')
+        ids = await asyncio.to_thread(visible_window_ids, self._pid())
+        if observed.window_id not in ids:
+            raise NativePreflightError(RefusalReason.WINDOW_NOT_FOUND, 'The target WindowServer window is unavailable.')
+        try:
+            fresh_capture = await asyncio.to_thread(
+                capture_window, self._pid(), observed.bounds, self.context.title, observed.window_id)
+        except Exception as exc:
+            raise NativePreflightError(
+                RefusalReason.STALE_CAPTURE, 'The exact target-window capture could not be refreshed.',
+                evidence={'error': type(exc).__name__}) from exc
+        if (fresh_capture.pid != observed.pid
+                or fresh_capture.window_id != observed.window_id
+                or not same_window_bounds(fresh_capture.bounds, observed.bounds)
+                or abs(float(fresh_capture.scale) - float(observed.scale)) > 0.02):
+            raise NativePreflightError(
+                RefusalReason.STALE_CAPTURE,
+                'The refreshed capture does not match the observed target-window authority.',
+                evidence={
+                    'observed_window_id': observed.window_id,
+                    'fresh_window_id': fresh_capture.window_id,
+                    'observed_pid': observed.pid,
+                    'fresh_pid': fresh_capture.pid,
+                })
+        element = None
+        if require_element:
+            try:
+                element = self._fresh_element(snapshot_id, index, api)
+            except LookupError as exc:
+                raise NativePreflightError(RefusalReason.TARGET_CHANGED, 'The native target changed.') from exc
+        focused_window = _ax_copy(api, app, 'AXFocusedWindow') or _ax_copy(api, app, 'AXMainWindow')
+        focused_bounds = describe_ax(api, focused_window).bounds if focused_window else None
+        keyboard_unambiguous = (
+            ids == (observed.window_id,)
+            and focused_bounds is not None
+            and same_window_bounds(observed.bounds, self._bounds_dict(focused_bounds))
+        )
+        authority = {
+            'pid': observed.pid, 'window_id': observed.window_id,
+            'bounds': observed.bounds, 'scale': observed.scale,
+            'visible_window_ids': list(ids),
+        }
+        return NativePreflight(
+            capture=fresh_capture, observed_capture=observed, window=window,
+            element=element, record=record, sibling_window_ids=ids,
+            keyboard_unambiguous=keyboard_unambiguous, authority=authority,
+        )
+
+    def _refused(self, action, trace, error: NativePreflightError):
+        trace.refuse(error.reason)
+        evidence = {**trace.evidence(), **error.evidence}
+        stale = error.reason in {
+            RefusalReason.STALE_CAPTURE, RefusalReason.WINDOW_MOVED,
+            RefusalReason.TARGET_CHANGED, RefusalReason.PIXELS_CHANGED,
+        }
+        return Receipt(status='stale' if stale else 'blocked', action=action,
+                       message=str(error), executed=False, evidence=evidence)
+
+    def _authorize_foreground(self, action, record, trace) -> bool:
+        label = str(record.get('name') or record.get('role') or 'native target')
+        summary = f'Bring {self.context.source_application or self.context.title or "the target app"} forward to {action} {label}'
+        allowed = self.governor.allow(Policy.RESTRICTED_ACTION, summary)
+        trace.focus.update({'approval_required': True, 'approval_granted': allowed})
+        if not allowed:
+            trace.refuse(RefusalReason.FOREGROUND_NOT_AUTHORIZED)
+        return allowed
+
+    async def _focus_exact_window(self, api, preflight: NativePreflight, trace) -> bool:
+        import asyncio
+        from mcp_vision.macos_ui import _ax_copy
+        from mcp_vision.native_apps import _frontmost
+
+        before_pid = _frontmost()[2]
+        try:
+            api.AXUIElementSetAttributeValue(preflight.window, 'AXMain', True)
+            api.AXUIElementSetAttributeValue(preflight.window, 'AXFocused', True)
+        except Exception:
+            pass
+        self._activate()
+        after_pid = _frontmost()[2]
+        for _ in range(10):
+            if after_pid == self._pid():
+                break
+            await asyncio.sleep(0.05)
+            after_pid = _frontmost()[2]
+        app = api.AXUIElementCreateApplication(self._pid())
+        focused = _ax_copy(api, app, 'AXFocusedWindow') or _ax_copy(api, app, 'AXMainWindow')
+        bounds = describe_ax(api, focused).bounds if focused else None
+        exact = bool(bounds and same_window_bounds(preflight.capture.bounds, self._bounds_dict(bounds)))
+        trace.focus.update({
+            'before_pid': before_pid, 'after_pid': after_pid,
+            'changed': before_pid != after_pid, 'exact_window_focused': exact,
+            'requested': True,
+            'behavior': 'changed' if before_pid != after_pid else 'already_frontmost',
+        })
+        if after_pid != self._pid():
+            trace.refuse(RefusalReason.FRONTMOST_MISMATCH)
+            return False
+        if not exact:
+            trace.refuse(RefusalReason.ACTIVATION_FAILED)
+            return False
+        return True
 
     def _blocked(self, action, message='Native writes are disabled.'):
         return Receipt(status='blocked', action=action, message=message, executed=False)
@@ -364,8 +522,11 @@ class NativeContextBackend:
         self.sid = uuid4().hex
         if capture:
             self._captures[self.sid] = capture
+            self._windows[self.sid] = window
             while len(self._captures) > 4:
-                self._captures.pop(next(iter(self._captures)))
+                expired = next(iter(self._captures))
+                self._captures.pop(expired)
+                self._windows.pop(expired, None)
         authority = ({'pid': capture.pid, 'window_id': capture.window_id,
                       'bounds': capture.bounds, 'scale': capture.scale}
                      if capture else {'pid': self._pid(), 'window_id': None, 'bounds': None})
@@ -437,98 +598,210 @@ class NativeContextBackend:
     async def click(self, snapshot_id, index):
         if not self.allow_writes:
             return self._blocked('click')
+        trace = ExecutionTrace()
         try:
             import ApplicationServices as AX
-            element = self._fresh_element(snapshot_id, index, AX)
-        except LookupError:
-            return Receipt(status='stale', action='click', message='Target is no longer available.', executed=False)
+            visual = bool(self.records.get(index, {}).get('ocr_only'))
+            preflight = await self._preflight(snapshot_id, index, AX, require_element=not visual)
+            trace.bind_authority(preflight.authority)
+        except NativePreflightError as exc:
+            return self._refused('click', trace, exc)
         try:
             from mcp_vision.macos_ui import _ax_copy
-            trace = ExecutionTrace()
+            if visual:
+                if not self._authorize_foreground('click', preflight.record, trace):
+                    return Receipt(status='blocked', action='click', executed=False,
+                                   message='Foreground visual click was not authorized.', evidence=trace.evidence())
+                preflight = await self._preflight(snapshot_id, index, AX, require_element=False)
+                trace.bind_authority(preflight.authority)
+                if preflight.capture.image.tobytes() != preflight.observed_capture.image.tobytes():
+                    raise NativePreflightError(
+                        RefusalReason.PIXELS_CHANGED,
+                        'The exact target-window pixels changed after observation.')
+                if not await self._focus_exact_window(AX, preflight, trace):
+                    return Receipt(status='blocked', action='click', executed=False,
+                                   message='Could not focus the exact authorized window.', evidence=trace.evidence())
+                record = preflight.record
+                point = (int(record['x'] + record['w'] / 2), int(record['y'] + record['h'] / 2))
+                bounds = preflight.capture.bounds
+                if not (bounds['X'] <= point[0] <= bounds['X'] + bounds['Width']
+                        and bounds['Y'] <= point[1] <= bounds['Y'] + bounds['Height']):
+                    raise NativePreflightError(RefusalReason.TARGET_CHANGED,
+                                               'The visual target is outside the exact window.')
+                trace.add(ExecutionMethod.VISUAL_POINTER, AttemptOutcome.UNKNOWN, background=False,
+                          detail='Pointer dispatched against unchanged exact-window pixels',
+                          evidence={'point': point, 'visual_identity': record.get('identity', {}).get('visual')})
+                trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                trace.observe(status='required', reason='pointer_delivery_has_no_semantic_read_back')
+                from mcp_vision.core.actuate import get_actuator
+                try:
+                    get_actuator().click(*point)
+                except Exception as exc:
+                    return Receipt(
+                        status='unverified', action='click', executed=None,
+                        message='Visual pointer delivery is unknown; no replay was attempted.',
+                        evidence={**trace.evidence(), 'dispatch_error': type(exc).__name__})
+                return Receipt(status='unverified', action='click', executed=True,
+                               message='Visual pointer dispatched once; verify the successor state.',
+                               evidence=trace.evidence())
+
+            element = preflight.element
             actions = [str(a) for a in (_ax_copy(AX, element, 'AXActions') or [])]
-            if 'AXPress' in actions or not actions:
+            if 'AXPress' in actions:
                 err = AX.AXUIElementPerformAction(element, 'AXPress')
                 if err == 0:
                     trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.UNKNOWN, background=True,
-                              detail='AXPress dispatched without activating the application')
+                              detail='AXPress accepted without activating the application')
+                    trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                    trace.observe(status='required', reason='AXPress_has_no_immediate_postcondition')
                     return Receipt(status='unverified', action='click', executed=True,
                                    message='Pressed via background Accessibility; verify the successor state.',
                                    evidence=trace.evidence())
                 trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
-                          detail=f'AXPress returned {err}')
-            self._activate()
-            if 'AXPress' in actions or not actions:
+                           detail=f'AXPress returned {err}')
+            else:
+                trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
+                          detail='AXPress is not advertised by the target')
+            if not trace.can_fallback:
+                trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                return Receipt(status='unverified', action='click', executed=True,
+                               message='Delivery is unknown; no fallback was attempted.', evidence=trace.evidence())
+            if not self._authorize_foreground('click', preflight.record, trace):
+                return Receipt(status='blocked', action='click', executed=False,
+                               message='Foreground escalation was not authorized.', evidence=trace.evidence())
+            preflight = await self._preflight(snapshot_id, index, AX)
+            trace.bind_authority(preflight.authority)
+            element = preflight.element
+            if not await self._focus_exact_window(AX, preflight, trace):
+                return Receipt(status='blocked', action='click', executed=False,
+                               message='Could not focus the exact authorized window.', evidence=trace.evidence())
+            if 'AXPress' in actions:
                 err = AX.AXUIElementPerformAction(element, 'AXPress')
                 if err == 0:
                     trace.add(ExecutionMethod.AX_FOREGROUND, AttemptOutcome.UNKNOWN, background=False,
                               detail='AXPress dispatched after foreground activation')
+                    trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                    trace.observe(status='required', reason='AXPress_has_no_immediate_postcondition')
                     return Receipt(status='unverified', action='click', executed=True,
                                    message='Pressed via foreground Accessibility; verify the successor state.',
                                    evidence=trace.evidence())
                 trace.add(ExecutionMethod.AX_FOREGROUND, AttemptOutcome.DIDNT, background=False,
-                          detail=f'AXPress returned {err}')
+                           detail=f'AXPress returned {err}')
+            if not trace.can_fallback:
+                trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                return Receipt(status='unverified', action='click', executed=True,
+                               message='Delivery is unknown; pointer fallback was not attempted.',
+                               evidence=trace.evidence())
             desc = describe_ax(AX, element)
             box = desc.bounds
             if not box:
                 return Receipt(status='error', action='click', message='No bounds for native click.', executed=False,
                                evidence=trace.evidence())
-            from mcp_vision.core.actuate import get_actuator
-            get_actuator().click(int(box.x + box.width / 2), int(box.y + box.height / 2))
+            point = (int(box.x + box.width / 2), int(box.y + box.height / 2))
             trace.add(ExecutionMethod.FOREGROUND_POINTER, AttemptOutcome.UNKNOWN, background=False,
-                      detail='Pointer fallback dispatched at fresh AX bounds')
+                      detail='Pointer fallback dispatched at fresh AX bounds', evidence={'point': point})
+            trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+            trace.observe(status='required', reason='pointer_delivery_has_no_semantic_read_back')
+            from mcp_vision.core.actuate import get_actuator
+            try:
+                get_actuator().click(*point)
+            except Exception as exc:
+                return Receipt(
+                    status='unverified', action='click', executed=None,
+                    message='Pointer delivery is unknown; no replay was attempted.',
+                    evidence={**trace.evidence(), 'dispatch_error': type(exc).__name__})
             return Receipt(status='unverified', action='click', executed=True,
                            message='Clicked via foreground pointer fallback; verify the successor state.',
                            evidence=trace.evidence())
+        except NativePreflightError as exc:
+            return self._refused('click', trace, exc)
         except Exception as exc:
-            return Receipt(status='error', action='click', message=redact(str(exc)), executed=None)
+            return Receipt(status='error', action='click', message=redact(str(exc)), executed=None,
+                           evidence=trace.evidence())
 
     async def fill(self, snapshot_id, index, text):
         import asyncio
+
         if not self.allow_writes:
             return self._blocked('fill')
+        trace = ExecutionTrace()
         try:
             import ApplicationServices as AX
-            element = self._fresh_element(snapshot_id, index, AX)
-        except LookupError:
-            return Receipt(status='stale', action='fill', message='Target is no longer available.', executed=False)
+            preflight = await self._preflight(snapshot_id, index, AX)
+            trace.bind_authority(preflight.authority)
+        except NativePreflightError as exc:
+            return self._refused('fill', trace, exc)
         try:
-            trace = ExecutionTrace()
+            element = preflight.element
             AX.AXUIElementSetAttributeValue(element, 'AXFocused', True)
             err = AX.AXUIElementSetAttributeValue(element, 'AXValue', str(text))
             if err == 0:
-                # Some native editors acknowledge AXValue and then discard the
-                # background write on their next UI cycle. Do not call that
-                # verified until it survives a delayed read-back.
+                # Some editors acknowledge AXValue and discard it on their next UI cycle.
                 await asyncio.sleep(0.25)
                 fresh = describe_ax(AX, element)
                 matches = (fresh.value or '') == str(text)
                 trace.add(ExecutionMethod.AX_BACKGROUND,
                           AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
                           background=True, detail='AXValue write', evidence={'value_matches': matches})
+                trace.observe(status='observed', value=fresh.value, value_matches=matches)
                 if matches:
                     return Receipt(status='verified', action='fill', executed=True,
                                    message='Filled via background Accessibility.',
                                    evidence={**trace.evidence(), 'value': fresh.value})
+                trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                return Receipt(status='unverified', action='fill', executed=True,
+                               message='AXValue was accepted but read-back is inconclusive; no fallback was attempted.',
+                               evidence={**trace.evidence(), 'value': fresh.value})
             else:
                 trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
-                          detail=f'AXValue returned {err}')
-            try:
-                from mcp_vision.macos_input import targeted_replace_text
-                targeted_replace_text(self._pid(), str(text))
-                await asyncio.sleep(0.25)
-                fresh = describe_ax(AX, element)
-                matches = (fresh.value or '') == str(text)
-                trace.add(ExecutionMethod.PID_KEYBOARD,
-                          AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
-                          background=True, detail='PID-targeted replace text', evidence={'value_matches': matches})
-                return Receipt(status='verified' if matches else 'unverified', action='fill', executed=True,
-                               message='Filled via PID-targeted keyboard.' if matches
-                               else 'PID-targeted input dispatched; read-back did not match.',
-                               evidence={**trace.evidence(), 'value': fresh.value})
-            except Exception as targeted_error:
+                           detail=f'AXValue returned {err}')
+            if not preflight.keyboard_unambiguous:
                 trace.add(ExecutionMethod.PID_KEYBOARD, AttemptOutcome.DIDNT, background=True,
-                          detail=type(targeted_error).__name__)
-            self._activate()
+                          detail='PID destination is not one proven window', evidence={
+                              'refusal_reason': RefusalReason.SAME_PID_SIBLING_AMBIGUOUS.value,
+                              'visible_window_ids': list(preflight.sibling_window_ids),
+                          })
+            else:
+                try:
+                    from mcp_vision.macos_input import TargetedInputUnavailable, targeted_replace_text
+                    dispatch = targeted_replace_text(self._pid(), str(text))
+                    await asyncio.sleep(0.25)
+                    fresh = describe_ax(AX, element)
+                    matches = (fresh.value or '') == str(text)
+                    trace.add(ExecutionMethod.PID_KEYBOARD,
+                              AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
+                              background=True, detail='PID-targeted replace text', evidence={
+                                  'value_matches': matches, 'events_posted': dispatch.events_posted})
+                    trace.observe(status='observed', value=fresh.value, value_matches=matches)
+                    if not matches:
+                        trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                    return Receipt(status='verified' if matches else 'unverified', action='fill', executed=True,
+                                   message='Filled via PID-targeted keyboard.' if matches
+                                   else 'PID input was dispatched once; no fallback was attempted.',
+                                   evidence={**trace.evidence(), 'value': fresh.value})
+                except TargetedInputUnavailable as targeted_error:
+                    outcome = (AttemptOutcome.UNKNOWN if targeted_error.delivery_unknown
+                               else AttemptOutcome.DIDNT)
+                    trace.add(ExecutionMethod.PID_KEYBOARD, outcome, background=True,
+                              detail=type(targeted_error).__name__,
+                              evidence={'events_posted': targeted_error.events_posted})
+                    if outcome is AttemptOutcome.UNKNOWN:
+                        trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                        return Receipt(status='unverified', action='fill', executed=True,
+                                       message='PID input delivery is unknown; no fallback was attempted.',
+                                       evidence=trace.evidence())
+            if not self._authorize_foreground('fill', preflight.record, trace):
+                if len(preflight.sibling_window_ids) > 1:
+                    trace.refuse(RefusalReason.SAME_PID_SIBLING_AMBIGUOUS)
+                return Receipt(status='blocked', action='fill', executed=False,
+                               message='No unambiguous background route and foreground escalation was not authorized.',
+                               evidence=trace.evidence())
+            preflight = await self._preflight(snapshot_id, index, AX)
+            trace.bind_authority(preflight.authority)
+            element = preflight.element
+            if not await self._focus_exact_window(AX, preflight, trace):
+                return Receipt(status='blocked', action='fill', executed=False,
+                               message='Could not focus the exact authorized window.', evidence=trace.evidence())
             err = AX.AXUIElementSetAttributeValue(element, 'AXValue', str(text))
             if err == 0:
                 await asyncio.sleep(0.25)
@@ -537,96 +810,245 @@ class NativeContextBackend:
                 trace.add(ExecutionMethod.AX_FOREGROUND,
                           AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
                           background=False, detail='AXValue after foreground activation')
+                trace.observe(status='observed', value=fresh.value, value_matches=matches)
+                if not matches:
+                    trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
                 return Receipt(status='verified' if matches else 'unverified', action='fill', executed=True,
                                message='Filled via foreground Accessibility.' if matches
                                else 'Foreground AXValue dispatched; read-back did not match.',
                                evidence={**trace.evidence(), 'value': fresh.value})
             trace.add(ExecutionMethod.AX_FOREGROUND, AttemptOutcome.DIDNT, background=False,
                       detail=f'AXValue returned {err}')
-            from mcp_vision.core.actuate import get_actuator
-            get_actuator().type_text(str(text), press_enter=False)
+            if not trace.can_fallback:
+                trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                return Receipt(status='unverified', action='fill', executed=True,
+                               message='Delivery is unknown; keyboard fallback was not attempted.',
+                               evidence=trace.evidence())
             trace.add(ExecutionMethod.FOREGROUND_KEYBOARD, AttemptOutcome.UNKNOWN, background=False,
                       detail='Global keyboard fallback dispatched')
+            trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+            trace.observe(status='required', reason='keyboard_delivery_has_no_semantic_read_back')
+            from mcp_vision.core.actuate import get_actuator
+            try:
+                get_actuator().type_text(str(text), press_enter=False)
+            except Exception as exc:
+                return Receipt(
+                    status='unverified', action='fill', executed=None,
+                    message='Keyboard delivery is unknown; no replay was attempted.',
+                    evidence={**trace.evidence(), 'dispatch_error': type(exc).__name__})
             return Receipt(status='unverified', action='fill', executed=True,
                            message='Foreground keyboard input dispatched; re-observe before retrying.',
                            evidence=trace.evidence())
+        except NativePreflightError as exc:
+            return self._refused('fill', trace, exc)
         except Exception as exc:
-            return Receipt(status='error', action='fill', message=redact(str(exc)), executed=None)
+            return Receipt(status='error', action='fill', message=redact(str(exc)), executed=None,
+                           evidence=trace.evidence())
 
     async def select(self, snapshot_id, index, value):
-        # Native selects are inconsistent; click then rely on planner to continue.
-        receipt = await self.click(snapshot_id, index)
-        if receipt.status in {'blocked', 'stale', 'error'}:
-            return receipt.model_copy(update={'action': 'select'})
-        return Receipt(status='unverified', action='select', executed=True,
-                       message=f'Opened native control to choose {value!r}. Continue with the visible option.')
+        import asyncio
+
+        if not self.allow_writes:
+            return self._blocked('select')
+        trace = ExecutionTrace()
+        try:
+            import ApplicationServices as AX
+            preflight = await self._preflight(snapshot_id, index, AX)
+            trace.bind_authority(preflight.authority)
+        except NativePreflightError as exc:
+            return self._refused('select', trace, exc)
+        try:
+            element = preflight.element
+            err = AX.AXUIElementSetAttributeValue(element, 'AXValue', str(value))
+            if err == 0:
+                await asyncio.sleep(0.25)
+                fresh = describe_ax(AX, element)
+                matches = (fresh.value or '') == str(value)
+                trace.add(ExecutionMethod.AX_BACKGROUND,
+                          AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
+                          background=True, detail='AXValue selection',
+                          evidence={'value_matches': matches})
+                trace.observe(status='observed', value=fresh.value, value_matches=matches)
+                if not matches:
+                    trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                return Receipt(
+                    status='verified' if matches else 'unverified', action='select', executed=True,
+                    message='Selected via background Accessibility.' if matches else
+                    'AXValue selection was accepted but read-back is inconclusive; no fallback was attempted.',
+                    evidence={**trace.evidence(), 'value': fresh.value})
+            trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
+                      detail=f'AXValue returned {err}')
+
+            # AXPress is still semantic and window-bound. It may expose the
+            # choices, but its effect cannot prove which value was selected.
+            from mcp_vision.macos_ui import _ax_copy
+            actions = [str(action) for action in (_ax_copy(AX, element, 'AXActions') or [])]
+            if 'AXPress' in actions:
+                press_err = AX.AXUIElementPerformAction(element, 'AXPress')
+                outcome = AttemptOutcome.UNKNOWN if press_err == 0 else AttemptOutcome.DIDNT
+                trace.add(ExecutionMethod.AX_BACKGROUND, outcome, background=True,
+                          detail=f'AXPress returned {press_err}')
+                if outcome is AttemptOutcome.UNKNOWN:
+                    trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                    trace.observe(status='required', reason='control_opened_without_proven_value')
+                    return Receipt(
+                        status='unverified', action='select', executed=True,
+                        message=f'Opened the native control for {value!r}; no second action was replayed.',
+                        evidence=trace.evidence())
+            else:
+                trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
+                          detail='AXPress is not advertised by the target')
+            return Receipt(status='error', action='select', executed=False,
+                           message='The native control supports neither AXValue nor AXPress.',
+                           evidence=trace.evidence())
+        except NativePreflightError as exc:
+            return self._refused('select', trace, exc)
+        except Exception as exc:
+            return Receipt(status='error', action='select', message=redact(str(exc)), executed=None,
+                           evidence=trace.evidence())
 
     async def set_checked(self, snapshot_id, index, checked: bool):
         if not self.allow_writes:
             return self._blocked('set_checked')
+        trace = ExecutionTrace()
         try:
             import ApplicationServices as AX
-            element = self._fresh_element(snapshot_id, index, AX)
-        except LookupError:
-            return Receipt(status='stale', action='set_checked', message='Target is no longer available.', executed=False)
+            preflight = await self._preflight(snapshot_id, index, AX)
+            trace.bind_authority(preflight.authority)
+        except NativePreflightError as exc:
+            return self._refused('set_checked', trace, exc)
         try:
-            trace = ExecutionTrace()
+            element = preflight.element
             current = describe_ax(AX, element).attributes.get('checked') == 'True'
             if current is bool(checked):
-                return Receipt(status='verified', action='set_checked', executed=True,
+                trace.observe(status='observed', checked=current, checked_matches=True)
+                return Receipt(status='verified', action='set_checked', executed=False,
                                message='Checkbox already in the requested state.',
-                               evidence={'checked': current, 'execution_path': 'none', 'background': True})
+                               evidence={**trace.evidence(), 'checked': current})
             err = AX.AXUIElementPerformAction(element, 'AXPress')
-            if err != 0:
-                trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
-                          detail=f'AXPress returned {err}')
-                self._activate()
-                err = AX.AXUIElementPerformAction(element, 'AXPress')
-                method, background = ExecutionMethod.AX_FOREGROUND, False
-            else:
-                method, background = ExecutionMethod.AX_BACKGROUND, True
             after = describe_ax(AX, element).attributes.get('checked') == 'True'
             outcome = (AttemptOutcome.DIDNT if err != 0 else
                        AttemptOutcome.WORKED if after is bool(checked) else AttemptOutcome.UNKNOWN)
-            trace.add(method, outcome,
-                      background=background, evidence={'checked': after})
-            return Receipt(status='verified' if after is bool(checked) else 'unverified', action='set_checked',
-                           executed=err == 0, message='Updated native checkbox.' if err == 0 else 'Checkbox action failed.',
+            trace.add(ExecutionMethod.AX_BACKGROUND, outcome, background=True,
+                      detail=f'AXPress returned {err}', evidence={'checked': after})
+            trace.observe(status='observed', checked=after, checked_matches=after is bool(checked))
+            if err == 0:
+                if outcome is AttemptOutcome.UNKNOWN:
+                    trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                return Receipt(status='verified' if outcome is AttemptOutcome.WORKED else 'unverified',
+                               action='set_checked', executed=True,
+                               message='Updated native checkbox.' if outcome is AttemptOutcome.WORKED
+                               else 'AXPress was accepted; no fallback was attempted.',
+                               evidence={**trace.evidence(), 'checked': after})
+            if not self._authorize_foreground('set checked', preflight.record, trace):
+                return Receipt(status='blocked', action='set_checked', executed=False,
+                               message='Foreground escalation was not authorized.', evidence=trace.evidence())
+            preflight = await self._preflight(snapshot_id, index, AX)
+            trace.bind_authority(preflight.authority)
+            element = preflight.element
+            if not await self._focus_exact_window(AX, preflight, trace):
+                return Receipt(status='blocked', action='set_checked', executed=False,
+                               message='Could not focus the exact authorized window.', evidence=trace.evidence())
+            err = AX.AXUIElementPerformAction(element, 'AXPress')
+            after = describe_ax(AX, element).attributes.get('checked') == 'True'
+            outcome = (AttemptOutcome.DIDNT if err != 0 else
+                       AttemptOutcome.WORKED if after is bool(checked) else AttemptOutcome.UNKNOWN)
+            trace.add(ExecutionMethod.AX_FOREGROUND, outcome, background=False,
+                      detail=f'AXPress returned {err}', evidence={'checked': after})
+            trace.observe(status='observed', checked=after, checked_matches=after is bool(checked))
+            if outcome is AttemptOutcome.UNKNOWN:
+                trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+            return Receipt(status='verified' if outcome is AttemptOutcome.WORKED else
+                           'error' if outcome is AttemptOutcome.DIDNT else 'unverified',
+                           action='set_checked', executed=err == 0,
+                           message='Updated native checkbox.' if outcome is AttemptOutcome.WORKED
+                           else 'Checkbox action failed.' if outcome is AttemptOutcome.DIDNT
+                           else 'Foreground AXPress was accepted; no further fallback was attempted.',
                            evidence={**trace.evidence(), 'checked': after})
+        except NativePreflightError as exc:
+            return self._refused('set_checked', trace, exc)
         except Exception as exc:
-            return Receipt(status='error', action='set_checked', message=redact(str(exc)), executed=None)
+            return Receipt(status='error', action='set_checked', message=redact(str(exc)), executed=None,
+                           evidence=trace.evidence())
 
     async def upload(self, snapshot_id, index, path):
         return self._blocked('upload', 'Native file upload is not supported in this backend.')
 
     async def scroll(self, snapshot_id, delta_y):
+        trace = ExecutionTrace()
         if snapshot_id != self.sid:
-            return Receipt(status='stale', action='scroll', message='Snapshot expired.', executed=False)
+            trace.refuse(RefusalReason.STALE_CAPTURE)
+            return Receipt(status='stale', action='scroll', message='Snapshot expired.', executed=False,
+                           evidence=trace.evidence())
         try:
-            trace = ExecutionTrace()
+            import ApplicationServices as AX
+            index = next(iter(self.records), None)
+            if index is None:
+                raise NativePreflightError(RefusalReason.WINDOW_AUTHORITY_MISSING,
+                                           'No exact native window target is available.')
+            preflight = await self._preflight(snapshot_id, index, AX, require_element=False)
+            trace.bind_authority(preflight.authority)
             keycode = (121 if delta_y > 0 else 116) if abs(delta_y) >= 400 else (125 if delta_y > 0 else 126)
-            try:
-                from mcp_vision.macos_input import targeted_key
-                targeted_key(self._pid(), keycode)
-                trace.add(ExecutionMethod.PID_KEYBOARD, AttemptOutcome.UNKNOWN, background=True,
-                          detail='PID-targeted scroll key dispatched')
-                return Receipt(status='unverified', action='scroll', executed=True,
-                               message='Scrolled with PID-targeted keyboard; verify the successor state.',
-                               evidence=trace.evidence())
-            except Exception as targeted_error:
+            if preflight.keyboard_unambiguous:
+                try:
+                    from mcp_vision.macos_input import TargetedInputUnavailable, targeted_key
+                    dispatch = targeted_key(self._pid(), keycode)
+                    trace.add(ExecutionMethod.PID_KEYBOARD, AttemptOutcome.UNKNOWN, background=True,
+                              detail='PID-targeted scroll key dispatched',
+                              evidence={'events_posted': dispatch.events_posted})
+                    trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                    return Receipt(status='unverified', action='scroll', executed=True,
+                                   message='Scrolled with PID-targeted keyboard once; verify the successor state.',
+                                   evidence=trace.evidence())
+                except TargetedInputUnavailable as targeted_error:
+                    outcome = (AttemptOutcome.UNKNOWN if targeted_error.delivery_unknown
+                               else AttemptOutcome.DIDNT)
+                    trace.add(ExecutionMethod.PID_KEYBOARD, outcome, background=True,
+                              detail=type(targeted_error).__name__,
+                              evidence={'events_posted': targeted_error.events_posted})
+                    if outcome is AttemptOutcome.UNKNOWN:
+                        trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+                        return Receipt(status='unverified', action='scroll', executed=True,
+                                       message='PID scroll delivery is unknown; no fallback was attempted.',
+                                       evidence=trace.evidence())
+            else:
                 trace.add(ExecutionMethod.PID_KEYBOARD, AttemptOutcome.DIDNT, background=True,
-                          detail=type(targeted_error).__name__)
-            from mcp_vision.core.actuate import get_actuator
-            self._activate()
+                          detail='PID destination is not one proven window', evidence={
+                              'refusal_reason': RefusalReason.SAME_PID_SIBLING_AMBIGUOUS.value,
+                              'visible_window_ids': list(preflight.sibling_window_ids),
+                          })
+            if not self._authorize_foreground('scroll', preflight.record, trace):
+                if len(preflight.sibling_window_ids) > 1:
+                    trace.refuse(RefusalReason.SAME_PID_SIBLING_AMBIGUOUS)
+                return Receipt(status='blocked', action='scroll', executed=False,
+                               message='No unambiguous background route and foreground escalation was not authorized.',
+                               evidence=trace.evidence())
+            preflight = await self._preflight(snapshot_id, index, AX, require_element=False)
+            trace.bind_authority(preflight.authority)
+            if not await self._focus_exact_window(AX, preflight, trace):
+                return Receipt(status='blocked', action='scroll', executed=False,
+                               message='Could not focus the exact authorized window.', evidence=trace.evidence())
             key = ('pagedown' if delta_y > 0 else 'pageup') if abs(delta_y) >= 400 else ('down' if delta_y > 0 else 'up')
-            get_actuator().press([key])
             trace.add(ExecutionMethod.FOREGROUND_KEYBOARD, AttemptOutcome.UNKNOWN, background=False,
                       detail='Global scroll key dispatched')
+            trace.refuse(RefusalReason.DELIVERY_UNKNOWN_NO_FALLBACK)
+            trace.observe(status='required', reason='keyboard_delivery_has_no_semantic_read_back')
+            from mcp_vision.core.actuate import get_actuator
+            try:
+                get_actuator().press([key])
+            except Exception as exc:
+                return Receipt(
+                    status='unverified', action='scroll', executed=None,
+                    message='Scroll-key delivery is unknown; no replay was attempted.',
+                    evidence={**trace.evidence(), 'dispatch_error': type(exc).__name__})
             return Receipt(status='unverified', action='scroll', executed=True,
-                           message='Scrolled with foreground keyboard fallback; verify the successor state.',
-                           evidence=trace.evidence())
+                            message='Scrolled with foreground keyboard fallback; verify the successor state.',
+                            evidence=trace.evidence())
+        except NativePreflightError as exc:
+            return self._refused('scroll', trace, exc)
         except Exception as exc:
-            return Receipt(status='error', action='scroll', message=redact(str(exc)), executed=None)
+            return Receipt(status='error', action='scroll', message=redact(str(exc)), executed=None,
+                           evidence=trace.evidence())
 
     async def verify_text(self, text):
         snap = await self.snapshot()
@@ -656,6 +1078,14 @@ class NativeContextBackend:
             return await self.click(snap.snapshot_id, index)
         if action == 'fill':
             return await self.fill(snap.snapshot_id, index, text)
+        if action == 'select':
+            return await self.select(snap.snapshot_id, index, text)
+        if action == 'set_checked':
+            normalized = str(text).strip().casefold()
+            if normalized not in {'true', 'false'}:
+                return Receipt(status='blocked', action=action,
+                               message='set_checked requires text to be true or false.', executed=False)
+            return await self.set_checked(snap.snapshot_id, index, normalized == 'true')
         return Receipt(status='blocked', action=action, message='Unsupported native action.')
 
     async def screenshot(self):

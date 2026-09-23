@@ -198,8 +198,35 @@ def native_backend():
     return backend, target
 
 
+def exact_preflight(monkeypatch, backend, target, *, keyboard_unambiguous=True, siblings=(8,),
+                    fresh_capture=None):
+    from PIL import Image
+    from mcp_vision.native_context import NativePreflight, NativePreflightError
+    from mcp_vision.execution_ladder import RefusalReason
+    from mcp_vision.native_perception import WindowCapture
+
+    capture = WindowCapture(Image.new('RGB', (160, 48)), b'pixels',
+                            {'X': 200, 'Y': 100, 'Width': 80, 'Height': 24}, 8, pid=42, scale=2)
+
+    async def preflight(snapshot_id, index, api, require_element=True):
+        try:
+            fresh = backend._fresh_element(snapshot_id, index, api) if require_element else None
+        except LookupError as exc:
+            raise NativePreflightError(RefusalReason.TARGET_CHANGED, 'The native target changed.') from exc
+        return NativePreflight(
+            capture=fresh_capture or capture, observed_capture=capture, window=target,
+            element=fresh, record=backend.records[index], sibling_window_ids=siblings,
+            keyboard_unambiguous=keyboard_unambiguous,
+            authority={'pid': 42, 'window_id': 8, 'bounds': capture.bounds, 'scale': 2,
+                       'visible_window_ids': list(siblings)},
+        )
+
+    monkeypatch.setattr(backend, '_preflight', preflight)
+
+
 def test_native_press_prefers_background_ax_without_activation(monkeypatch):
     backend, target = native_backend()
+    exact_preflight(monkeypatch, backend, target)
     monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
     monkeypatch.setattr(backend, '_activate', lambda: pytest.fail('background AXPress must not activate app'))
     receipt = asyncio.run(backend.click('s1', 0))
@@ -211,19 +238,241 @@ def test_native_value_write_prefers_background_ax_and_reads_back(monkeypatch):
     backend, target = native_backend()
     target['AXRole'] = 'AXTextField'
     backend.records[0].update(name='Export', ax_role='AXTextField')
+    exact_preflight(monkeypatch, backend, target)
     monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
     monkeypatch.setattr(backend, '_activate', lambda: pytest.fail('background AXValue must not activate app'))
     receipt = asyncio.run(backend.fill('s1', 0, 'Draft'))
     assert receipt.status == 'verified' and target['AXValue'] == 'Draft'
     assert receipt.evidence['execution_path'] == 'ax_background'
+    assert receipt.evidence['focus'] == {'requested': False, 'behavior': 'not_requested'}
+    assert receipt.evidence['successor_observation']['value_matches'] is True
+
+
+def test_native_select_prefers_background_ax_value_and_reads_back(monkeypatch):
+    backend, target = native_backend()
+    target['AXRole'] = 'AXPopUpButton'
+    target['AXValue'] = 'Small'
+    backend.records[0].update(ax_role='AXPopUpButton', value='Small')
+    exact_preflight(monkeypatch, backend, target)
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
+    monkeypatch.setattr(backend, '_activate', lambda: pytest.fail('background AXValue must not activate app'))
+
+    receipt = asyncio.run(backend.select('s1', 0, 'Large'))
+
+    assert receipt.status == 'verified' and target['AXValue'] == 'Large'
+    assert receipt.evidence['execution_path'] == 'ax_background'
+    assert receipt.evidence['successor_observation']['value'] == 'Large'
+
+
+def test_native_select_does_not_replay_after_accepted_unobserved_value(monkeypatch):
+    class AcceptedWithoutEffectAX(ActionAX):
+        @staticmethod
+        def AXUIElementSetAttributeValue(element, key, value):
+            return 0
+
+        @staticmethod
+        def AXUIElementPerformAction(element, action):
+            pytest.fail('unknown AXValue delivery must not be replayed')
+
+    backend, target = native_backend()
+    target['AXRole'] = 'AXPopUpButton'
+    target['AXValue'] = 'Small'
+    backend.records[0].update(ax_role='AXPopUpButton', value='Small')
+    exact_preflight(monkeypatch, backend, target)
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', AcceptedWithoutEffectAX)
+
+    receipt = asyncio.run(backend.select('s1', 0, 'Large'))
+
+    assert receipt.status == 'unverified' and receipt.executed is True
+    assert receipt.evidence['refusal_reason'] == 'delivery_unknown_no_fallback'
+    assert [attempt['method'] for attempt in receipt.evidence['attempts']] == ['ax_background']
 
 
 def test_native_action_rejects_moved_ax_target(monkeypatch):
     backend, target = native_backend()
     target['AXPosition'] = SimpleNamespace(x=250, y=100)
+    exact_preflight(monkeypatch, backend, target)
     monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
     receipt = asyncio.run(backend.click('s1', 0))
     assert receipt.status == 'stale' and receipt.executed is False
+
+
+def test_native_fill_does_not_replay_after_unknown_ax_delivery(monkeypatch):
+    class AcceptedWithoutEffectAX(ActionAX):
+        @staticmethod
+        def AXUIElementSetAttributeValue(element, key, value):
+            if key == 'AXFocused':
+                element[key] = value
+            return 0
+
+    backend, target = native_backend()
+    target['AXRole'] = 'AXTextField'
+    backend.records[0]['ax_role'] = 'AXTextField'
+    exact_preflight(monkeypatch, backend, target)
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', AcceptedWithoutEffectAX)
+    monkeypatch.setattr(
+        'mcp_vision.macos_input.targeted_replace_text',
+        lambda *_: pytest.fail('unknown AX delivery must not be replayed'))
+
+    receipt = asyncio.run(backend.fill('s1', 0, 'Draft'))
+
+    assert receipt.status == 'unverified' and receipt.executed is True
+    assert receipt.evidence['refusal_reason'] == 'delivery_unknown_no_fallback'
+    assert [attempt['method'] for attempt in receipt.evidence['attempts']] == ['ax_background']
+
+
+def test_native_fill_uses_pid_keyboard_only_for_one_window(monkeypatch):
+    class UnsupportedValueAX(ActionAX):
+        @staticmethod
+        def AXUIElementSetAttributeValue(element, key, value):
+            return 0 if key == 'AXFocused' else 1
+
+    backend, target = native_backend()
+    target['AXRole'] = 'AXTextField'
+    backend.records[0]['ax_role'] = 'AXTextField'
+    exact_preflight(monkeypatch, backend, target, keyboard_unambiguous=False, siblings=(8, 9))
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', UnsupportedValueAX)
+    monkeypatch.setattr(
+        'mcp_vision.macos_input.targeted_replace_text',
+        lambda *_: pytest.fail('ambiguous PID keyboard must not dispatch'))
+
+    receipt = asyncio.run(backend.fill('s1', 0, 'Draft'))
+
+    assert receipt.status == 'blocked' and receipt.executed is False
+    assert receipt.evidence['refusal_reason'] == 'same_pid_sibling_ambiguous'
+    assert [attempt['outcome'] for attempt in receipt.evidence['attempts']] == ['didnt', 'didnt']
+
+
+def test_failed_ax_click_uses_approved_foreground_pointer_once(monkeypatch):
+    from mcp_vision.core.governor import Governor
+
+    class UnsupportedPressAX(ActionAX):
+        @staticmethod
+        def AXUIElementPerformAction(element, action):
+            return 1
+
+    backend, target = native_backend()
+    backend.governor = Governor(confirmer=lambda *_: True)
+    exact_preflight(monkeypatch, backend, target)
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', UnsupportedPressAX)
+
+    async def focused(*_):
+        return True
+
+    clicks = []
+    monkeypatch.setattr(backend, '_focus_exact_window', focused)
+    monkeypatch.setattr('mcp_vision.core.actuate.get_actuator',
+                        lambda: SimpleNamespace(click=lambda x, y: clicks.append((x, y))))
+
+    receipt = asyncio.run(backend.click('s1', 0))
+
+    assert receipt.status == 'unverified' and clicks == [(240, 112)]
+    assert [attempt['method'] for attempt in receipt.evidence['attempts']] == [
+        'ax_background', 'ax_foreground', 'foreground_pointer']
+    assert receipt.evidence['focus']['approval_granted'] is True
+    assert receipt.evidence['successor_observation']['status'] == 'required'
+
+
+def test_pointer_exception_after_dispatch_is_unknown_and_not_replayed(monkeypatch):
+    from mcp_vision.core.governor import Governor
+
+    class UnsupportedPressAX(ActionAX):
+        @staticmethod
+        def AXUIElementPerformAction(element, action):
+            return 1
+
+    class UncertainActuator:
+        calls = 0
+
+        def click(self, *_point):
+            self.calls += 1
+            raise TimeoutError('outcome unavailable after dispatch')
+
+    backend, target = native_backend()
+    backend.governor = Governor(confirmer=lambda *_: True)
+    exact_preflight(monkeypatch, backend, target)
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', UnsupportedPressAX)
+
+    async def focused(*_):
+        return True
+
+    actuator = UncertainActuator()
+    monkeypatch.setattr(backend, '_focus_exact_window', focused)
+    monkeypatch.setattr('mcp_vision.core.actuate.get_actuator', lambda: actuator)
+
+    receipt = asyncio.run(backend.click('s1', 0))
+
+    assert receipt.status == 'unverified' and receipt.executed is None and actuator.calls == 1
+    assert receipt.evidence['delivery_outcome'] == 'unknown'
+    assert receipt.evidence['refusal_reason'] == 'delivery_unknown_no_fallback'
+    assert receipt.evidence['dispatch_error'] == 'TimeoutError'
+
+
+def test_preflight_refuses_hidden_or_minimized_exact_window(monkeypatch):
+    from PIL import Image
+    from mcp_vision.execution_ladder import RefusalReason
+    from mcp_vision.native_context import NativePreflightError
+    from mcp_vision.native_perception import WindowCapture
+
+    backend, target = native_backend()
+    capture = WindowCapture(Image.new('RGB', (160, 48)), b'pixels',
+                            {'X': 200, 'Y': 100, 'Width': 80, 'Height': 24}, 8, pid=42, scale=2)
+    target['AXMinimized'] = True
+    backend._captures['s1'] = capture
+    backend._windows['s1'] = target
+
+    class PreflightAX(AX):
+        @staticmethod
+        def AXUIElementCreateApplication(pid):
+            return {'AXHidden': False}
+
+    with pytest.raises(NativePreflightError) as error:
+        asyncio.run(backend._preflight('s1', 0, PreflightAX))
+    assert error.value.reason is RefusalReason.WINDOW_MINIMIZED
+
+
+def test_preflight_rejects_fresh_capture_with_different_window_authority(monkeypatch):
+    from PIL import Image
+    from mcp_vision.execution_ladder import RefusalReason
+    from mcp_vision.native_context import NativePreflightError
+    from mcp_vision.native_perception import WindowCapture
+
+    backend, target = native_backend()
+    observed = WindowCapture(Image.new('RGB', (160, 48)), b'observed',
+                             {'X': 200, 'Y': 100, 'Width': 80, 'Height': 24}, 8, pid=42, scale=2)
+    wrong = WindowCapture(Image.new('RGB', (160, 48)), b'wrong', observed.bounds,
+                          9, pid=42, scale=2)
+    backend._captures['s1'] = observed
+    backend._windows['s1'] = target
+
+    class PreflightAX(AX):
+        @staticmethod
+        def AXUIElementCreateApplication(pid):
+            return {'AXHidden': False, 'AXWindows': [target], 'AXFocusedWindow': target}
+
+    monkeypatch.setattr('mcp_vision.native_context.visible_window_ids', lambda _pid: (8,))
+    monkeypatch.setattr('mcp_vision.native_context.capture_window', lambda *_args: wrong)
+    with pytest.raises(NativePreflightError) as error:
+        asyncio.run(backend._preflight('s1', 0, PreflightAX))
+    assert error.value.reason is RefusalReason.STALE_CAPTURE
+
+
+def test_preflight_refuses_changed_exact_window_pixels(monkeypatch):
+    from PIL import Image
+    from mcp_vision.core.governor import Governor
+    from mcp_vision.native_perception import WindowCapture
+
+    backend, target = native_backend()
+    changed = WindowCapture(Image.new('RGB', (160, 48), 'white'), b'after',
+                            {'X': 200, 'Y': 100, 'Width': 80, 'Height': 24}, 8, pid=42, scale=2)
+    backend.records[0].update(ocr_only=True, identity={'visual': 'observed'})
+    backend.governor = Governor(confirmer=lambda *_: True)
+    exact_preflight(monkeypatch, backend, target, fresh_capture=changed)
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', ActionAX)
+
+    receipt = asyncio.run(backend.click('s1', 0))
+    assert receipt.status == 'stale' and receipt.executed is False
+    assert receipt.evidence['refusal_reason'] == 'pixels_changed'
 
 
 def test_native_screenshot_returns_only_current_observation_capture():

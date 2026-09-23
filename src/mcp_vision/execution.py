@@ -56,7 +56,8 @@ async def bind_context_backend(context, *, mode, live_driver='native', cdp_endpo
     # with a URL (for example from the extension) and stays on the browser backend.
     if context.source == 'macos' and not context.url:
         from mcp_vision.native_context import NativeContextBackend
-        return NativeContextBackend(context, indicator, allow_writes=mode == 'act')
+        return NativeContextBackend(
+            context, indicator, allow_writes=mode == 'act', governor=task_governor(source_path))
     if not context.url:
         raise ValueError('Invoke on a browser page to select an execution target.')
     backend = factory(browser_mode='live', live_driver=live_driver, cdp_endpoint=cdp_endpoint,
