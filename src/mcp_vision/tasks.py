@@ -744,6 +744,18 @@ class ContextTask:
                     await self.backend.highlight(snapshot.snapshot_id, target['index'], 'MCP-Vision · Acting', 2200)
                 self.check_cancel()
                 receipt = await self.dispatch(step, snapshot, target)
+                if queue and snapshot.source == 'macos-accessibility':
+                    # Keypad presses land in order only when the app's AX
+                    # server has rendered the previous one; a short paced beat
+                    # plus display confirmation beats blind retries here.
+                    import time as _time
+                    deadline = _time.monotonic() + 0.6
+                    while _time.monotonic() < deadline:
+                        paced = await self.observe()
+                        if (paced.text or '') != (snapshot.text or ''):
+                            snapshot = paced
+                            break
+                        await asyncio.sleep(0.08)
                 if receipt.status == 'blocked':
                     return self.result('input', 'The action requires approval or is unavailable under the current policy. ' + receipt.message)
                 if receipt.status == 'error' and receipt.executed is False:
