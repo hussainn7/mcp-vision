@@ -343,6 +343,19 @@ class ContextTask:
                                    max_steps=self.max_steps)
             sub_task.backend = backend
             sub_task.task_generation = getattr(self, 'task_generation', 0)
+            # A freshly launched app may not publish its window immediately.
+            # Wait briefly for real controls instead of planning against a
+            # snapshot that cannot contain them.
+            import time as _time
+            deadline = _time.monotonic() + 2.0
+            try:
+                while _time.monotonic() < deadline:
+                    snap = await sub_task.observe()
+                    if len(snap.elements) >= 3:
+                        break
+                    await asyncio.sleep(0.15)
+            except Exception:
+                pass
             sub_result = await sub_task.run()
         except asyncio.CancelledError:
             return self.result('cancelled', 'Cancelled. Completed changes remain.')
