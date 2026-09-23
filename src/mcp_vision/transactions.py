@@ -9,7 +9,15 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel
 
 from mcp_vision.browser import Receipt
-from mcp_vision.state import ActionCandidate, Operation, StateDiff, StateStore, UIState, diff_states
+from mcp_vision.state import ActionCandidate, Operation, StateDiff, StateStore, UIState, compile_state, diff_states
+from mcp_vision.verification import (
+    DEFAULT_VERIFIER,
+    VerificationEngine,
+    VerificationOutcome,
+    VerificationPredicate,
+    VerificationResult,
+    readiness_predicate,
+)
 
 
 class TransactionBackend(Protocol):
@@ -21,18 +29,8 @@ class TransactionBackend(Protocol):
     async def scroll(self, snapshot_id: str, delta_y: int) -> Receipt: ...
 
 
-class Postcondition(BaseModel):
-    kind: Literal["text_contains", "text_absent", "url_equals", "value_equals", "checked_equals"]
-    value: str | bool
-    target_ref: str | None = None
-
-
-class PostconditionResult(BaseModel):
-    verified: bool
-    kind: str
-    expected: str | bool
-    observed: Any = None
-    message: str
+Postcondition = VerificationPredicate
+PostconditionResult = VerificationResult
 
 
 class TransactionReceipt(BaseModel):
@@ -50,9 +48,11 @@ class TransactionReceipt(BaseModel):
 class TransactionRuntime:
     """Adds immutable observations and one-shot bounded candidates to a backend."""
 
-    def __init__(self, backend: TransactionBackend, *, state_capacity: int = 16):
+    def __init__(self, backend: TransactionBackend, *, state_capacity: int = 16,
+                 verifier: VerificationEngine | None = None):
         self.backend = backend
         self.states = StateStore(state_capacity)
+        self.verifier = verifier or DEFAULT_VERIFIER
         self._consumed: set[tuple[str, str]] = set()
         self._lock = asyncio.Lock()
         self._events: deque[dict[str, Any]] = deque(maxlen=200)
@@ -135,19 +135,18 @@ class TransactionRuntime:
             condition = None
             if receipt.executed is not False:
                 try:
-                    settle = getattr(self.backend, "settle", None)
-                    if settle is not None:
-                        await settle(candidate.operation.value)
-                    successor = await self.observe()
+                    predicate = expect or self._readiness(candidate, text=text, value=value, checked=checked)
+                    if predicate:
+                        condition, successor = await self.verify_stable(predicate, before=state, publish=True)
+                    else:
+                        successor = await self.observe()
                     difference = diff_states(state, successor)
-                    if expect:
-                        condition = self._verify(expect, state, successor, candidate)
                 except Exception as exc:
                     receipt = receipt.model_copy(update={"status": "error", "executed": receipt.executed,
                                                          "message": f"{receipt.message} Successor observation failed: {type(exc).__name__}."})
             status = receipt.status
             if condition is not None:
-                status = "verified" if condition.verified else "unverified"
+                status = "verified" if condition.outcome is VerificationOutcome.SATISFIED else "unverified"
             elif receipt.executed:
                 status = "unverified"  # primitive read-back is not semantic task success
             result = TransactionReceipt(
@@ -171,9 +170,41 @@ class TransactionRuntime:
                             text_changed=difference.text_changed, changed=difference.changed)
             if condition:
                 self._event("postcondition", transaction_id=transaction_id, kind=condition.kind,
-                            verified=condition.verified, expected=condition.expected,
-                            observed=condition.observed)
+                            outcome=condition.outcome.value, verified=condition.verified,
+                            expected=condition.expected, observed=condition.observed,
+                            stable=condition.stable, samples=condition.samples,
+                            preexisting=condition.preexisting)
             return result
+
+    async def verify_stable(self, predicate: VerificationPredicate, *, before: UIState,
+                            initial: UIState | None = None, preexisting: bool = False,
+                            publish: bool = False, sleep=asyncio.sleep,
+                            monotonic=time.monotonic) -> tuple[VerificationResult, UIState]:
+        """Poll without publishing intermediate states as executable authority."""
+        preexisting = preexisting or self.verifier.verify(before, predicate, before=before).passed
+        last_snapshot = None
+        last_state = initial
+
+        async def observe_sample():
+            nonlocal last_snapshot, last_state
+            last_snapshot = await self.backend.snapshot()
+            last_state = compile_state(last_snapshot, epoch=before.epoch + 1)
+            return last_state
+
+        result = await self.verifier.wait(
+            observe_sample, predicate, before=before, initial=initial,
+            preexisting=preexisting, sleep=sleep, monotonic=monotonic,
+        )
+        if publish and last_snapshot is not None:
+            last_state = self.states.add(last_snapshot)
+            result = result.model_copy(update={"state_id": last_state.state_id})
+            self._event("observation", state_id=last_state.state_id, root_id=last_state.root_id,
+                        epoch=last_state.epoch, source=last_state.source, elements=len(last_state.elements),
+                        candidates=len(last_state.candidates), content_hash=last_state.content_hash,
+                        url=last_state.url, title=last_state.title)
+        if last_state is None:
+            raise RuntimeError("Verification produced no observation.")
+        return result, last_state
 
     @staticmethod
     def _failure(transaction_id: str, state_id: str, status: str, message: str, started: float):
@@ -209,27 +240,9 @@ class TransactionRuntime:
         return Receipt(status="blocked", action=operation.value, message="System-2 replanning requested.", executed=False)
 
     @staticmethod
-    def _verify(expect: Postcondition, before: UIState, after: UIState,
-                candidate: ActionCandidate) -> PostconditionResult:
-        observed: Any
-        if expect.kind == "text_contains":
-            observed = str(expect.value) in after.text
-            verified = observed
-        elif expect.kind == "text_absent":
-            observed = str(expect.value) not in after.text
-            verified = observed
-        elif expect.kind == "url_equals":
-            observed = after.url
-            verified = observed == expect.value
-        else:
-            old_target = before.element(expect.target_ref or candidate.target_ref or "")
-            matches = [element for element in after.elements if old_target and
-                       (element.identity == old_target.identity if any(old_target.identity.model_dump().values())
-                        else (element.role, element.name) == (old_target.role, old_target.name))]
-            observed = None
-            if len(matches) == 1:
-                observed = matches[0].value if expect.kind == "value_equals" else matches[0].checked
-            verified = observed == expect.value
-        return PostconditionResult(verified=bool(verified), kind=expect.kind, expected=expect.value,
-                                   observed=observed,
-                                   message="Semantic postcondition verified." if verified else "Semantic postcondition was not observed.")
+    def _readiness(candidate: ActionCandidate, *, text=None, value=None, checked=None) -> VerificationPredicate | None:
+        return readiness_predicate(
+            candidate.operation.value, target_ref=candidate.target_ref,
+            value=text if candidate.operation is Operation.TYPE else value,
+            checked=checked,
+        )

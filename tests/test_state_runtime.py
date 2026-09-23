@@ -6,6 +6,7 @@ from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.fast_policy import JevPolicy, MockPolicy, RulePolicy, jev_status
 from mcp_vision.state import Operation, StateStore, compile_state, diff_states
 from mcp_vision.transactions import Postcondition, TransactionRuntime
+from mcp_vision.verification import StabilityPolicy
 
 
 def snapshot(state_id: str, *, text: str = "Waiting", value: str = "", title: str = "Fixture"):
@@ -24,7 +25,8 @@ def snapshot(state_id: str, *, text: str = "Waiting", value: str = "", title: st
 
 class Backend:
     def __init__(self):
-        self.snapshots = [snapshot("s1"), snapshot("s2", text="Saved", value="Paris")]
+        self.snapshots = [snapshot("s1"), snapshot("s2", text="Saved", value="Paris"),
+                          snapshot("s3", text="Saved", value="Paris")]
         self.calls = []
 
     async def snapshot(self):
@@ -81,12 +83,16 @@ def test_transaction_observes_successor_and_requires_semantic_postcondition_for_
         fill = next(item for item in state.candidates if item.operation is Operation.TYPE)
         receipt = await runtime.execute(
             state.state_id, fill.id, text="Paris",
-            expect=Postcondition(kind="text_contains", value="Saved"),
+            expect=Postcondition(
+                kind="text_contains", value="Saved",
+                stability=StabilityPolicy(consecutive_samples=2, cadence_ms=1, timeout_ms=10),
+            ),
         )
         assert receipt.status == "verified"
         assert receipt.action.status == "verified"  # primitive read-back retained separately
-        assert receipt.successor_state.state_id == "s2"
-        assert receipt.diff.changed and receipt.postcondition.verified
+        assert receipt.successor_state.state_id == "s3"
+        assert receipt.diff.changed and receipt.postcondition.verified and receipt.postcondition.stable
+        assert receipt.postcondition.samples == 2
         assert receipt.task_complete is False
         assert backend.calls == [("fill", "s1", 0, "Paris")]
         assert [event["type"] for event in runtime.events()] == [
@@ -101,6 +107,23 @@ def test_transaction_observes_successor_and_requires_semantic_postcondition_for_
         assert change["updated"] == [{"ref": "@e0", "fields": ["value"]}]
         repeated = await runtime.execute(state.state_id, fill.id, text="Paris")
         assert repeated.status == "stale" and repeated.action.executed is False
+    asyncio.run(run())
+
+
+def test_transaction_delivers_mutation_once_while_waiting_for_stability():
+    async def run():
+        backend = Backend()
+        backend.snapshots = [snapshot("s1"), snapshot("s2"),
+                             snapshot("s3", text="Saved", value="Paris"),
+                             snapshot("s4", text="Saved", value="Paris")]
+        runtime = TransactionRuntime(backend)
+        state = await runtime.observe()
+        fill = next(item for item in state.candidates if item.operation is Operation.TYPE)
+        result = await runtime.execute(state.state_id, fill.id, text="Paris")
+        assert result.status == "verified" and result.postcondition.samples == 3
+        assert result.postcondition.predicate == "value_equals"
+        assert backend.calls == [("fill", "s1", 0, "Paris")]
+
     asyncio.run(run())
 
 

@@ -63,7 +63,7 @@ def test_reobserve_and_verify_not_receipt():
     result = asyncio.run(task(backend, lambda _: next(steps)).run())
     assert result['state'] == 'review'
     assert len(result['verified']) == 1
-    assert backend.observations == 3
+    assert backend.observations == 4
     assert backend.markers == [0]
 
 
@@ -73,7 +73,7 @@ def test_false_success_is_bounded():
     runner = task(backend, lambda _: Step(action='fill', name='Name', value='Jane'))
     result = asyncio.run(runner.run())
     assert result['state'] == 'input' and not result['verified']
-    assert backend.actions == 3 and backend.observations == 4
+    assert backend.actions == 3 and 4 < backend.observations <= 100
 
 
 def test_cancel_during_reasoning_prevents_action():
@@ -349,14 +349,14 @@ def test_compound_open_then_calculate_completes_in_app(monkeypatch):
             return Receipt(status='unverified', action='click', executed=True, message='dispatched')
 
     steps = iter([
-        Step(action='click', name='1', role='button'),
-        Step(action='click', name='8', role='button'),
-        Step(action='click', name='4', role='button'),
-        Step(action='click', name='7', role='button'),
-        Step(action='click', name='×', role='button'),
-        Step(action='click', name='3', role='button'),
-        Step(action='click', name='7', role='button'),
-        Step(action='click', name='=', role='button'),
+        Step(action='click', name='1', role='button', expected_text='Display 1'),
+        Step(action='click', name='8', role='button', expected_text='Display 2'),
+        Step(action='click', name='4', role='button', expected_text='Display 3'),
+        Step(action='click', name='7', role='button', expected_text='Display 4'),
+        Step(action='click', name='×', role='button', expected_text='Display 5'),
+        Step(action='click', name='3', role='button', expected_text='Display 6'),
+        Step(action='click', name='7', role='button', expected_text='Display 7'),
+        Step(action='click', name='=', role='button', expected_text='Display 8'),
         Step(action='review'),
     ])
 
@@ -397,8 +397,9 @@ def test_new_tab_executes_from_observed_control_not_shortcut_parser():
     context = Context(source='macos', source_application='Google Chrome',
                       accessibility_context={'pid': 42}, user_request='Could you make a new tab for me?')
     result = asyncio.run(ContextTask(context, backend=backend).run())
-    assert result['state'] == 'review'
-    assert result['verified'] == [{'action': 'click', 'name': 'New Tab', 'role': 'button', 'value': ''}]
+    assert result['state'] == 'input'
+    assert result['verified'] == []
+    assert result['outcomes'][0]['verification']['outcome'] == 'unknown'
     assert backend.actions == 1 and backend.created is True
 
 
@@ -527,7 +528,7 @@ def test_extension_chrome_context_still_binds_page_dom():
     assert result is backend
 
 
-def test_click_can_verify_by_navigation_when_label_was_already_visible():
+def test_click_navigation_without_expected_url_remains_unknown():
     class ClickBackend(Backend):
         async def snapshot(self):
             self.observations += 1
@@ -548,19 +549,22 @@ def test_click_can_verify_by_navigation_when_label_was_already_visible():
     ])
     context = Context(source='chrome', url=backend.url, user_request='Open this internship')
     result = asyncio.run(ContextTask(context, backend=backend, planner=lambda _: next(steps)).run())
-    assert result['state'] == 'review'
-    assert result['verified'][0]['action'] == 'click'
+    assert result['state'] == 'input'
+    assert result['verified'] == []
+    assert result['outcomes'][0]['verification']['outcome'] == 'satisfied'
+    assert result['outcomes'][0]['verification']['preexisting'] is True
     assert backend.actions == 1
 
 
-def test_click_can_verify_by_newly_exposed_control_without_new_text_requirement():
+def test_click_does_not_treat_newly_exposed_control_as_semantic_success():
     before = BrowserSnapshot(snapshot_id='1', url='https://form.test/', title='Form', text='Open',
         elements=[dict(index=0, role='button', name='Open')])
     after = BrowserSnapshot(snapshot_id='2', url='https://form.test/', title='Form', text='Open',
         elements=[dict(index=0, role='button', name='Open'), dict(index=1, role='dialog', name='Details')])
     runner = ContextTask(Context(source='chrome', url=before.url, user_request='Open this'),
                          backend=Backend(), planner=lambda _: Step(action='review'))
-    assert runner.verify(Step(action='click', name='Open', role='button'), before.elements[0], before, after)
+    result = runner.verify(Step(action='click', name='Open', role='button'), before.elements[0], before, after)
+    assert result.outcome.value == 'unknown'
 
 
 def test_click_still_rejects_no_observed_change():
@@ -611,8 +615,9 @@ def test_verified_native_fill_survives_control_hidden_on_final_audit():
     context = Context(source='macos', user_request='Type safe test in this document',
                       accessibility_context={'pid': 42})
     result = asyncio.run(ContextTask(context, backend=backend).run())
-    assert result['state'] == 'review'
-    assert result['verified'][0]['value'] == 'safe test'
+    assert result['state'] == 'input'
+    assert result['verified'] == []
+    assert result['outcomes'][0]['verification']['outcome'] == 'unknown'
 
 
 def test_compound_fill_text_extracts_from_create_then_type():
@@ -651,6 +656,6 @@ def test_compound_create_then_type_completes_both_steps():
                       accessibility_context={'pid': 42})
     result = asyncio.run(ContextTask(context, backend=backend).run())
     assert result['state'] == 'review'
-    assert len(result['verified']) == 2
-    assert result['verified'][0]['action'] == 'click' and result['verified'][0]['name'] == 'New Note'
-    assert result['verified'][1]['action'] == 'fill' and result['verified'][1]['value'] == 'Project Alpha'
+    assert len(result['verified']) == 1
+    assert result['verified'][0]['action'] == 'fill' and result['verified'][0]['value'] == 'Project Alpha'
+    assert result['outcomes'][0]['verification']['outcome'] == 'unknown'

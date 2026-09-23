@@ -595,9 +595,8 @@ class NativeBrowserRuntime(BrowserRuntime):
             return await self._run(lambda: capture_display(0).png)
 
     async def settle(self, operation: str = "") -> None:
-        # AppleScript cannot await page animation frames. A short bounded pause
-        # lets native Chrome publish autocomplete/modal changes before observe.
-        await asyncio.sleep(0.075)
+        """Compatibility no-op; semantic predicate waits own readiness timing."""
+        return None
 
     async def close(self):
         async with self._lock:

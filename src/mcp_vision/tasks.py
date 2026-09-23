@@ -13,8 +13,12 @@ from pydantic import BaseModel, Field
 
 from mcp_vision.contextual import answer_context, infer_capability, package_context
 from mcp_vision.guidance import resolve_target
+from mcp_vision.state import compile_state
 from mcp_vision.task_policy import TaskConstraints, normalized
 from mcp_vision.request_routing import route_request
+from mcp_vision.verification import (
+    DEFAULT_VERIFIER, VerificationOutcome, VerificationResult, readiness_predicate,
+)
 
 
 def checkbox_value(value: str) -> str:
@@ -352,6 +356,7 @@ class ContextTask:
         self.max_steps = min(max_steps, 40)
         self.events = []
         self.verified = []
+        self.outcomes = []
         self.unanswered = set()
         self.bound_url = context.url
         self._loop = None
@@ -389,7 +394,8 @@ class ContextTask:
     def result(self, state, answer):
         from mcp_vision.providers import resolve_provider
         return {'capability': self.mode, 'state': state, 'answer': answer,
-                'verified': self.verified, 'provider': resolve_provider(self.provider)}
+                'verified': self.verified, 'outcomes': self.outcomes,
+                'provider': resolve_provider(self.provider)}
 
     def check_cancel(self):
         if self.cancelled.is_set():
@@ -744,45 +750,53 @@ class ContextTask:
                     await self.backend.highlight(snapshot.snapshot_id, target['index'], 'MCP-Vision · Acting', 2200)
                 self.check_cancel()
                 receipt = await self.dispatch(step, snapshot, target)
-                if queue and snapshot.source == 'macos-accessibility':
-                    # Keypad presses land in order only when the app's AX
-                    # server has rendered the previous one; a short paced beat
-                    # plus display confirmation beats blind retries here.
-                    import time as _time
-                    deadline = _time.monotonic() + 0.6
-                    while _time.monotonic() < deadline:
-                        paced = await self.observe()
-                        if (paced.text or '') != (snapshot.text or ''):
-                            snapshot = paced
-                            break
-                        await asyncio.sleep(0.08)
                 if receipt.status == 'blocked':
                     return self.result('input', 'The action requires approval or is unavailable under the current policy. ' + receipt.message)
                 if receipt.status == 'error' and receipt.executed is False:
                     return self.result('input', 'I could not perform that step. ' + receipt.message)
+                if receipt.status == 'stale':
+                    self.outcomes.append({
+                        'action': step.action, 'name': step.name,
+                        'delivery': receipt.model_dump(mode='json'), 'verification': None,
+                    })
+                    feedback = 'The target became stale before delivery; resolve it from a fresh observation.'
+                    snapshot = await self.observe(allow_navigation=False)
+                    continue
                 self.emit('Checking the resulting state…', "verifying")
-                if hasattr(self.backend, 'settle'):
-                    await self.backend.settle(step.action)
                 expected_navigation = ''
                 if step.action == 'click' and target and target.get('href'):
                     from urllib.parse import urljoin
                     expected_navigation = urljoin(snapshot.url, target['href'])
                 after = await self.observe(allow_navigation=step.action == "click",
                                            expected_navigation=expected_navigation)
-                success = self.verify(step, target, snapshot, after)
-                if (not success and receipt.executed is not False
-                        and snapshot.source == 'macos-accessibility'):
-                    # Native UIs can publish their successor state a frame or
-                    # two after a background AX dispatch. Re-observe with
-                    # increasing delays; never replay the potentially successful
-                    # action merely because it settled.
-                    for delay in (0.3, 0.6, 1.0):
-                        await asyncio.sleep(delay)
-                        after = await self.observe(allow_navigation=step.action == "click",
-                                                   expected_navigation=expected_navigation)
-                        if self.verify(step, target, snapshot, after):
-                            success = True
-                            break
+                predicate = self.verification_predicate(step, target, expected_navigation)
+                if predicate:
+                    before_state = compile_state(snapshot, epoch=1)
+                    latest = after
+
+                    async def observe_verification_state():
+                        nonlocal latest
+                        latest = await self.observe(allow_navigation=step.action == "click",
+                                                    expected_navigation=expected_navigation)
+                        return compile_state(latest, epoch=2)
+
+                    verification = await DEFAULT_VERIFIER.wait(
+                        observe_verification_state, predicate, before=before_state,
+                        initial=compile_state(after, epoch=2),
+                        preexisting=DEFAULT_VERIFIER.verify(before_state, predicate,
+                                                            before=before_state).passed,
+                    )
+                    after = latest
+                else:
+                    verification = self.verify(step, target, snapshot, after,
+                                               expected_url=expected_navigation)
+                success = (verification.outcome is VerificationOutcome.SATISFIED
+                           and not verification.preexisting)
+                self.outcomes.append({
+                    'action': step.action, 'name': step.name,
+                    'delivery': receipt.model_dump(mode='json'),
+                    'verification': verification.model_dump(mode='json'),
+                })
                 self.check_cancel()
                 if success and receipt.executed is not False:
                     self.verified.append({'action': step.action, 'name': step.name, 'role': step.role, 'value': step.value})
@@ -791,6 +805,14 @@ class ContextTask:
                 else:
                     failures += 1
                     feedback = 'Action not verified. Inspect again. ' + receipt.message
+                    if (verification.outcome is VerificationOutcome.UNKNOWN
+                            and receipt.executed is not False and queue):
+                        # Delivery may have succeeded. Continue an already-bounded
+                        # compound sequence, but never call this step verified or replay it.
+                        failures = 0
+                        feedback = 'Action was delivered, but its semantic outcome is unknown.'
+                        snapshot = after
+                        continue
                     compound_pending = (snapshot.source == 'macos-accessibility'
                                         and _extract_compound_fill_text(self.context.user_request)
                                         and not any(v['action'] == 'fill' for v in self.verified))
@@ -840,52 +862,28 @@ class ContextTask:
             return await self.backend.upload(sid, index, self.source_path)
         raise ValueError('Unsupported action.')
 
-    def verify(self, step, target, before, after):
-        if step.action == 'click':
-            # Split-pane and single-page apps frequently keep the clicked label
-            # visible while changing the URL, selection state, or exposed
-            # controls. Requiring a guessed, newly appearing phrase rejected
-            # valid actions on job boards and other common UIs.
-            if after.url != before.url:
-                return True
-            if step.expected_text and step.expected_text not in before.text and step.expected_text in after.text:
-                return True
-            current = resolve_target(after.elements, step.name, step.role)
-            if current and target:
-                for key in ('selected', 'expanded', 'checked', 'pressed', 'value'):
-                    if key in current and current.get(key) != target.get(key):
-                        return True
-            before_controls = self._control_fingerprint(before.elements)
-            after_controls = self._control_fingerprint(after.elements)
-            if after_controls - before_controls:
-                return True
-            # Native apps often respond to a press by changing visible text
-            # (Calculator displays, status labels). On AX surfaces that is an
-            # observed effect; the web path keeps its stricter control rule.
-            if (getattr(before, 'source', '') == 'macos-accessibility'
-                    and (after.text or '') != (before.text or '')):
-                return True
-            return False
-        if step.action == 'scroll':
-            return before.elements != after.elements
-        current = resolve_target(after.elements, step.name, step.role)
-        if not current:
-            return False
-        if step.action in {'fill', 'select'}:
-            return current.get('value') == step.value
-        if step.action == 'set_checked':
-            return current.get('checked') is (checkbox_value(step.value) == 'true')
-        if step.action == 'upload':
-            return Path(self.source_path).name in current.get('files', [])
-        return False
-
     @staticmethod
-    def _control_fingerprint(elements):
-        """Semantic controls used as click postconditions; ignore geometry/index churn."""
-        interactive = {'button', 'link', 'textbox', 'combobox', 'checkbox', 'radio', 'dialog', 'tab'}
-        return {
-            (str(element.get('role', '')).lower(), str(element.get('name', '')).strip(),
-             str(element.get('value', '')), bool(element.get('checked', False)))
-            for element in elements
-            if str(element.get('role', '')).lower() in interactive and str(element.get('name', '')).strip()
-        }
+    def verification_predicate(step, target, expected_url=''):
+        checked = checkbox_value(step.value) == 'true' if step.action == 'set_checked' else None
+        return readiness_predicate(
+            step.action,
+            target_ref=f"@e{target['index']}" if target and 'index' in target else None,
+            role=step.role or None, name=step.name or None,
+            value=step.value if step.action in {'fill', 'select'} else None,
+            checked=checked, expected_text=step.expected_text or None,
+            expected_url=expected_url or None,
+        )
+
+    def verify(self, step, target, before, after, *, expected_url='') -> VerificationResult:
+        predicate = self.verification_predicate(step, target, expected_url)
+        if predicate is None:
+            return VerificationResult(
+                outcome=VerificationOutcome.UNKNOWN, predicate='custom', state_id=after.snapshot_id,
+                target=None, observed=None,
+                evidence={'operation': step.action, 'reason': 'no_semantic_postcondition'},
+                message='No semantic postcondition was supplied for this operation.',
+            )
+        return DEFAULT_VERIFIER.verify(
+            compile_state(after, epoch=2), predicate,
+            before=compile_state(before, epoch=1),
+        )

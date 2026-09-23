@@ -108,12 +108,20 @@ class FastPath:
         verification = self.verifier.verify(state, task.completion, before=initial)
         self.runtime.record_event("verification", **verification.model_dump(mode="json"))
         if verification.passed:
-            return self._finish(FastPathStatus.VERIFIED, task, "Completion already satisfied.",
+            verification, state = await self.runtime.verify_stable(
+                task.completion, before=initial, initial=state, preexisting=True)
+            metrics.observations += max(0, verification.samples - 1)
+            self.runtime.record_event("verification", **verification.model_dump(mode="json"))
+            if verification.passed:
+                return self._finish(FastPathStatus.VERIFIED, task, "Completion already satisfied and stable.",
+                                    state, verification, steps, metrics, started)
+            return self._finish(FastPathStatus.UNCERTAIN, task,
+                                "Preexisting completion was not stable; no action was attempted.",
                                 state, verification, steps, metrics, started)
-        if verification.outcome is VerificationOutcome.UNKNOWN and state.quality.degraded:
+        if verification.outcome is VerificationOutcome.UNKNOWN:
             return self._finish(
                 FastPathStatus.UNCERTAIN, task,
-                "Completion is unknown because perception is degraded; reobserve or escalate perception.",
+                "Completion is unknown; reobserve or escalate perception.",
                 state, verification, steps, metrics, started,
             )
 
@@ -161,7 +169,8 @@ class FastPath:
                 return self._finish(FastPathStatus.REPLAN, task, "Repeated-action loop detected.",
                                     state, verification, steps, metrics, started)
 
-            receipt = await self.runtime.execute(state.state_id, candidate.id, **arguments)
+            receipt = await self.runtime.execute(
+                state.state_id, candidate.id, expect=task.completion, **arguments)
             metrics.actions += int(receipt.action.executed is not False)
             if receipt.action.executed is not False:
                 if receipt.action.evidence.get("background") is True:
@@ -188,7 +197,18 @@ class FastPath:
                 return self._finish(FastPathStatus.ERROR, task, receipt.action.message,
                                     state, verification, steps, metrics, started)
             state = receipt.successor_state
-            metrics.observations += 1
+            metrics.observations += receipt.postcondition.samples if receipt.postcondition else 1
+            verification = receipt.postcondition or self.verifier.verify(state, task.completion, before=initial)
+            self.runtime.record_event("verification", **verification.model_dump(mode="json"))
+            if verification.passed:
+                return self._finish(FastPathStatus.VERIFIED, task, "Completion predicate verified.",
+                                    state, verification, steps, metrics, started)
+            if verification.outcome is VerificationOutcome.UNKNOWN:
+                return self._finish(
+                    FastPathStatus.UNCERTAIN, task,
+                    "Completion is unknown; the mutation will not be replayed.",
+                    state, verification, steps, metrics, started,
+                )
             if not receipt.diff or not receipt.diff.changed:
                 noops += 1
                 metrics.noops = noops
@@ -197,17 +217,6 @@ class FastPath:
                                         state, verification, steps, metrics, started)
             else:
                 noops = 0
-            verification = self.verifier.verify(state, task.completion, before=initial)
-            self.runtime.record_event("verification", **verification.model_dump(mode="json"))
-            if verification.passed:
-                return self._finish(FastPathStatus.VERIFIED, task, "Completion predicate verified.",
-                                    state, verification, steps, metrics, started)
-            if verification.outcome is VerificationOutcome.UNKNOWN and state.quality.degraded:
-                return self._finish(
-                    FastPathStatus.UNCERTAIN, task,
-                    "Completion is unknown because perception is degraded; reobserve or escalate perception.",
-                    state, verification, steps, metrics, started,
-                )
 
         return self._finish(FastPathStatus.BUDGET, task, "FastPath step budget exhausted.",
                             state, verification, steps, metrics, started)

@@ -400,25 +400,21 @@ class NativeContextBackend:
                    and (not value or value.casefold() in str(record.get('value') or '').casefold())]
         return {'state_id': snapshot.snapshot_id, 'root_id': snapshot.root_id, 'matches': matches}
 
-    async def wait_for(self, *, role='', name='', value='', gone=False, timeout_ms=3000):
-        """Wait for an AX predicate by re-resolving the bound window; no input is delivered."""
-        import asyncio
-        import time
-        if not 0 <= timeout_ms <= 5000:
-            raise ValueError('timeout_ms must be between 0 and 5000')
-        deadline = time.monotonic() + timeout_ms / 1000
-        last = None
-        while True:
-            last = await self.find(role=role, name=name, value=value)
-            satisfied = not last['matches'] if gone else bool(last['matches'])
-            if satisfied or time.monotonic() >= deadline:
-                return {**last, 'satisfied': satisfied, 'found': bool(last['matches']),
-                        'gone': gone, 'timed_out': not satisfied}
-            await asyncio.sleep(0.05)
+    async def wait_for(self, predicate, *, before=None, initial=None):
+        """Wait on the shared tri-state predicate without delivering input."""
+        from mcp_vision.state import compile_state
+        from mcp_vision.verification import DEFAULT_VERIFIER, VerificationPredicate
+        predicate = VerificationPredicate.model_validate(predicate)
+        epoch = before.epoch + 1 if before else 1
+
+        async def observe():
+            return compile_state(await self.snapshot(), epoch=epoch)
+
+        return await DEFAULT_VERIFIER.wait(observe, predicate, before=before, initial=initial)
 
     async def settle(self, operation=''):
-        import asyncio
-        await asyncio.sleep(0.05)
+        """Compatibility no-op; semantic predicate waits own readiness timing."""
+        return None
 
     async def highlight(self, snapshot_id, index, label='Next step', duration=8000):
         if snapshot_id != self.sid or index not in self.handles or not self.indicator:

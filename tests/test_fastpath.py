@@ -6,7 +6,7 @@ from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.fast_policy import MockPolicy
 from mcp_vision.fastpath import FastPath, FastPathConfig, FastPathStatus, FastPathTask
 from mcp_vision.transactions import TransactionRuntime
-from mcp_vision.verification import VerificationOutcome, VerificationPredicate
+from mcp_vision.verification import StabilityPolicy, VerificationOutcome, VerificationPredicate
 
 
 def snap(state_id: str, *, text: str = "Waiting", submits: bool = False):
@@ -46,27 +46,30 @@ class Backend:
 
 def task():
     return FastPathTask(subgoal="Press Continue",
-                        completion=VerificationPredicate(kind="text_contains", expected="Done"))
+                        completion=VerificationPredicate(
+                            kind="text_contains", expected="Done",
+                            stability=StabilityPolicy(
+                                consecutive_samples=2, cadence_ms=1, timeout_ms=1)))
 
 
 def test_fastpath_reobserves_after_stale_then_verifies():
     async def run():
         backend = Backend(
-            [snap("s1"), snap("s2"), snap("s3", text="Done")],
+            [snap("s1"), snap("s2"), snap("s3", text="Done"), snap("s4", text="Done")],
             [Receipt(status="stale", action="click", message="rerendered", executed=False),
              Receipt(status="unverified", action="click", message="pressed", executed=True)],
         )
         result = await FastPath(TransactionRuntime(backend), MockPolicy("A1")).run(task())
         assert result.status is FastPathStatus.VERIFIED and result.subgoal_complete
         assert result.metrics.stale_rejections == 1 and result.metrics.retries == 1
-        assert result.metrics.observations == 3 and backend.calls == 2
+        assert result.metrics.observations == 4 and backend.calls == 2
     asyncio.run(run())
 
 
 def test_fastpath_detects_noop_loop():
     async def run():
         backend = Backend(
-            [snap("s1"), snap("s2"), snap("s3")],
+            [snap("s1"), snap("s2"), snap("s3"), snap("s4"), snap("s5")],
             [Receipt(status="unverified", action="click", message="pressed", executed=True),
              Receipt(status="unverified", action="click", message="pressed", executed=True)],
         )
@@ -105,6 +108,22 @@ def test_fastpath_does_not_act_when_degraded_perception_makes_completion_unknown
         assert result.status is FastPathStatus.UNCERTAIN
         assert result.verification.outcome is VerificationOutcome.UNKNOWN
         assert result.metrics.actions == 0 and backend.calls == 0
-        assert "perception is degraded" in result.reason
+        assert "unknown" in result.reason
+
+    asyncio.run(run())
+
+
+def test_fastpath_reports_stable_preexisting_completion_without_action():
+    async def run():
+        completion = VerificationPredicate(
+            kind="text_contains", expected="Done",
+            stability=StabilityPolicy(consecutive_samples=2, cadence_ms=1, timeout_ms=2),
+        )
+        backend = Backend([snap("s1", text="Done"), snap("s2", text="Done")], [])
+        result = await FastPath(TransactionRuntime(backend), MockPolicy("A1")).run(
+            FastPathTask(subgoal="Already complete", completion=completion))
+        assert result.status is FastPathStatus.VERIFIED
+        assert result.verification.preexisting and result.verification.stable
+        assert result.metrics.actions == 0 and backend.calls == 0
 
     asyncio.run(run())

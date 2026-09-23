@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from mcp_vision.browser import BrowserSnapshot
 from mcp_vision.state import compile_state
-from mcp_vision.verification import VerificationEngine, VerificationOutcome, VerificationPredicate
+import asyncio
+
+from mcp_vision.verification import (
+    StabilityPolicy, VerificationEngine, VerificationOutcome, VerificationPredicate,
+)
 
 
 def state(state_id="s1", *, text="Saved 2 seconds ago", value="Paris", title="Settings"):
@@ -78,3 +82,94 @@ def test_degraded_observation_cannot_prove_negative_evidence():
     assert current.quality.reasons == ("ax_traversal_error", "ocr_unavailable")
     assert result.outcome is VerificationOutcome.UNKNOWN
     assert result.evidence["observation_degraded"] is True
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    async def sleep(self, seconds):
+        self.now += seconds
+
+
+def stable_predicate(*, samples=2, timeout=500):
+    return VerificationPredicate(
+        kind="text_contains", expected="Ready",
+        stability=StabilityPolicy(consecutive_samples=samples, cadence_ms=100, timeout_ms=timeout),
+    )
+
+
+def test_stability_requires_consecutive_samples_with_clock_control():
+    async def run():
+        clock = Clock()
+        observations = iter([state("s1", text="Waiting"), state("s2", text="Ready"),
+                             state("s3", text="Ready")])
+
+        async def observe():
+            return next(observations)
+
+        result = await VerificationEngine().wait(
+            observe, stable_predicate(), sleep=clock.sleep, monotonic=clock.monotonic)
+        assert result.outcome is VerificationOutcome.SATISFIED
+        assert result.stable and result.samples == 3 and result.consecutive_matches == 2
+        assert clock.now == .2
+
+    asyncio.run(run())
+
+
+def test_final_deadline_match_without_stability_is_unknown():
+    async def run():
+        clock = Clock()
+        observations = iter([state("s1", text="Waiting"), state("s2", text="Waiting"),
+                             state("s3", text="Ready")])
+
+        async def observe():
+            return next(observations)
+
+        result = await VerificationEngine().wait(
+            observe, stable_predicate(timeout=200), sleep=clock.sleep, monotonic=clock.monotonic)
+        assert result.outcome is VerificationOutcome.UNKNOWN
+        assert result.timed_out and not result.stable and result.consecutive_matches == 1
+        assert "stability was not established" in result.message
+
+    asyncio.run(run())
+
+
+def test_timeout_preserves_unsatisfied_and_degraded_unknown():
+    async def run():
+        for current, expected in (
+            (state(text="Waiting"), VerificationOutcome.UNSATISFIED),
+            (compile_state(BrowserSnapshot(
+                snapshot_id="degraded", root_id="root", url="", title="Fixture", text="",
+                elements=[], identity={"fallback_reasons": ["incomplete"]}), epoch=1),
+             VerificationOutcome.UNKNOWN),
+        ):
+            clock = Clock()
+
+            async def observe(current=current):
+                return current
+
+            result = await VerificationEngine().wait(
+                observe, stable_predicate(timeout=200), sleep=clock.sleep, monotonic=clock.monotonic)
+            assert result.outcome is expected and result.timed_out
+
+    asyncio.run(run())
+
+
+def test_stable_preexisting_result_is_explicit():
+    async def run():
+        clock = Clock()
+        current = state(text="Ready")
+
+        async def observe():
+            return state("s2", text="Ready")
+
+        result = await VerificationEngine().wait(
+            observe, stable_predicate(), initial=current, preexisting=True,
+            sleep=clock.sleep, monotonic=clock.monotonic)
+        assert result.passed and result.preexisting and result.samples == 2
+
+    asyncio.run(run())

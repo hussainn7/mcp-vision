@@ -475,21 +475,8 @@ class BrowserRuntime:
             return await self.page.screenshot(type="png")
 
     async def settle(self, operation: str = "") -> None:
-        """Let event handlers and two paint frames publish the next observable state."""
-        await self._ensure()
-        try:
-            await self.page.evaluate("""operation => new Promise(resolve => {
-                let done = false;
-                const finish = () => { if (!done) { done = true; resolve(); } };
-                requestAnimationFrame(() => requestAnimationFrame(() => {
-                    if (operation === 'type') setTimeout(finish, 75);
-                    else finish();
-                }));
-                setTimeout(finish, operation === 'type' ? 150 : 75);
-            })""", operation)
-        except Exception:
-            # Navigation can destroy the execution context after successful input.
-            await asyncio.sleep(0.075)
+        """Compatibility no-op; semantic predicate waits own readiness timing."""
+        return None
 
     async def close(self):
         async with self._lock:
