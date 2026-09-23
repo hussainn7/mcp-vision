@@ -158,6 +158,25 @@ def submission_context(captured: Context | None, request: str, pending_request: 
     return context.model_copy(update={"user_request": request})
 
 
+def native_followup_context(context: Context, target: dict) -> Context:
+    """Rebind later popup commands to an app that a verified launch opened."""
+    if not target.get("pid"):
+        return context
+    old_ax = context.accessibility_context or {}
+    return context.model_copy(update={
+        "source": "macos",
+        "source_application": target.get("application") or context.source_application,
+        "title": "",
+        "focused_element": None,
+        "accessibility_context": {
+            "permission": old_ax.get("permission", "granted"),
+            "pid": int(target["pid"]),
+            "bundle_id": target.get("bundle_id", ""),
+            "app_path": old_ax.get("app_path", "/Applications/MCP-Vision.app"),
+        },
+    })
+
+
 def top_center_origin(visible_frame: tuple[float, float, float, float],
                       panel_size: tuple[float, float], margin: float = 10) -> tuple[float, float]:
     """Position a compact panel below the usable top edge of a display."""
@@ -939,6 +958,13 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             if task_generation is not None and task_generation != self.task_generation:
                 return
             completed_task = completed_task or self.task
+            # Opening an app changes the target for the next command entered in
+            # this same popup.  Carry the verified process identity forward so
+            # "open Notes" followed by "create a new note" does not dispatch to
+            # the application that was frontmost before Notes opened.
+            native_target = result.get("native_target") or {}
+            if completed_task and native_target.get("pid"):
+                self.context = native_followup_context(completed_task.context, native_target)
             compact = self.compact_task
             if completed_task and result.get("capability") == "ask":
                 self.history.extend([{"role": "user", "content": completed_task.context.user_request},

@@ -45,6 +45,15 @@ def test_native_hierarchy_is_bounded_and_retains_handles():
     assert records[1]['identity']['accessibility'] == 'root/0'
 
 
+def test_native_walk_reaches_controls_deeper_than_five_levels():
+    target = element('New Tab', AXActions=['AXPress'])
+    root = target
+    for depth in range(9):
+        root = element(f'Group {depth}', AXRole='AXGroup', AXChildren=[root])
+    records, _handles = nearby_ax(AX, root, 40)
+    assert any(record['name'] == 'New Tab' and record['role'] == 'button' for record in records)
+
+
 def test_nameless_ax_control_gets_usable_label():
     root = element('', AXRole='AXTextArea', AXValue='Draft note', AXChildren=[])
     records, handles = nearby_ax(AX, root, 5)

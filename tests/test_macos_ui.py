@@ -63,6 +63,21 @@ def test_native_command_starts_fresh_instead_of_joining_research_clarification()
     assert context.user_request == "Please just open the Notes app for me"
 
 
+def test_verified_open_rebinds_followup_commands_to_new_app():
+    from mcp_vision.context import Context, ContextElement
+
+    original = Context(source="macos", source_application="Finder", title="Downloads",
+                       focused_element=ContextElement(name="Old target"),
+                       accessibility_context={"pid": 11, "bundle_id": "com.apple.finder",
+                                              "permission": "granted"})
+    rebound = ui.native_followup_context(original, {
+        "pid": 77, "bundle_id": "com.apple.Notes", "application": "Notes",
+    })
+    assert rebound.source_application == "Notes" and rebound.focused_element is None
+    assert rebound.accessibility_context["pid"] == 77
+    assert rebound.accessibility_context["bundle_id"] == "com.apple.Notes"
+
+
 def test_generic_ui_action_starts_fresh_instead_of_joining_research_clarification():
     from mcp_vision.context import Context
 

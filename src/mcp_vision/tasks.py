@@ -304,7 +304,14 @@ class ContextTask:
                 self.check_cancel()
                 self.emit('Checking the resulting state…', 'verifying')
                 message = str(outcome.get('message') or '')
-                return self.result('review' if outcome.get('ok') else 'input', message)
+                result = self.result('review' if outcome.get('ok') else 'input', message)
+                if outcome.get('ok') and outcome.get('pid'):
+                    result['native_target'] = {
+                        'pid': int(outcome['pid']),
+                        'bundle_id': str(outcome.get('bundle_id') or ''),
+                        'application': str(outcome.get('application') or ''),
+                    }
+                return result
             if self.route.kind == 'browser':
                 from mcp_vision.readiness import ensure_model_ready
                 from mcp_vision.providers import resolve_provider

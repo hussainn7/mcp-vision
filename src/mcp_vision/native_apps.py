@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -155,6 +156,16 @@ _TAB_PREV = re.compile(
 _TAB_NUM = re.compile(r"\b(?:go\s+to\s+|switch\s+to\s+|open\s+)?tab\s+(\d{1,2})\b", re.I)
 _WIN_NEXT = re.compile(r"\b(?:next|switch|cycle)\s+windows?\b", re.I)
 _WIN_PREV = re.compile(r"\b(?:previous|prev|last)\s+window\b", re.I)
+_NEW_TAB = re.compile(
+    r"\b(?:(?:open|create|make|add|start)\s+)?(?:a|another)?\s*new\s+tab\b|"
+    r"\b(?:open|create|make|add)\s+(?:a|another)\s+tab\b",
+    re.I,
+)
+_NEW_ITEM = re.compile(
+    r"\b(?:(?:open|create|make|add|start|write)\s+)?(?:a|another)?\s*new\s+"
+    r"note\b|\b(?:create|make|add|write)\s+(?:a|another)\s+note\b",
+    re.I,
+)
 _OPEN = re.compile(
     r"^\s*(?:(?:please|can you|could you|would you)\s+)*"
     r"(?:(?:go ahead and|just|actually|quickly|directly)\s+)*"
@@ -183,6 +194,13 @@ def _looks_like_app_name(destination: str) -> bool:
 def parse_intent(request: str) -> NativeIntent | None:
     """Recognize unambiguous native-desktop requests; never guess."""
     text = _PREFIX.sub("", (request or "").strip().lower().replace("’", "'"))
+    # Universal app commands should not depend on discovering a tiny toolbar
+    # button in a large accessibility tree.  They are deterministic, reversible
+    # key equivalents and remain bound to the application captured at invocation.
+    if _NEW_TAB.search(text):
+        return NativeIntent("new_tab", "", "Create a new tab")
+    if _NEW_ITEM.search(text):
+        return NativeIntent("new_item", "", "Create a new note")
     match = _TAB_NUM.search(text)
     if match:
         return NativeIntent("switch_to_tab", match.group(1), f"Switch to tab {match.group(1)}")
@@ -310,7 +328,8 @@ def open_app(name: str, *, opener: Callable[[AppTarget], bool] | None = None,
         bundle_id, app_name, _pid = front()
         if _matches(target, bundle_id, app_name):
             return {"ok": True, "verified": True, "message": f"Opened {target.name}.",
-                    "bundle_id": target.bundle_id}
+                    "bundle_id": bundle_id or target.bundle_id, "pid": _pid,
+                    "application": app_name or target.name}
         try:
             focus(target)
         except Exception:
@@ -318,7 +337,9 @@ def open_app(name: str, *, opener: Callable[[AppTarget], bool] | None = None,
         time.sleep(0.15)
     bundle_id, app_name, _pid = front()
     if _matches(target, bundle_id, app_name):
-        return {"ok": True, "verified": True, "message": f"Opened {target.name}."}
+        return {"ok": True, "verified": True, "message": f"Opened {target.name}.",
+                "bundle_id": bundle_id or target.bundle_id, "pid": _pid,
+                "application": app_name or target.name}
     return {"ok": True, "verified": False,
             "message": f"{target.name} launched but did not come to the front."}
 
@@ -336,7 +357,35 @@ def _window_title(pid: int) -> str:
         return ""
 
 
+def _tab_count(pid: int) -> int:
+    """Count tabs through the permitted app's AX tree for new-tab verification."""
+    if pid <= 0:
+        return 0
+    try:
+        import ApplicationServices as AX
+        from mcp_vision.macos_ui import _ax_copy
+        queue = deque([AX.AXUIElementCreateApplication(int(pid))])
+        seen = set()
+        count = 0
+        while queue and len(seen) < 4000:
+            element = queue.popleft()
+            identity = id(element)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if str(_ax_copy(AX, element, "AXRole") or "") == "AXTab":
+                count += 1
+            queue.extend((_ax_copy(AX, element, "AXChildren") or [])[:120])
+        return count
+    except Exception:
+        return 0
+
+
 def shortcut_for(action: str, value: str, bundle_id: str = "") -> tuple[int, int]:
+    if action == "new_tab":
+        return 17, _CMD  # Command-T
+    if action == "new_item":
+        return 45, _CMD  # Command-N
     if action == "switch_to_tab":
         index = max(1, min(9, int(value or 1)))
         return _DIGIT_KEYS[index], _CMD
@@ -366,9 +415,11 @@ def _dispatch(pid: int, keycode: int, flags: int) -> None:
 
 def switch(action: str, value: str = "", *, pid: int = 0, bundle_id: str = "",
            title_fn: Callable[[int], str] | None = None,
+           count_fn: Callable[[int], int] | None = None,
            dispatch_fn: Callable[[int, int, int], None] | None = None,
            activate_fn: Callable[[int], bool] | None = None) -> dict:
     read_title = title_fn or _window_title
+    count_tabs = count_fn or _tab_count
     send = dispatch_fn or _dispatch
     focus = activate_fn or _activate_pid
     # Key equivalents are only handled by the active app; bring the captured
@@ -379,6 +430,7 @@ def switch(action: str, value: str = "", *, pid: int = 0, bundle_id: str = "",
         pass
     time.sleep(0.15)
     before = read_title(pid)
+    before_tabs = count_tabs(pid) if action == "new_tab" else 0
     try:
         keycode, flags = shortcut_for(action, value, bundle_id)
         send(pid, keycode, flags)
@@ -386,12 +438,18 @@ def switch(action: str, value: str = "", *, pid: int = 0, bundle_id: str = "",
         return {"ok": False, "verified": False, "message": f"Could not send the shortcut: {type(exc).__name__}."}
     time.sleep(0.35)
     after = read_title(pid)
+    after_tabs = count_tabs(pid) if action == "new_tab" else 0
     label = {
+        ("new_tab", ""): "New tab",
+        ("new_item", ""): "New note",
         ("switch_tab", "next"): "Next tab",
         ("switch_tab", "prev"): "Previous tab",
         ("switch_window", "next"): "Next window",
         ("switch_window", "prev"): "Previous window",
     }.get((action, value), f"Tab {value}" if action == "switch_to_tab" else "Shortcut")
+    if action == "new_tab" and before_tabs and after_tabs > before_tabs:
+        return {"ok": True, "verified": True,
+                "message": f"New tab created · {after_tabs} tabs are now open."}
     if before and after and before != after:
         return {"ok": True, "verified": True, "message": f"{label} · now showing “{after[:60]}”."}
     if before and after:
@@ -408,6 +466,6 @@ def perform(action: str, value: str = "", pid: int = 0, bundle_id: str = "", **o
                 "message": "Opening apps and switching tabs is only supported on macOS."}
     if action == "open_app":
         return open_app(value, **options)
-    if action in {"switch_tab", "switch_window", "switch_to_tab"}:
+    if action in {"new_tab", "new_item", "switch_tab", "switch_window", "switch_to_tab"}:
         return switch(action, value, pid=int(pid or 0), bundle_id=bundle_id or "", **options)
     return {"ok": False, "verified": False, "message": f"Unsupported native action: {action}"}

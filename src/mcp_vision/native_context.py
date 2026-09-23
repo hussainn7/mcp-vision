@@ -1,6 +1,8 @@
 """Native macOS accessibility observation, guidance, and bounded Act."""
 from __future__ import annotations
 
+import time
+from collections import deque
 from uuid import uuid4
 
 from mcp_vision.browser import BrowserSnapshot, Receipt
@@ -21,6 +23,8 @@ def normalize_role(role: str) -> str:
         'AXCheckBox': 'checkbox', 'AXRadioButton': 'radio', 'AXPopUpButton': 'combobox',
         'AXComboBox': 'combobox', 'AXStaticText': 'text', 'AXMenuItem': 'menuitem',
         'AXTab': 'tab', 'AXSlider': 'slider', 'AXIncrementor': 'spinbutton',
+        'AXMenuButton': 'button', 'AXDisclosureTriangle': 'button', 'AXSearchField': 'textbox',
+        'AXRow': 'row', 'AXCell': 'cell',
     }
     return mapping.get(role, role.removeprefix('AX').lower() if role.startswith('AX') else role)
 
@@ -51,29 +55,53 @@ def describe_ax(api, element):
                           attributes={'checked': str(checked)} if checked is not None else {})
 
 
-def nearby_ax(api, root, limit=60):
+def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6):
+    """Walk a native window deeply enough to reach browser/app toolbars.
+
+    Chromium and Electron commonly put visible controls hundreds of nodes below
+    the window root.  The old depth-5/180-node walk silently omitted controls
+    such as Chrome's New Tab button.  Bound the work by nodes and wall time,
+    not an arbitrary tree depth, while keeping the planner payload capped.
+    """
     from mcp_vision.macos_ui import _ax_copy
-    queue = [(root, 0, "root")] if root else []
+    queue = deque([(root, "root", "")]) if root else deque()
     records, handles = [], {}
     visited = 0
-    while queue and visited < 180 and len(records) < limit:
-        element, depth, path = queue.pop(0)
+    seen = set()
+    deadline = time.monotonic() + max(0, time_cap)
+    semantic_roles = {
+        'AXButton', 'AXTextField', 'AXTextArea', 'AXSearchField', 'AXCheckBox', 'AXRadioButton',
+        'AXPopUpButton', 'AXComboBox', 'AXSlider', 'AXIncrementor', 'AXMenuButton',
+        'AXDisclosureTriangle', 'AXLink', 'AXTab', 'AXRow', 'AXCell',
+    }
+    while queue and visited < node_cap and len(records) < limit and time.monotonic() <= deadline:
+        element, path, inherited_label = queue.popleft()
+        identity = id(element)
+        if identity in seen:
+            continue
+        seen.add(identity)
         visited += 1
         if _ax_copy(api, element, 'AXHidden') is True:
             continue
         desc = describe_ax(api, element)
         box = desc.bounds
-        semantic_control = desc.role in {
-            'AXButton', 'AXTextField', 'AXTextArea', 'AXCheckBox', 'AXRadioButton',
-            'AXPopUpButton', 'AXComboBox', 'AXSlider', 'AXIncrementor',
-        }
+        semantic_control = desc.role in semantic_roles
+        children = list((_ax_copy(api, element, 'AXChildren') or [])[:120])
+        descendant_label = ''
+        if not desc.name and desc.role in {'AXRow', 'AXCell'}:
+            for child in children[:8]:
+                child_desc = describe_ax(api, child)
+                if child_desc.role == 'AXStaticText' and (child_desc.name or child_desc.value):
+                    descendant_label = child_desc.name or child_desc.value[:80]
+                    break
+        semantic_name = desc.name.strip() or descendant_label or inherited_label
         if box and box.width > 0 and box.height > 0 and (
-                desc.name or desc.value or desc.attributes.get('checked') is not None or semantic_control):
+                semantic_name or desc.value or desc.attributes.get('checked') is not None or semantic_control):
             index = len(records)
             # Editable controls need a stable semantic name: their value changes
             # after a successful fill and must not become their identity.
-            name = (desc.name.strip() or role_label(desc.role)) if semantic_control else (
-                desc.name.strip() or desc.value.strip()[:80] or role_label(desc.role))
+            name = (semantic_name or role_label(desc.role)) if semantic_control else (
+                semantic_name or desc.value.strip()[:80] or role_label(desc.role))
             checked = desc.attributes.get('checked')
             records.append({
                 'index': index, 'name': name, 'role': normalize_role(desc.role), 'ax_role': desc.role,
@@ -84,9 +112,9 @@ def nearby_ax(api, root, limit=60):
                 'identity': {'accessibility': path}, 'ax_ref': path,
             })
             handles[index] = element
-        if depth < 5:
-            queue.extend((child, depth + 1, f"{path}/{offset}")
-                         for offset, child in enumerate((_ax_copy(api, element, 'AXChildren') or [])[:60]))
+        child_label = semantic_name if desc.role in {'AXButton', 'AXLink', 'AXTab', 'AXRow', 'AXCell'} else ''
+        queue.extend((child, f"{path}/{offset}", child_label)
+                     for offset, child in enumerate(children))
     return records, handles
 
 

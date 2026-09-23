@@ -27,6 +27,8 @@ from mcp_vision.tasks import ContextTask
     ('Open Gmail', 'act', 'browser_open'),
     ('Open https://example.com', 'act', 'browser_open'),
     ('Open Notes', 'act', 'native'),
+    ('Create a new tab', 'act', 'native'),
+    ('Make a new note', 'act', 'native'),
     ('switch tabs', 'act', 'native'),
     ('Switch to tab 3', 'act', 'native'),
     ('Send an email in Gmail', 'act', 'surface'),

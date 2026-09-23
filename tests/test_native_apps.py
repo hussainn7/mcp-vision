@@ -39,14 +39,17 @@ def test_intent_parsing_is_conservative():
     assert parse_intent("next window").action == "switch_window"
     # Never hijack UI-element or web/URL requests.
     assert parse_intent("open the export menu") is None
-    assert parse_intent("open a new tab") is None
+    assert parse_intent("open a new tab").action == "new_tab"
+    assert parse_intent("Could you create a new tab for me?").action == "new_tab"
+    assert parse_intent("make a new note").action == "new_item"
     assert parse_intent("open Gmail") is None
     assert parse_intent("open https://example.com") is None
     assert parse_intent("fill this form") is None
 
 
 def test_native_intents_are_actions_not_questions():
-    for prompt in ("Open Notes", "Please open the Notes app", "switch tabs", "Switch to tab 3", "next window"):
+    for prompt in ("Open Notes", "Please open the Notes app", "create a new tab", "make a new note",
+                   "switch tabs", "Switch to tab 3", "next window"):
         assert infer_capability(prompt) == "act"
         assert route_request(prompt, "act").kind == "native"
 
@@ -67,6 +70,8 @@ def test_shortcut_selection_matches_app_family():
     keycode, flags = shortcut_for("switch_tab", "next", "com.apple.Terminal")
     assert keycode == 48 and flags & 0x40000
     assert shortcut_for("switch_to_tab", "4")[0] == 21
+    assert shortcut_for("new_tab", "") == (17, 0x100000)
+    assert shortcut_for("new_item", "") == (45, 0x100000)
 
 
 def test_open_app_reports_verified_frontmost():
@@ -91,6 +96,15 @@ def test_switch_verifies_a_changed_window_title():
     assert sent == [(99, 30, 0x100000 | 0x20000)]
 
 
+def test_new_tab_verifies_by_accessibility_tab_count_when_title_does_not_change():
+    counts = iter([3, 4])
+    result = switch("new_tab", pid=99, bundle_id="com.google.Chrome",
+                    title_fn=lambda _pid: "New Tab", count_fn=lambda _pid: next(counts),
+                    dispatch_fn=lambda *_args: None)
+    assert result["ok"] is True and result["verified"] is True
+    assert "4 tabs" in result["message"]
+
+
 def test_perform_rejects_non_macos(monkeypatch):
     monkeypatch.setattr("mcp_vision.native_apps.sys.platform", "linux")
     assert perform("open_app", "Notes")["ok"] is False
@@ -107,3 +121,14 @@ def test_native_route_executes_with_captured_target(monkeypatch):
     result = asyncio.run(ContextTask(context).run())
     assert result["state"] == "review" and "Notes" in result["answer"]
     assert calls == [("open_app", "Notes", 4242, "com.apple.finder")]
+
+
+def test_opened_app_identity_is_returned_for_followup_commands(monkeypatch):
+    monkeypatch.setattr("mcp_vision.native_apps.perform", lambda *args, **kwargs: {
+        "ok": True, "verified": True, "message": "Opened Notes.",
+        "pid": 777, "bundle_id": "com.apple.Notes", "application": "Notes",
+    })
+    result = asyncio.run(ContextTask(Context(source="macos", user_request="Open Notes")).run())
+    assert result["native_target"] == {
+        "pid": 777, "bundle_id": "com.apple.Notes", "application": "Notes",
+    }

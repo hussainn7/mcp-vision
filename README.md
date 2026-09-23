@@ -79,12 +79,16 @@ Examples in the popup:
   your next reply continues that request.
 - “Open Gmail” → opens or reuses the service and verifies the destination.
 - “Open the Notes app” → launches Notes and verifies that it is frontmost.
+- “Create a new tab” → sends Chrome’s native New Tab shortcut and verifies the tab count.
+- “Make a new note” → creates it in the app currently bound to the popup.
 - “Where is the export button?” → Guide on the captured app.
 - “Fill this using my résumé, don’t submit” → factual filling and review.
 
 The runtime checks the selected model before browser research or model-driven
 operations and can start an installed Ollama app if it is stopped. Missing models,
 credentials, OS permissions, sign-in and CAPTCHA remain explicit setup/user steps.
+After a verified app launch, the same popup stays bound to that new app, so a
+follow-up such as “create a new note” continues there without another invocation.
 It does not silently change providers or download model weights. This is a bounded
 assistant, not universal automation: unsupported controls and uncertain outcomes
 stop with a blocker; sending, booking and purchasing remain gated.
