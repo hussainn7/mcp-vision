@@ -70,6 +70,24 @@ def _host(url: str) -> str:
         return ""
 
 
+def _search_term(query: str) -> str:
+    """Reduce a conversational browser command to the actual search terms."""
+    term = (query or '').strip()
+    term = re.sub(
+        r'^\s*(?:(?:please|can you|could you|would you|will you)\s+)*'
+        r'(?:(?:open|go to)\s+(?:google\s+)?chrome\s+(?:and|then)\s+)?',
+        '', term, flags=re.I,
+    )
+    term = re.sub(
+        r'^\s*(?:search(?:\s+(?:the\s+)?(?:web|internet|google|chrome))?(?:\s+for)?|'
+        r'google|look\s+up|look\s+for|find(?:\s+me)?|research)\s+',
+        '', term, flags=re.I,
+    )
+    term = re.sub(r'\s+(?:on|in|using)\s+(?:google|chrome)\s*[.!?]*$', '', term, flags=re.I)
+    term = re.sub(r'\s+(?:for\s+me|please)\s*[.!?]*$', '', term, flags=re.I)
+    return re.sub(r'\s+', ' ', term).strip(' .!?') or (query or '').strip()
+
+
 def product_mention(query: str) -> str | None:
     """Return a canonical product key if the query names a service."""
     low = f" {query.lower()} "
@@ -203,6 +221,8 @@ def _flight_term(q: str) -> str:
             re.I,
         )
         before_to = shorthand or re.search(r"\b([a-z][a-z0-9 \-']*?)\s+to\b", q, re.I)
+        if before_to and re.search(r'\b(?:flights?|tickets?|trip)\b', before_to.group(1), re.I):
+            before_to = None
         o = (re.sub(r"\s+", " ", before_to.group(1)).strip() if before_to else "")
     if not d:
         after_from = re.search(r"\bfrom\s+([a-z][a-z0-9 \-']*?)\s*$", q, re.I)
@@ -277,7 +297,7 @@ def plan_url(query: str, *, backend: str | None = "local",
     # Unknown destinations start at search. Model-invented deep links can be
     # stale or nonexistent; only observed result links are navigated afterward.
     if _FLIGHT.search(low):
-        return {"url": _flight_search_url(q),
+        return {"url": _flight_search_url(_search_term(q)),
                 "reason": "flight search", "source": "rule"}
 
     if product and (personal or not research):
@@ -303,12 +323,13 @@ def plan_url(query: str, *, backend: str | None = "local",
             r'\b(?:now|currently|current|latest|newest|recent(?:ly)?|today|tonight|tomorrow|'
             r'yesterday|upcoming|next|this (?:week|month|quarter|year|season)|news|google)\b',
             low):
-        term = re.sub(r'^\s*(?:research|look up)\s+', '', q, flags=re.I).strip() or q
+        term = _search_term(q)
         search = "https://en.wikipedia.org/w/index.php?search="
         q = term
     else:
         search = ("https://www.google.com/search?q=" if re.search(r'\bgoogle\b', low)
                   else "https://www.bing.com/search?q=")
+        q = _search_term(q)
     return {"url": search + quote_plus(q),
             "reason": "web research" if research or not product else "fallback search",
             "source": "rule"}

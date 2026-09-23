@@ -34,6 +34,12 @@ def test_research_uses_public_search_without_google_bot_wall():
     assert "google.com/search" in plan_url("search Google for rust borrow checker", backend="none")["url"]
 
 
+def test_browser_command_is_not_copied_verbatim_into_search_query():
+    plan = plan_url('Please open Chrome and search Google for cheap flights to Tokyo', backend='none')
+    assert 'q=flights+to+Tokyo' in plan['url']
+    assert 'Please+open+Chrome' not in plan['url']
+
+
 def test_reuses_open_tab_for_product():
     tabs = [
         {"tab_id": "repo", "url": "https://github.com/hussainn7/mcp-vision", "title": "repo"},
