@@ -156,12 +156,29 @@ class NativeContextBackend:
         return int(pid)
 
     def _activate(self):
+        # AppKit calls belong on the main thread; the task loop runs on a
+        # worker thread inside the packaged app, so marshal the activation.
+        import threading
         from AppKit import NSApplicationActivateIgnoringOtherApps, NSRunningApplication
-        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(self._pid())
-        if app:
-            app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+
+        def activate():
+            try:
+                app = NSRunningApplication.runningApplicationWithProcessIdentifier_(self._pid())
+                if app:
+                    app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+            except Exception:
+                pass
+
+        if threading.current_thread() is threading.main_thread():
+            activate()
             return True
-        return False
+        try:
+            from PyObjCTools import AppHelper
+            AppHelper.callAfter(activate)
+            return True
+        except Exception:
+            activate()
+            return True
 
     def _element(self, snapshot_id, index):
         if snapshot_id != self.sid or index not in self.handles:
