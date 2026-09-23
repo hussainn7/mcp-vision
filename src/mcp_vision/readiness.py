@@ -13,7 +13,7 @@ def ensure_model_ready(provider: str) -> None:
     from config import cfg
     if provider != 'local':
         if not getattr(cfg, f'{provider}_api_key', None):
-            raise RuntimeError(f'{provider.capitalize()} is not configured. Choose Local or configure its API key.')
+            raise RuntimeError(f'{provider.capitalize()} is not configured. Configure its API key in .env.')
         return
     host = cfg.ollama_host.rstrip('/')
     def models():

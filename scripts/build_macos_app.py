@@ -88,8 +88,7 @@ library = Path(sys.base_prefix) / 'lib' / sysconfig.get_config_var('LDLIBRARY')
 if not library.exists():
     raise SystemExit(f'Python shared library is unavailable: {library}')
 
-env_lines = ['setenv("SCREEN_AGENT_MODEL_BACKEND", "local", 1);',
-             'setenv("SCREEN_AGENT_OLLAMA_HOST", "http://127.0.0.1:11434", 1);']
+env_lines = ['setenv("SCREEN_AGENT_MODEL_BACKEND", "openrouter", 1);']
 if args.planning_model:
     env_lines.insert(0, f'setenv("SCREEN_AGENT_PLANNING_MODEL", {json.dumps(args.planning_model)}, 1);')
 

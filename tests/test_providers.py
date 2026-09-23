@@ -7,15 +7,23 @@ def test_provider_aliases():
     assert normalize_provider("chatgpt") == "openai"
     assert normalize_provider("gpt") == "openai"
     assert normalize_provider("ollama") == "local"
+    assert normalize_provider("OpenRouter") == "openrouter"
 
 
-def test_auto_falls_back_to_local_without_keys(monkeypatch):
+def test_auto_defaults_to_openrouter_without_keys(monkeypatch):
     import config
+    monkeypatch.setattr(config.cfg, "openrouter_api_key", None)
     monkeypatch.setattr(config.cfg, "anthropic_api_key", None)
     monkeypatch.setattr(config.cfg, "openai_api_key", None)
     monkeypatch.setattr(config.cfg, "gemini_api_key", None)
     monkeypatch.setattr(config.cfg, "nvidia_api_key", None)
-    assert resolve_provider("auto") == "local"
+    assert resolve_provider("auto") == "openrouter"
+
+
+def test_auto_prefers_configured_openrouter(monkeypatch):
+    import config
+    monkeypatch.setattr(config.cfg, "openrouter_api_key", "configured")
+    assert resolve_provider("auto") == "openrouter"
 
 
 def test_search_requests_route_to_read_only_ask():

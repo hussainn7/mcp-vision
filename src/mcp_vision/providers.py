@@ -5,6 +5,7 @@ ALIASES = {
     "auto": "auto",
     "local": "local",
     "ollama": "local",
+    "openrouter": "openrouter",
     "claude": "anthropic",
     "anthropic": "anthropic",
     "chatgpt": "openai",
@@ -16,8 +17,8 @@ ALIASES = {
 }
 
 LABELS = (
+    ("OpenRouter", "openrouter"),
     ("Auto", "auto"),
-    ("Local", "local"),
     ("Claude", "anthropic"),
     ("ChatGPT", "openai"),
     ("Gemini", "gemini"),
@@ -31,7 +32,9 @@ def normalize_provider(name: str | None) -> str:
 
 def available_backends() -> list[str]:
     from config import cfg
-    found = ["local"]
+    found = []
+    if cfg.openrouter_api_key:
+        found.append("openrouter")
     if cfg.anthropic_api_key:
         found.append("anthropic")
     if cfg.openai_api_key:
@@ -44,16 +47,16 @@ def available_backends() -> list[str]:
 
 
 def resolve_provider(name: str | None = None) -> str:
-    """Pick an executable backend. Auto uses the first cloud key, else local."""
+    """Pick an executable backend. Auto prefers configured cloud providers."""
     from config import cfg
     choice = normalize_provider(name if name is not None else cfg.model_backend)
     if choice == "auto":
-        for backend in ("anthropic", "openai", "gemini", "nvidia"):
+        for backend in ("openrouter", "anthropic", "openai", "gemini", "nvidia"):
             if backend in available_backends():
                 return backend
-        return "local"
-    if choice not in {"local", "anthropic", "openai", "gemini", "nvidia"}:
-        raise ValueError(f"Unknown provider '{name}'. Use Auto, Local, Claude, ChatGPT, or Gemini.")
+        return "openrouter"
+    if choice not in {"local", "openrouter", "anthropic", "openai", "gemini", "nvidia"}:
+        raise ValueError(f"Unknown provider '{name}'. Use OpenRouter, Auto, Local, Claude, ChatGPT, or Gemini.")
     return choice
 
 

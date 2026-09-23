@@ -81,13 +81,14 @@ class Config(BaseSettings):
     micro_vision: bool = True
 
     # --- model backend (see backends.py) ------------------------------------
-    # "local" (default) never leaves the machine. Cloud backends need the
+    # OpenRouter is the default for responsive contextual planning. Cloud backends need the
     # matching API key below (in .env, never committed) and cost money per
     # call. Override per-run with `python agent.py --model <name> ...`.
-    # auto uses the first available API key (Claude/ChatGPT/Gemini), else local Ollama.
-    # Aliases: claude, chatgpt, gpt, anthropic, openai, gemini, nvidia, local.
-    model_backend: str = "auto"
+    # auto uses the first configured cloud key and never silently invokes Ollama.
+    # Aliases: openrouter, claude, chatgpt, gpt, anthropic, openai, gemini, nvidia, local.
+    model_backend: str = "openrouter"
 
+    openrouter_model: str = "openai/gpt-6-luna"
     anthropic_model: str = "claude-sonnet-4-5"
     openai_model: str = "gpt-4.1-mini"
     gemini_model: str = "gemini-3.1-flash-lite"
@@ -95,6 +96,7 @@ class Config(BaseSettings):
 
     # Read from the provider's own conventional env var name, not the
     # SCREEN_AGENT_ prefix, so an existing OPENAI_API_KEY etc. just works.
+    openrouter_api_key: Optional[str] = Field(default=None, validation_alias="OPENROUTER_API_KEY")
     anthropic_api_key: Optional[str] = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     openai_api_key: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
     gemini_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")

@@ -22,7 +22,8 @@ backend's whole job is that transcoding, both directions, so nothing above
 this file ever needs to know which provider it's talking to.
 
 Backends, selected by cfg.model_backend (or `--model` on the CLI):
-    auto      — first available cloud key, else local Ollama.
+    auto      — first available cloud key; defaults to OpenRouter when unconfigured.
+    openrouter — OpenRouter's OpenAI-compatible API (the contextual default).
     local     — Ollama, fully on-machine. No API key.
     anthropic — Claude (also accepts --model claude).
     openai    — ChatGPT / GPT (also accepts chatgpt, gpt).
@@ -233,7 +234,7 @@ def make_anthropic_chat(api_key, model, _post=None):
     return chat
 
 
-# --- local (Ollama) — the default, nothing leaves the machine ---------------
+# --- local (Ollama) — explicit legacy option, nothing leaves the machine ----
 
 def make_local_chat(host, model, keep_alive):
     def chat(messages, tools=None):
@@ -385,7 +386,7 @@ def make_gemini_native_chat(api_key, model, _post=None):
 
 # --- resolver ------------------------------------------------------------
 
-BACKENDS = ("local", "anthropic", "openai", "gemini", "nvidia", "auto")
+BACKENDS = ("openrouter", "local", "anthropic", "openai", "gemini", "nvidia", "auto")
 
 
 def get_chat(backend=None):
@@ -394,6 +395,9 @@ def get_chat(backend=None):
     backend = resolve_provider(backend or cfg.model_backend)
     if backend == "local":
         return make_local_chat(cfg.ollama_host, cfg.planning_model, cfg.ollama_keep_alive)
+    if backend == "openrouter":
+        return make_openai_compat_chat("https://openrouter.ai/api/v1", cfg.openrouter_api_key,
+                                       cfg.openrouter_model, "OPENROUTER_API_KEY")
     if backend == "anthropic":
         return make_anthropic_chat(cfg.anthropic_api_key, cfg.anthropic_model)
     if backend == "openai":
@@ -404,7 +408,7 @@ def get_chat(backend=None):
     if backend == "nvidia":
         return make_openai_compat_chat("https://integrate.api.nvidia.com/v1", cfg.nvidia_api_key,
                                        cfg.nvidia_model, "NVIDIA_API_KEY")
-    raise BackendError(f"unknown model backend '{backend}'. choose from: local, claude, chatgpt, gemini, nvidia")
+    raise BackendError(f"unknown model backend '{backend}'. choose from: openrouter, local, claude, chatgpt, gemini, nvidia")
 
 
 def demo():
