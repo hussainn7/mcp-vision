@@ -430,13 +430,13 @@ class ContextTask:
             # Wait briefly for real controls instead of planning against a
             # snapshot that cannot contain them.
             import time as _time
-            deadline = _time.monotonic() + 2.0
+            deadline = _time.monotonic() + 2.5
             try:
                 while _time.monotonic() < deadline:
                     snap = await sub_task.observe()
-                    if len(snap.elements) >= 3:
+                    if len(snap.elements) >= 8:
                         break
-                    await asyncio.sleep(0.15)
+                    await asyncio.sleep(0.2)
             except Exception:
                 pass
             sub_result = await sub_task.run()

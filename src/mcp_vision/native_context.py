@@ -213,6 +213,18 @@ class NativeContextBackend:
         if title:
             self.context = self.context.model_copy(update={'title': title})
         records, self.handles = nearby_ax(AX, window or app)
+        if len(records) < 8:
+            # An app whose AX server just woke up can answer with a truncated
+            # tree. Give it one short beat and walk again before concluding
+            # the surface is truly this sparse.
+            import asyncio
+            await asyncio.sleep(0.3)
+            app = AX.AXUIElementCreateApplication(self._pid())
+            window = _ax_copy(AX, app, 'AXFocusedWindow') or _ax_copy(AX, app, 'AXMainWindow')
+            title = str(_ax_copy(AX, window, 'AXTitle') or '') or title
+            records2, handles2 = nearby_ax(AX, window or app)
+            if len(records2) > len(records):
+                records, self.handles = records2, handles2
         # Some native editors (e.g. Notes blank note) are not reached by the
         # window BFS but are the AXFocusedUIElement. Include the focused
         # element if it is an editable control and not already in the snapshot.
