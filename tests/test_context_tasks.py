@@ -7,7 +7,9 @@ from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import Context, ContextBounds, ContextElement
 from mcp_vision.execution import bind_context_backend
 from mcp_vision.guidance import overlay_script, resolve_target
-from mcp_vision.tasks import ContextTask, ModelPlanner, Step, explicit_native_fill, explicit_semantic_click
+from mcp_vision.tasks import (ContextTask, ModelPlanner, Step, explicit_native_fill,
+                              explicit_semantic_click, request_has_followup,
+                              _extract_compound_fill_text)
 
 
 class Backend:
@@ -230,12 +232,97 @@ def test_simple_native_action_grounds_unique_observed_control(prompt, label):
     assert step is not None and step.action == 'click' and step.name == label
 
 
+def test_plural_native_request_matches_singular_observed_control():
+    snapshot = BrowserSnapshot(snapshot_id='s1', source='macos-accessibility', url='', title='', text='', elements=[
+        {'index': 0, 'role': 'button', 'name': 'New Note'},
+    ])
+    step = explicit_semantic_click(Context(source='macos', user_request='Create new notes'), snapshot)
+    assert step is not None and step.name == 'New Note'
+
+
+def test_compound_control_request_requires_followup():
+    assert request_has_followup('Create a new note and type Project Alpha')
+    assert request_has_followup('Create a note titled Project Alpha')
+    assert not request_has_followup('Create a new note')
+
+
 def test_simple_native_action_never_fast_paths_consequential_control():
     snapshot = BrowserSnapshot(snapshot_id='s1', source='macos-accessibility', url='', title='', text='', elements=[
         {'index': 0, 'role': 'button', 'name': 'Delete Note'},
     ])
     assert explicit_semantic_click(
         Context(source='macos', user_request='Delete this note'), snapshot) is None
+
+
+@pytest.mark.parametrize('prompt', [
+    'Create a new tab', 'Make a new note', 'switch tabs', 'Switch to tab 3',
+])
+def test_in_app_native_commands_use_general_surface_loop(prompt):
+    runner = ContextTask(Context(source='macos', user_request=prompt,
+                                 accessibility_context={'pid': 42}))
+    assert runner.route.kind == 'surface'
+    assert runner.requires_surface_backend is True
+
+
+def test_open_app_is_the_only_native_command_outside_observed_surface_loop():
+    runner = ContextTask(Context(source='macos', user_request='Open Notes'))
+    assert runner.route.action == 'open_app'
+    assert runner.requires_surface_backend is False
+
+
+def test_new_tab_executes_from_observed_control_not_shortcut_parser():
+    class NativeBackend(Backend):
+        def __init__(self):
+            super().__init__()
+            self.created = False
+            self.url = ''
+
+        async def snapshot(self):
+            self.observations += 1
+            elements = [dict(index=0, role='button', name='New Tab', x=12, y=8, w=28, h=28)]
+            if self.created:
+                elements.append(dict(index=1, role='tab', name='New Tab', selected=True,
+                                     x=48, y=8, w=120, h=28))
+            return BrowserSnapshot(snapshot_id=str(self.observations), source='macos-accessibility',
+                                   url='', title='Chrome', text='New Tab', elements=elements)
+
+        async def click(self, sid, index):
+            assert index == 0
+            self.actions += 1
+            self.created = True
+            return Receipt(status='unverified', action='click', executed=True,
+                           message='Accessibility press dispatched.')
+
+    backend = NativeBackend()
+    context = Context(source='macos', source_application='Google Chrome',
+                      accessibility_context={'pid': 42}, user_request='Could you make a new tab for me?')
+    result = asyncio.run(ContextTask(context, backend=backend).run())
+    assert result['state'] == 'review'
+    assert result['verified'] == [{'action': 'click', 'name': 'New Tab', 'role': 'button', 'value': ''}]
+    assert backend.actions == 1 and backend.created is True
+
+
+def test_native_standard_command_is_bounded_fallback_when_ax_target_is_missing(monkeypatch):
+    class NativeBackend(Backend):
+        def __init__(self):
+            super().__init__()
+            self.url = ''
+        async def snapshot(self):
+            self.observations += 1
+            return BrowserSnapshot(snapshot_id=str(self.observations), source='macos-accessibility',
+                                   url='', title='Chrome', text='', elements=[])
+
+    calls = []
+    monkeypatch.setattr('mcp_vision.native_apps.perform',
+                        lambda action, value, pid=0, bundle_id='':
+                        calls.append((action, value, pid, bundle_id)) or
+                        {'ok': True, 'verified': True, 'message': 'New tab created.'})
+    context = Context(source='macos', source_application='Google Chrome',
+                      accessibility_context={'pid': 42, 'bundle_id': 'com.google.Chrome'},
+                      user_request='Create a new tab')
+    result = asyncio.run(ContextTask(context, backend=NativeBackend()).run())
+    assert result['state'] == 'review' and result['answer'] == 'New tab created.'
+    assert calls == [('new_tab', '', 42, 'com.google.Chrome')]
 
 
 def test_review_reports_empty_required_fields():
@@ -393,4 +480,77 @@ def test_explicit_native_fill_compiles_only_quoted_text_to_observed_focused_targ
                                            x=10, y=20, w=300, h=120)])
     step = explicit_native_fill(context, state)
     assert step and step.action == 'fill' and step.name == 'Document' and step.value == 'safe test'
+
+
+def test_explicit_native_fill_accepts_bounded_unquoted_document_text():
+    context = Context(source='macos', user_request='Type safe test in this document')
+    state = BrowserSnapshot(snapshot_id='native-1', source='macos-accessibility', url='', title='Untitled', text='',
+                            elements=[dict(index=0, role='textbox', name='Text Area', value='',
+                                           x=10, y=20, w=300, h=120)])
+    step = explicit_native_fill(context, state)
+    assert step and step.action == 'fill' and step.name == 'Text Area' and step.value == 'safe test'
     assert explicit_native_fill(context.model_copy(update={'user_request': 'Write something here'}), state) is None
+
+
+def test_verified_native_fill_survives_control_hidden_on_final_audit():
+    class NativeEditor(Backend):
+        def __init__(self):
+            super().__init__()
+            self.url = ''
+
+        async def snapshot(self):
+            self.observations += 1
+            elements = [] if self.observations >= 3 else [
+                dict(index=0, role='textbox', name='Text Area', value=self.value,
+                     x=10, y=20, w=300, h=120),
+            ]
+            return BrowserSnapshot(snapshot_id=str(self.observations), source='macos-accessibility',
+                                   url='', title='Document', text=self.value, elements=elements)
+
+    backend = NativeEditor()
+    context = Context(source='macos', user_request='Type safe test in this document',
+                      accessibility_context={'pid': 42})
+    result = asyncio.run(ContextTask(context, backend=backend).run())
+    assert result['state'] == 'review'
+    assert result['verified'][0]['value'] == 'safe test'
+
+
+def test_compound_fill_text_extracts_from_create_then_type():
+    assert _extract_compound_fill_text('Create a new note and type Project Alpha') == 'Project Alpha'
+    assert _extract_compound_fill_text('Create a new note and type hello world in this document') == 'hello world'
+    assert _extract_compound_fill_text('Create a new note') is None
+
+
+def test_compound_create_then_type_completes_both_steps():
+    class CompoundBackend(Backend):
+        def __init__(self):
+            super().__init__()
+            self.url = ''
+            self.created = False
+
+        async def snapshot(self):
+            self.observations += 1
+            if not self.created:
+                return BrowserSnapshot(snapshot_id=str(self.observations), source='macos-accessibility',
+                                       url='', title='Notes', text='', elements=[
+                    dict(index=0, role='button', name='New Note', x=10, y=10, w=40, h=40),
+                ])
+            return BrowserSnapshot(snapshot_id=str(self.observations), source='macos-accessibility',
+                                   url='', title='Notes', text=self.value, elements=[
+                dict(index=0, role='textbox', name='Text Area', value=self.value,
+                     x=10, y=20, w=300, h=120),
+            ])
+
+        async def click(self, sid, index):
+            self.actions += 1
+            self.created = True
+            return Receipt(status='unverified', action='click', executed=True, message='dispatched')
+
+    backend = CompoundBackend()
+    context = Context(source='macos', user_request='Create a new note and type Project Alpha',
+                      accessibility_context={'pid': 42})
+    result = asyncio.run(ContextTask(context, backend=backend).run())
+    assert result['state'] == 'review'
+    assert len(result['verified']) == 2
+    assert result['verified'][0]['action'] == 'click' and result['verified'][0]['name'] == 'New Note'
+    assert result['verified'][1]['action'] == 'fill' and result['verified'][1]['value'] == 'Project Alpha'

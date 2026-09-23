@@ -54,6 +54,28 @@ def test_native_walk_reaches_controls_deeper_than_five_levels():
     assert any(record['name'] == 'New Tab' and record['role'] == 'button' for record in records)
 
 
+def test_native_chrome_controls_are_prioritized_over_web_document_budget():
+    page_links = [element(f'Page link {index}', AXRole='AXLink', AXChildren=[])
+                  for index in range(150)]
+    web = element('Page', AXRole='AXWebArea', AXChildren=page_links)
+    toolbar = element('Toolbar', AXRole='AXGroup', AXChildren=[
+        element('New Tab', AXRole='AXButton', AXActions=['AXPress'], AXChildren=[]),
+    ])
+    root = element('Window', AXRole='AXGroup', AXChildren=[web, toolbar])
+    records, _handles = nearby_ax(AX, root, 20)
+    assert any(record['name'] == 'New Tab' for record in records)
+    assert sum(record['name'].startswith('Page link') for record in records) < 20
+
+
+def test_editable_control_is_prioritized_over_container_budget():
+    rows = [element(f'Row {index}', AXRole='AXRow', AXChildren=[]) for index in range(150)]
+    editor = element('', AXRole='AXTextArea', AXValue='', AXChildren=[])
+    root = element('Window', AXRole='AXGroup', AXChildren=[*rows, editor])
+    records, handles = nearby_ax(AX, root, 20)
+    assert records[0]['role'] == 'textbox' and records[0]['name'] == 'Text Area'
+    assert handles[0] is editor
+
+
 def test_nameless_ax_control_gets_usable_label():
     root = element('', AXRole='AXTextArea', AXValue='Draft note', AXChildren=[])
     records, handles = nearby_ax(AX, root, 5)
@@ -69,6 +91,31 @@ def test_blank_editable_ax_control_is_not_dropped():
     assert records[0]['name'] == 'Text Area' and records[0]['role'] == 'textbox'
     assert records[0]['ax_name'] == ''
     assert handles[0] is root
+
+
+def test_closed_menu_commands_are_available_without_fake_coordinates():
+    command = {'AXRole': 'AXMenuItem', 'AXTitle': 'Duplicate', 'AXActions': ['AXPress'],
+               'AXPosition': None, 'AXSize': None, 'AXChildren': []}
+    records, handles = nearby_ax(AX, command, 5, include_offscreen_pressable=True)
+    assert len(records) == 1 and handles[0] is command
+    assert records[0]['name'] == 'Duplicate' and records[0]['role'] == 'menuitem'
+    assert records[0]['offscreen'] is True
+    assert (records[0]['x'], records[0]['y'], records[0]['w'], records[0]['h']) == (0, 0, 0, 0)
+
+
+def test_offscreen_menu_command_freshness_does_not_require_bounds(monkeypatch):
+    from mcp_vision.context import Context
+    from mcp_vision.native_context import NativeContextBackend
+
+    command = {'AXRole': 'AXMenuItem', 'AXTitle': 'New Tab', 'AXActions': ['AXPress'],
+               'AXPosition': None, 'AXSize': None, 'AXChildren': []}
+    records, handles = nearby_ax(AX, command, 5, include_offscreen_pressable=True)
+    backend = NativeContextBackend(Context(source='macos', accessibility_context={'pid': 42}),
+                                   allow_writes=True)
+    backend.sid, backend.handles = 's1', handles
+    backend.records = {record['index']: record for record in records}
+    monkeypatch.setitem(sys.modules, 'ApplicationServices', AX)
+    assert backend._fresh_element('s1', 0, AX) is command
 
 
 def test_blank_editable_generated_label_remains_fresh(monkeypatch):

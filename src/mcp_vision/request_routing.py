@@ -60,12 +60,13 @@ class RequestRoute:
 
 
 def route_request(request: str, mode: str) -> RequestRoute:
-    # An unambiguous native command remains actionable in Ask/Auto. This avoids
-    # a stale UI mode degrading "open Notes" into a text-only refusal.
+    # App launch is the only native command that must be resolved before an
+    # actionable surface exists. In-app commands are handled by the general
+    # observed-surface loop so new capabilities do not require a phrase parser.
     if mode != 'guide':
         from mcp_vision.native_apps import parse_intent
         intent = parse_intent(request)
-        if intent is not None:
+        if intent is not None and intent.action == 'open_app':
             return RequestRoute('native', intent.summary, action=intent.action, value=intent.value)
     if mode == 'guide':
         return RequestRoute('surface')
@@ -79,7 +80,9 @@ def route_request(request: str, mode: str) -> RequestRoute:
         destination = re.sub(r'^(?:open|go to|navigate to)\s+', '', _PREFIX.sub('', request.strip()), flags=re.I).strip()
         if product_mention(destination) or re.fullmatch(r'https?://\S+', destination):
             return RequestRoute('browser_open', destination)
-    mutation = re.match(r'(send|submit|book|buy|delete|fill|full out|complete|create|write|attach|upload|change|click|open|navigate|go to)\b', text)
+    mutation = re.match(r'(send|submit|book|buy|delete|fill|full out|complete|create|make|write|attach|upload|change|click|open|navigate|go to|switch)\b', text)
+    if re.match(r'(?:next|previous|prev)\s+(?:tab|window)\b', text):
+        mutation = True
     if needs_browser(request) and not mutation:
         if re.fullmatch(r'(?:do\s+)?(?:some\s+)?research(?:\s+(?:for|on)\s+me)?[?.!]*', text):
             return RequestRoute('input', 'What topic would you like me to research?', 'topic')

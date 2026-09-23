@@ -55,7 +55,8 @@ def describe_ax(api, element):
                           attributes={'checked': str(checked)} if checked is not None else {})
 
 
-def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6):
+def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6,
+              include_offscreen_pressable=False):
     """Walk a native window deeply enough to reach browser/app toolbars.
 
     Chromium and Electron commonly put visible controls hundreds of nodes below
@@ -64,8 +65,8 @@ def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6):
     not an arbitrary tree depth, while keeping the planner payload capped.
     """
     from mcp_vision.macos_ui import _ax_copy
-    queue = deque([(root, "root", "")]) if root else deque()
-    records, handles = [], {}
+    queue = deque([(root, "root", "", False)]) if root else deque()
+    candidates, deferred = [], []
     visited = 0
     seen = set()
     deadline = time.monotonic() + max(0, time_cap)
@@ -74,19 +75,19 @@ def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6):
         'AXPopUpButton', 'AXComboBox', 'AXSlider', 'AXIncrementor', 'AXMenuButton',
         'AXDisclosureTriangle', 'AXLink', 'AXTab', 'AXRow', 'AXCell',
     }
-    while queue and visited < node_cap and len(records) < limit and time.monotonic() <= deadline:
-        element, path, inherited_label = queue.popleft()
+    while queue and visited < node_cap and time.monotonic() <= deadline:
+        element, path, inherited_label, in_web_content = queue.popleft()
         identity = id(element)
         if identity in seen:
             continue
         seen.add(identity)
         visited += 1
-        if _ax_copy(api, element, 'AXHidden') is True:
+        if _ax_copy(api, element, 'AXHidden') is True and not include_offscreen_pressable:
             continue
         desc = describe_ax(api, element)
         box = desc.bounds
         semantic_control = desc.role in semantic_roles
-        children = list((_ax_copy(api, element, 'AXChildren') or [])[:120])
+        children = list((_ax_copy(api, element, 'AXChildren') or [])[:node_cap])
         descendant_label = ''
         if not desc.name and desc.role in {'AXRow', 'AXCell'}:
             for child in children[:8]:
@@ -95,26 +96,47 @@ def nearby_ax(api, root, limit=120, *, node_cap=4000, time_cap=.6):
                     descendant_label = child_desc.name or child_desc.value[:80]
                     break
         semantic_name = desc.name.strip() or descendant_label or inherited_label
-        if box and box.width > 0 and box.height > 0 and (
+        actions = [str(action) for action in (_ax_copy(api, element, 'AXActions') or [])]
+        visible = bool(box and box.width > 0 and box.height > 0)
+        offscreen_pressable = bool(include_offscreen_pressable and semantic_name
+                                   and desc.role == 'AXMenuItem' and 'AXPress' in actions)
+        if (visible or offscreen_pressable) and (
                 semantic_name or desc.value or desc.attributes.get('checked') is not None or semantic_control):
-            index = len(records)
             # Editable controls need a stable semantic name: their value changes
             # after a successful fill and must not become their identity.
             name = (semantic_name or role_label(desc.role)) if semantic_control else (
                 semantic_name or desc.value.strip()[:80] or role_label(desc.role))
             checked = desc.attributes.get('checked')
-            records.append({
-                'index': index, 'name': name, 'role': normalize_role(desc.role), 'ax_role': desc.role,
+            record = {
+                'index': -1, 'name': name, 'role': normalize_role(desc.role), 'ax_role': desc.role,
                 'ax_name': desc.name,
                 'value': desc.value,
                 'checked': None if checked is None else checked == 'True',
-                'x': box.x, 'y': box.y, 'w': box.width, 'h': box.height,
+                'x': box.x if visible else 0, 'y': box.y if visible else 0,
+                'w': box.width if visible else 0, 'h': box.height if visible else 0,
+                'offscreen': offscreen_pressable,
                 'identity': {'accessibility': path}, 'ax_ref': path,
-            })
-            handles[index] = element
+            }
+            if in_web_content:
+                deferred.append((record, element))
+            else:
+                candidates.append((record, element))
         child_label = semantic_name if desc.role in {'AXButton', 'AXLink', 'AXTab', 'AXRow', 'AXCell'} else ''
-        queue.extend((child, f"{path}/{offset}", child_label)
+        child_in_web = in_web_content or desc.role in {'AXWebArea', 'AXDocument'}
+        queue.extend((child, f"{path}/{offset}", child_label, child_in_web)
                      for offset, child in enumerate(children))
+    candidates.extend(deferred)
+    priority = {
+        'textbox': 0, 'combobox': 0, 'checkbox': 0, 'radio': 0, 'slider': 0,
+        'spinbutton': 0, 'button': 1, 'link': 1, 'tab': 1, 'menuitem': 1,
+        'row': 3, 'cell': 3,
+    }
+    candidates.sort(key=lambda item: priority.get(item[0]['role'], 2))
+    records, handles = [], {}
+    for record, element in candidates[:limit]:
+        index = len(records)
+        records.append({**record, 'index': index})
+        handles[index] = element
     return records, handles
 
 
@@ -154,10 +176,11 @@ class NativeContextBackend:
                 or fresh.name != original.get('ax_name', original.get('name'))):
             raise LookupError('stale')
         box = fresh.bounds
-        if not box or any(round(value) != round(original[key]) for value, key in (
-            (box.x, 'x'), (box.y, 'y'), (box.width, 'w'), (box.height, 'h'),
-        )):
-            raise LookupError('stale')
+        if not original.get('offscreen'):
+            if not box or any(round(value) != round(original[key]) for value, key in (
+                (box.x, 'x'), (box.y, 'y'), (box.width, 'w'), (box.height, 'h'),
+            )):
+                raise LookupError('stale')
         if fresh.value != str(original.get('value') or ''):
             raise LookupError('stale')
         checked = fresh.attributes.get('checked')
@@ -173,6 +196,11 @@ class NativeContextBackend:
         from mcp_vision.macos_ui import _ax_copy
         if not AX.AXIsProcessTrusted():
             raise PermissionError('Enable Accessibility for /Applications/MCP-Vision.app.')
+        # The assistant popup may have taken focus from the application where
+        # Act was invoked. Some apps omit their editor controls from AX while
+        # inactive, so restore the already PID-bound target before observing.
+        if self.allow_writes:
+            self._activate()
         app = AX.AXUIElementCreateApplication(self._pid())
         window = _ax_copy(AX, app, 'AXFocusedWindow') or _ax_copy(AX, app, 'AXMainWindow')
         title = str(_ax_copy(AX, window, 'AXTitle') or '')
@@ -182,6 +210,59 @@ class NativeContextBackend:
         if title:
             self.context = self.context.model_copy(update={'title': title})
         records, self.handles = nearby_ax(AX, window or app)
+        # Some native editors (e.g. Notes blank note) are not reached by the
+        # window BFS but are the AXFocusedUIElement. Include the focused
+        # element if it is an editable control and not already in the snapshot.
+        focused = _ax_copy(AX, app, 'AXFocusedUIElement')
+        if focused:
+            focused_desc = describe_ax(AX, focused)
+            already = any(
+                str(r.get('ax_role', '')) == focused_desc.role
+                and str(r.get('ax_name', '')) == focused_desc.name
+                and r.get('role') in {'textbox', 'combobox'}
+                for r in records
+            )
+            if not already and focused_desc.role in {
+                'AXTextField', 'AXTextArea', 'AXSearchField', 'AXComboBox',
+            }:
+                box = focused_desc.bounds
+                visible = bool(box and box.width > 0 and box.height > 0)
+                if visible:
+                    index = len(records)
+                    name = (focused_desc.name.strip() or focused_desc.value.strip()[:80]
+                            or role_label(focused_desc.role))
+                    record = {
+                        'index': index, 'name': name, 'role': normalize_role(focused_desc.role),
+                        'ax_role': focused_desc.role, 'ax_name': focused_desc.name,
+                        'value': focused_desc.value,
+                        'checked': None,
+                        'x': box.x, 'y': box.y, 'w': box.width, 'h': box.height,
+                        'offscreen': False, 'identity': {'accessibility': 'focused'},
+                        'ax_ref': 'focused',
+                    }
+                    records.append(record)
+                    self.handles[index] = focused
+        # Closed app menus expose semantic commands through AXPress even when
+        # they have no on-screen bounds. Add labelled commands that are absent
+        # from the visible window. This discovers capabilities generically;
+        # there is no command phrase or shortcut table in the planning path.
+        menu = _ax_copy(AX, app, 'AXMenuBar')
+        if menu and len(records) < 120:
+            menu_records, menu_handles = nearby_ax(
+                AX, menu, 120 - len(records), node_cap=1200, time_cap=.2,
+                include_offscreen_pressable=True)
+            observed_names = {str(record.get('name') or '').casefold() for record in records}
+            for menu_record in menu_records:
+                name = str(menu_record.get('name') or '').casefold()
+                if not name or name in observed_names or not menu_record.get('offscreen'):
+                    continue
+                old_index = menu_record['index']
+                index = len(records)
+                path = f"menu/{menu_record.get('ax_ref', old_index)}"
+                records.append({**menu_record, 'index': index, 'ax_ref': path,
+                                'identity': {'accessibility': path}})
+                self.handles[index] = menu_handles[old_index]
+                observed_names.add(name)
         self.records = {record['index']: record for record in records}
         self.sid = uuid4().hex
         return BrowserSnapshot(snapshot_id=self.sid, root_id=f"macos-pid-{self._pid()}", url='', title=title,
@@ -288,6 +369,7 @@ class NativeContextBackend:
             return Receipt(status='error', action='click', message=redact(str(exc)), executed=None)
 
     async def fill(self, snapshot_id, index, text):
+        import asyncio
         if not self.allow_writes:
             return self._blocked('fill')
         try:
@@ -300,20 +382,26 @@ class NativeContextBackend:
             AX.AXUIElementSetAttributeValue(element, 'AXFocused', True)
             err = AX.AXUIElementSetAttributeValue(element, 'AXValue', str(text))
             if err == 0:
+                # Some native editors acknowledge AXValue and then discard the
+                # background write on their next UI cycle. Do not call that
+                # verified until it survives a delayed read-back.
+                await asyncio.sleep(0.25)
                 fresh = describe_ax(AX, element)
                 matches = (fresh.value or '') == str(text)
                 trace.add(ExecutionMethod.AX_BACKGROUND,
                           AttemptOutcome.WORKED if matches else AttemptOutcome.UNKNOWN,
                           background=True, detail='AXValue write', evidence={'value_matches': matches})
-                return Receipt(status='verified' if matches else 'unverified', action='fill', executed=True,
-                               message='Filled via background Accessibility.' if matches
-                               else 'Background AXValue dispatched; read-back did not match.',
-                               evidence={**trace.evidence(), 'value': fresh.value})
-            trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
-                      detail=f'AXValue returned {err}')
+                if matches:
+                    return Receipt(status='verified', action='fill', executed=True,
+                                   message='Filled via background Accessibility.',
+                                   evidence={**trace.evidence(), 'value': fresh.value})
+            else:
+                trace.add(ExecutionMethod.AX_BACKGROUND, AttemptOutcome.DIDNT, background=True,
+                          detail=f'AXValue returned {err}')
             try:
                 from mcp_vision.macos_input import targeted_replace_text
                 targeted_replace_text(self._pid(), str(text))
+                await asyncio.sleep(0.25)
                 fresh = describe_ax(AX, element)
                 matches = (fresh.value or '') == str(text)
                 trace.add(ExecutionMethod.PID_KEYBOARD,
@@ -329,6 +417,7 @@ class NativeContextBackend:
             self._activate()
             err = AX.AXUIElementSetAttributeValue(element, 'AXValue', str(text))
             if err == 0:
+                await asyncio.sleep(0.25)
                 fresh = describe_ax(AX, element)
                 matches = (fresh.value or '') == str(text)
                 trace.add(ExecutionMethod.AX_FOREGROUND,

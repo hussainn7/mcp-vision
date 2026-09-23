@@ -25,10 +25,12 @@ def infer_capability(request: str) -> Capability:
     # Ask questions about meaning/choice before treating verbs inside the sentence as Act.
     if re.match(r"\s*(what|why|which|is|are|does|can i|should i|summarize|explain|maybe)\b", text):
         return "ask"
-    # Deterministic native-desktop intents (open an app, switch tabs/windows)
-    # are actions, not questions.
+    # Launching an installed app is resolved before a surface exists. In-app
+    # commands are recognized by the general action verbs below and grounded
+    # against the observed interface instead of a command phrase table.
     from mcp_vision.native_apps import parse_intent
-    if parse_intent(request):
+    native_intent = parse_intent(request)
+    if native_intent and native_intent.action == "open_app":
         return "act"
     positive = re.split(r"\b(?:but|only|do not|don't|never)\b", text)[0]
     # "find/search/look up X" as an *informational query* (not a UI action) → ask.
@@ -48,9 +50,11 @@ def infer_capability(request: str) -> Capability:
         r"(fill|full out|complete|click|press|type|send|submit|book|buy|apply|change|delete|move|create|make|add|"
         r"export|download|open|organize|enable|disable|toggle|attach|upload|search|find|"
         r"look up|look for|navigate|go to|select|check|uncheck|set|write|paste|login|log in|"
-        r"sign in|turn)\b",
+        r"sign in|turn|switch)\b",
         positive,
     ):
+        return "act"
+    if re.match(r"\s*(?:next|previous|prev)\s+(?:tab|window)\b", positive):
         return "act"
     return "ask"
 

@@ -928,7 +928,7 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
 
             async def run():
                 try:
-                    if task.route.kind == "surface":
+                    if task.requires_surface_backend:
                         task.check_cancel()
                         task.backend = await bind_context_backend(context, mode=task.mode, live_driver=live_driver,
                                                                   cdp_endpoint=cdp_endpoint, indicator=self.indicator, source_path=self.source_path)
@@ -992,9 +992,12 @@ def run_contextual_ui(*, port: int = 7331, provider: str | None = None, live_dri
             self.send.setTitle_("Continue" if self.pending_request else "Run")
             self.input.setPlaceholderString_("Add the missing details…" if self.pending_request else "Ask another question or start a task…")
             where = (self.context.source_application if self.context else "") or "Ready"
+            from mcp_vision.providers import provider_label, resolve_provider
+            display_provider = result.get('provider') or resolve_provider(
+                completed_task.provider if completed_task else provider)
             self.status.setStringValue_(
                 f"{ {'answered': 'Answer ready', 'input': 'Needs your input', 'review': 'Ready for review', 'guided': 'Guidance ready', 'error': 'Could not complete'}.get(result.get('state'), result.get('state', 'Ready').capitalize())} · {result.get('capability', 'ask').capitalize()}"
-                f" · {result.get('provider', 'local').capitalize()}")
+                f" · {provider_label(display_provider)}")
             self.input.setStringValue_("")
             state = result.get("state", "error")
             if self.interaction:

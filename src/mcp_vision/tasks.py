@@ -37,15 +37,53 @@ class Step(BaseModel):
     expected_text: str = Field(default='', max_length=1000)
 
 
+def _extract_compound_fill_text(request: str) -> str | None:
+    """Extract the text to type from a compound create-then-type request.
+
+    Only fires when a creation verb precedes the type/fill verb, so simple
+    'Write something here' is not treated as compound.
+    """
+    if not re.search(r"\b(?:create|make|add|open|new)\b.*\b(?:type|enter|write|fill|paste)\b", request, re.I | re.S):
+        return None
+    m = re.search(
+        r"\b(?:and\s+)?(?:then\s+)?(?:type|enter|write|fill|paste)\s+"
+        r"(?:(?:it|that|this)\s+(?:in|into)\s+)?"
+        r"(?:(?:in|into)\s+(?:this|the|a|an)\s+(?:new\s+)?(?:note|document|tab|field|area)\s+)?"
+        r"(.+?)(?:\s+(?:in|into)\s+(?:this|the)\s+(?:document|note|field|area))?\s*[.!]?\s*$",
+        request, re.I | re.S,
+    )
+    if m:
+        text = m.group(1).strip().strip("'\"")
+        return text if text and len(text) <= 4000 else None
+    return None
+
+
 def explicit_native_fill(context, snapshot) -> Step | None:
-    """Compile an explicit quoted native fill without a model or invented target."""
+    """Compile an explicit native fill without a model or invented target."""
     if context.source != "macos":
         return None
     request = context.user_request.strip()
-    match = re.search(r"\b(?:type|enter|write|fill)\b.*?(['\"])(.+?)\1", request, re.I | re.S)
-    if not match or not re.search(r"\b(?:focused|this|text\s*(?:area|field)|document)\b", request, re.I):
+    quoted = re.search(r"\b(?:type|enter|write|fill)\b.*?(['\"])(.+?)\1", request, re.I | re.S)
+    unquoted = re.fullmatch(
+        r"\s*(?:please\s+)?(?:type|enter|write|fill)\s+(.+?)\s+(?:in|into)\s+"
+        r"(?:this|the)\s+(?:focused\s+)?(?:document|text\s*(?:area|field)|field)\s*[.!]?\s*",
+        request, re.I | re.S,
+    )
+    compound = _extract_compound_fill_text(request)
+    if not (quoted or unquoted or compound):
         return None
-    value = match.group(2)
+    if not re.search(
+        r"\b(?:focused|this|text\s*(?:area|field)|document|and\s+(?:then\s+)?"
+        r"(?:type|enter|write|fill|paste)|type\s+\S|enter\s+\S|write\s+\S|fill\s+\S|paste\s+\S)",
+        request, re.I,
+    ):
+        return None
+    if quoted:
+        value = quoted.group(2)
+    elif unquoted:
+        value = unquoted.group(1)
+    else:
+        value = compound
     if not value or len(value) > 4000:
         return None
     focused = context.focused_element
@@ -69,7 +107,12 @@ def explicit_semantic_click(context, snapshot) -> Step | None:
     if context.source != "macos" or not re.search(
             r"\b(?:click|press|open|create|make|add|start|show|new)\b", context.user_request, re.I):
         return None
-    words = set(re.findall(r"[a-z0-9]+", context.user_request.casefold()))
+    def terms(value: str) -> set[str]:
+        words = set(re.findall(r"[a-z0-9]+", value.casefold()))
+        return {word[:-1] if len(word) > 3 and word.endswith('s') and not word.endswith('ss') else word
+                for word in words}
+
+    words = terms(context.user_request)
     ignored = {
         "a", "an", "the", "app", "application", "in", "on", "for", "me", "my", "please",
         "can", "could", "would", "will", "you", "able", "to", "help", "just", "go", "ahead",
@@ -81,13 +124,13 @@ def explicit_semantic_click(context, snapshot) -> Step | None:
         if element.get("role") not in {"button", "link", "tab", "menuitem"}:
             continue
         name = str(element.get("name") or "").strip()
-        terms = set(re.findall(r"[a-z0-9]+", name.casefold())) - ignored
-        if not terms or name.casefold() in {"button", "link", "tab", "menu item"}:
+        control_terms = terms(name) - ignored
+        if not control_terms or name.casefold() in {"button", "link", "tab", "menu item"}:
             continue
         if re.search(r"\b(?:delete|remove|erase|submit|send|apply|purchase|buy|checkout|pay|quit|close)\b", name, re.I):
             continue
-        if terms <= request_terms:
-            matches.append((len(terms), len(name), element))
+        if control_terms <= request_terms:
+            matches.append((len(control_terms), len(name), element))
     if not matches:
         return None
     matches.sort(key=lambda item: (-item[0], -item[1]))
@@ -96,6 +139,15 @@ def explicit_semantic_click(context, snapshot) -> Step | None:
     target = matches[0][2]
     return Step(action="click", name=str(target["name"]), role=str(target["role"]), confidence=1.0,
                 message=f"Use the observed {target['name']} control.")
+
+
+def request_has_followup(request: str) -> bool:
+    """Whether a successful first control action cannot complete the stated goal."""
+    return bool(re.search(
+        r"\b(?:and|then|after(?:wards)?)\b[^.!?]*\b(?:type|enter|write|fill|paste|search|find|select|choose|click|press|open)\b|"
+        r"\b(?:called|named|titled)\s+\S|\bwith\s+(?:the\s+)?(?:title|text|content|body)\b",
+        request, re.I,
+    ))
 
 
 class ModelPlanner:
@@ -129,6 +181,8 @@ class ModelPlanner:
             'For click, expected_text is optional. Use it only when you can name text that will newly appear; '
             'navigation, selection-state changes, and newly exposed controls are also valid observed outcomes. '
             'Use scroll value in pixels to inspect offscreen fields, bounded to 600. '
+            'Creating a blank document, item, note, or tab is complete when the user supplied no content; do not ask '
+            'what optional content it should contain. If content was supplied, continue until that exact content is visible. '
             'A blocked or unverified operation is not success. Messages are brief user-facing progress, not reasoning.'
         )
         result = self.chat([{'role': 'system', 'content': system},
@@ -136,7 +190,7 @@ class ModelPlanner:
         raw = (result.get('content') or '').strip()
         if raw.startswith('```'):
             raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
-        # Local models often wrap valid JSON in a sentence. Accept the first
+        # Some models wrap valid JSON in a sentence. Accept the first
         # schema-valid object, while still rejecting invented/malformed steps.
         decoder = json.JSONDecoder()
         candidates = [raw]
@@ -217,6 +271,22 @@ class ContextTask:
         self._loop = None
         self._cancel_signal = None
 
+    @property
+    def requires_surface_backend(self) -> bool:
+        """Whether this task must enter the general observed-surface loop.
+
+        Launching an application is the one desktop action that cannot be
+        selected from the application's current controls because the target is
+        not open yet.  Everything after launch -- including tabs, notes,
+        toolbar buttons, and app-specific controls -- belongs to the same
+        observe/plan/act/verify loop as any other surface.  Keeping keyboard
+        shortcut intents here as an optional parser fast path made the main UI
+        look capable while bypassing the general agent.
+        """
+        return self.route.kind == "surface" or (
+            self.route.kind == "native" and self.route.action != "open_app"
+        )
+
     def cancel(self):
         self.cancelled.set()
         if self._loop and self._cancel_signal:
@@ -231,7 +301,9 @@ class ContextTask:
         self.phase(phase, message)
 
     def result(self, state, answer):
-        return {'capability': self.mode, 'state': state, 'answer': answer, 'verified': self.verified}
+        from mcp_vision.providers import resolve_provider
+        return {'capability': self.mode, 'state': state, 'answer': answer,
+                'verified': self.verified, 'provider': resolve_provider(self.provider)}
 
     def check_cancel(self):
         if self.cancelled.is_set():
@@ -294,7 +366,7 @@ class ContextTask:
             browser_backend = None
             if self.route.kind == 'input':
                 return self.result('input', self.route.message)
-            if self.route.kind == 'native':
+            if self.route.kind == 'native' and self.route.action == 'open_app':
                 from mcp_vision import native_apps
                 self.emit(self.route.message + '…', 'acting')
                 accessibility = self.context.accessibility_context or {}
@@ -359,13 +431,44 @@ class ContextTask:
             direct = None
             if self.mode == "act" and self.planner is None:
                 direct = explicit_native_fill(self.context, snapshot) or explicit_semantic_click(self.context, snapshot)
+                if direct is None and self.context.source == 'macos':
+                    # Native apps can transiently hide controls while changing
+                    # focus or committing a prior action. Give the bounded AX
+                    # surface a chance to settle before escalating to a model.
+                    for delay in (0.2, 0.4):
+                        await asyncio.sleep(delay)
+                        snapshot = await self.observe()
+                        direct = (explicit_native_fill(self.context, snapshot)
+                                  or explicit_semantic_click(self.context, snapshot))
+                        if direct is not None:
+                            break
+            if direct is None and self.mode == "act" and self.planner is None and self.context.source == "macos":
+                # Some apps do not publish toolbar/menu commands in their AX
+                # tree. Fall back only to the small, app-agnostic desktop
+                # primitive vocabulary after observation failed to provide a
+                # semantic target. This is an execution capability, not a
+                # site/task script; arbitrary in-app work still uses the loop.
+                from mcp_vision import native_apps
+                intent = native_apps.parse_intent(self.context.user_request)
+                if intent and intent.action in {
+                    "new_tab", "new_item", "switch_tab", "switch_window", "switch_to_tab",
+                }:
+                    accessibility = self.context.accessibility_context or {}
+                    self.emit(f"Using the app's standard {intent.summary.lower()} command…", "acting")
+                    outcome = await asyncio.to_thread(
+                        native_apps.perform, intent.action, intent.value,
+                        int(accessibility.get('pid') or 0), str(accessibility.get('bundle_id') or ''))
+                    self.check_cancel()
+                    self.emit('Checking the resulting state…', 'verifying')
+                    return self.result('review' if outcome.get('verified') else 'input',
+                                       str(outcome.get('message') or 'The app command could not be verified.'))
             if self.planner is None and direct is None:
                 from mcp_vision.readiness import ensure_model_ready
                 from mcp_vision.providers import resolve_provider
                 self.emit('Checking the selected model…')
                 await self.reason(ensure_model_ready, resolve_provider(self.provider))
             planner = self.planner or (None if direct else ModelPlanner(self.provider))
-            direct_mode = direct is not None
+            direct_mode = direct is not None and not request_has_followup(self.context.user_request)
             failures = 0
             feedback = ''
             for _ in range(self.max_steps):
@@ -385,10 +488,16 @@ class ContextTask:
                     proposal, direct = direct, None
                 elif direct_mode:
                     proposal = (Step(action="review", confidence=1.0,
-                                     message="The explicit native fill was verified.") if self.verified else
+                                     message="The observed native action was verified.") if self.verified else
                                 Step(action="input", confidence=1.0,
-                                     message="The explicit native fill could not be verified."))
+                                     message="The observed native action could not be verified."))
                 else:
+                    if planner is None:
+                        from mcp_vision.readiness import ensure_model_ready
+                        from mcp_vision.providers import resolve_provider
+                        self.emit('Checking the selected model…')
+                        await self.reason(ensure_model_ready, resolve_provider(self.provider))
+                        planner = ModelPlanner(self.provider)
                     proposal = await self.reason(planner, payload)
                 self.check_cancel()
                 step = proposal if isinstance(proposal, Step) else Step.model_validate(proposal)
@@ -422,7 +531,8 @@ class ContextTask:
                         if verified['action'] in {'fill', 'select', 'set_checked', 'upload'}:
                             current = resolve_target(fields, verified['name'], verified.get('role', ''))
                             if current is None:
-                                changed.append(verified['name'])
+                                if final.source != 'macos-accessibility':
+                                    changed.append(verified['name'])
                             elif verified['action'] in {'fill', 'select'} and current.get('value') != verified['value']:
                                 changed.append(verified['name'])
                             elif verified['action'] == 'set_checked' and current.get('checked') is not (verified['value'] == 'true'):
@@ -481,6 +591,8 @@ class ContextTask:
                 if receipt.status == 'error' and receipt.executed is False:
                     return self.result('input', 'I could not perform that step. ' + receipt.message)
                 self.emit('Checking the resulting state…', "verifying")
+                if hasattr(self.backend, 'settle'):
+                    await self.backend.settle(step.action)
                 expected_navigation = ''
                 if step.action == 'click' and target and target.get('href'):
                     from urllib.parse import urljoin
@@ -488,6 +600,19 @@ class ContextTask:
                 after = await self.observe(allow_navigation=step.action == "click",
                                            expected_navigation=expected_navigation)
                 success = self.verify(step, target, snapshot, after)
+                if (not success and receipt.executed is not False
+                        and snapshot.source == 'macos-accessibility'):
+                    # Native UIs can publish their successor state a frame or
+                    # two after a background AX dispatch. Re-observe with
+                    # increasing delays; never replay the potentially successful
+                    # action merely because it settled.
+                    for delay in (0.3, 0.6, 1.0):
+                        await asyncio.sleep(delay)
+                        after = await self.observe(allow_navigation=step.action == "click",
+                                                   expected_navigation=expected_navigation)
+                        if self.verify(step, target, snapshot, after):
+                            success = True
+                            break
                 self.check_cancel()
                 if success and receipt.executed is not False:
                     self.verified.append({'action': step.action, 'name': step.name, 'role': step.role, 'value': step.value})
@@ -496,10 +621,23 @@ class ContextTask:
                 else:
                     failures += 1
                     feedback = 'Action not verified. Inspect again. ' + receipt.message
-                    # Never replay a possibly executed click/upload.
-                    if (receipt.executed is not False and step.action in {'click', 'upload'}) or failures >= 3:
+                    compound_pending = (snapshot.source == 'macos-accessibility'
+                                        and _extract_compound_fill_text(self.context.user_request)
+                                        and not any(v['action'] == 'fill' for v in self.verified))
+                    # Never replay a possibly executed click/upload, unless a
+                    # compound fill can still verify the overall outcome.
+                    if (receipt.executed is not False and step.action in {'click', 'upload'}
+                            and not compound_pending) or failures >= 3:
                         return self.result('input', 'The expected result was not observed. Please check the interface before continuing.')
                 snapshot = after
+                if (self.mode == 'act' and self.planner is None
+                        and self.context.source == 'macos'
+                        and _extract_compound_fill_text(self.context.user_request)
+                        and not any(v['action'] == 'fill' for v in self.verified)):
+                    fill = explicit_native_fill(self.context, snapshot)
+                    if fill is not None:
+                        direct = fill
+                        direct_mode = True
             return self.result('input', 'Reached the step limit. Review the current state before continuing.')
         except asyncio.CancelledError:
             return self.result('cancelled', 'Cancelled. No further actions will run; completed changes remain.')

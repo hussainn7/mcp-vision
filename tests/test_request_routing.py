@@ -27,10 +27,10 @@ from mcp_vision.tasks import ContextTask
     ('Open Gmail', 'act', 'browser_open'),
     ('Open https://example.com', 'act', 'browser_open'),
     ('Open Notes', 'act', 'native'),
-    ('Create a new tab', 'act', 'native'),
-    ('Make a new note', 'act', 'native'),
-    ('switch tabs', 'act', 'native'),
-    ('Switch to tab 3', 'act', 'native'),
+    ('Create a new tab', 'act', 'surface'),
+    ('Make a new note', 'act', 'surface'),
+    ('switch tabs', 'act', 'surface'),
+    ('Switch to tab 3', 'act', 'surface'),
     ('Send an email in Gmail', 'act', 'surface'),
 ])
 def test_first_filter(prompt, mode, route):

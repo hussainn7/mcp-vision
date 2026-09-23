@@ -51,7 +51,10 @@ def test_native_intents_are_actions_not_questions():
     for prompt in ("Open Notes", "Please open the Notes app", "create a new tab", "make a new note",
                    "switch tabs", "Switch to tab 3", "next window"):
         assert infer_capability(prompt) == "act"
+    for prompt in ("Open Notes", "Please open the Notes app"):
         assert route_request(prompt, "act").kind == "native"
+    for prompt in ("create a new tab", "make a new note", "switch tabs", "Switch to tab 3", "next window"):
+        assert route_request(prompt, "act").kind == "surface"
 
 
 def test_browser_open_still_wins_for_web_products():
