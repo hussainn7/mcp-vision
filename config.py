@@ -102,4 +102,15 @@ class Config(BaseSettings):
     gemini_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")
     nvidia_api_key: Optional[str] = Field(default=None, validation_alias="NVIDIA_API_KEY")
 
+    # Provider-neutral intelligence roles. Each value is "provider:model";
+    # providers may be mixed freely and vision remains optional.
+    model_roles: dict[str, Optional[str]] = Field(default_factory=lambda: {
+        "fast_policy": "local:qwen3:8b", "writer": "local:qwen3:8b",
+        "planner": "local:qwen3:8b", "reviewer": "local:qwen3:8b", "vision": None,
+    })
+    model_role_fallbacks: dict[str, list[str]] = Field(default_factory=lambda: {
+        "fast_policy": [], "writer": [], "planner": [], "reviewer": [], "vision": [],
+    })
+    model_role_timeout_s: float = 20.0
+
 cfg = Config()

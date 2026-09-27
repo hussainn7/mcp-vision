@@ -66,6 +66,9 @@ packages = ["src/mcp_vision", "phase1_vision", "phase2_mcp"]
 "judge.py" = "judge.py"
 "skills.py" = "skills.py"
 "dashboard.py" = "dashboard.py"
+"providers.py" = "providers.py"
+"readiness.py" = "readiness.py"
+"reasoning" = "reasoning"
 "specialists.toml" = "specialists.toml"
 "chrome_relay" = "chrome_relay"
 

@@ -138,18 +138,24 @@ def _parse_openai_response(data):
     msg = {"role": "assistant", "content": (choice.get("content") or "").strip()}
     if tool_calls:
         msg["tool_calls"] = tool_calls
+    if data.get("id"):
+        msg["continuation_id"] = data["id"]
+    if data.get("usage"):
+        msg["usage"] = data["usage"]
     return msg
 
 
 def make_openai_compat_chat(base_url, api_key, model, key_env, _post=None):
     """Shared by openai, gemini (OpenAI-compat endpoint) and nvidia (NIM) —
     same wire format, different base URL/key/model."""
-    def chat(messages, tools=None):
+    def chat(messages, tools=None, continuation_id=None, response_format=None):
         if not api_key:
             raise BackendError(f"missing API key: set {key_env} in .env")
         body = {"model": model, "messages": _to_openai_messages(messages)}
         if tools:
             body["tools"] = tools  # already OpenAI-shaped — this repo's native format
+        if response_format:
+            body["response_format"] = response_format
         data = _post_json(f"{base_url}/chat/completions",
                           {"Authorization": f"Bearer {api_key}"}, body, _post=_post)
         return _parse_openai_response(data)
@@ -215,11 +221,15 @@ def _parse_anthropic_response(data):
     msg = {"role": "assistant", "content": text}
     if tool_calls:
         msg["tool_calls"] = tool_calls
+    if data.get("id"):
+        msg["continuation_id"] = data["id"]
+    if data.get("usage"):
+        msg["usage"] = data["usage"]
     return msg
 
 
 def make_anthropic_chat(api_key, model, _post=None):
-    def chat(messages, tools=None):
+    def chat(messages, tools=None, continuation_id=None, response_format=None):
         if not api_key:
             raise BackendError("missing API key: set ANTHROPIC_API_KEY in .env")
         system, anth_messages = _to_anthropic_messages(messages)
@@ -237,10 +247,12 @@ def make_anthropic_chat(api_key, model, _post=None):
 # --- local (Ollama) — explicit legacy option, nothing leaves the machine ----
 
 def make_local_chat(host, model, keep_alive):
-    def chat(messages, tools=None):
+    def chat(messages, tools=None, continuation_id=None, response_format=None):
         import ollama  # lazy: bench/demos run without ollama installed or running
         client = ollama.Client(host=host, timeout=120)
         kwargs = {"tools": tools} if tools else {}
+        if response_format and response_format.get("json_schema"):
+            kwargs["format"] = response_format["json_schema"]
         try:
             reply = client.chat(model=model, messages=messages, think=False,
                                 keep_alive=keep_alive, **kwargs)
@@ -359,16 +371,20 @@ def _parse_gemini_response(data):
     msg = {"role": "assistant", "content": content_text.strip()}
     if tool_calls:
         msg["tool_calls"] = tool_calls
+    if data.get("responseId"):
+        msg["continuation_id"] = data["responseId"]
+    if data.get("usageMetadata"):
+        msg["usage"] = data["usageMetadata"]
     return msg
 
 
 def make_gemini_native_chat(api_key, model, _post=None):
     """Native Gemini API backend — handles thought_signature properly."""
-    def chat(messages, tools=None):
+    def chat(messages, tools=None, continuation_id=None, response_format=None):
         if not api_key:
             raise BackendError("missing API key: set GEMINI_API_KEY in .env")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         system_parts, contents = _to_gemini_contents(messages)
 
         body = {"contents": contents}
@@ -378,8 +394,11 @@ def make_gemini_native_chat(api_key, model, _post=None):
         if gemini_tools:
             body["tools"] = gemini_tools
         body["generationConfig"] = {"temperature": 0.2}
+        if response_format and response_format.get("json_schema"):
+            body["generationConfig"].update({"responseMimeType": "application/json",
+                                              "responseSchema": response_format["json_schema"]})
 
-        data = _post_json(url, {}, body, _post=_post)
+        data = _post_json(url, {"x-goog-api-key": api_key}, body, _post=_post)
         return _parse_gemini_response(data)
     return chat
 
@@ -389,26 +408,31 @@ def make_gemini_native_chat(api_key, model, _post=None):
 BACKENDS = ("openrouter", "local", "anthropic", "openai", "gemini", "nvidia", "auto")
 
 
-def get_chat(backend=None):
+def get_chat(backend=None, model=None):
     """Build the chat callable for cfg.model_backend, or an explicit override."""
     from mcp_vision.providers import resolve_provider
     backend = resolve_provider(backend or cfg.model_backend)
     if backend == "local":
-        return make_local_chat(cfg.ollama_host, cfg.planning_model, cfg.ollama_keep_alive)
+        return make_local_chat(cfg.ollama_host, model or cfg.planning_model, cfg.ollama_keep_alive)
     if backend == "openrouter":
         return make_openai_compat_chat("https://openrouter.ai/api/v1", cfg.openrouter_api_key,
-                                       cfg.openrouter_model, "OPENROUTER_API_KEY")
+                                       model or cfg.openrouter_model, "OPENROUTER_API_KEY")
     if backend == "anthropic":
-        return make_anthropic_chat(cfg.anthropic_api_key, cfg.anthropic_model)
+        return make_anthropic_chat(cfg.anthropic_api_key, model or cfg.anthropic_model)
     if backend == "openai":
         return make_openai_compat_chat("https://api.openai.com/v1", cfg.openai_api_key,
-                                       cfg.openai_model, "OPENAI_API_KEY")
+                                       model or cfg.openai_model, "OPENAI_API_KEY")
     if backend == "gemini":
-        return make_gemini_native_chat(cfg.gemini_api_key, cfg.gemini_model)
+        return make_gemini_native_chat(cfg.gemini_api_key, model or cfg.gemini_model)
     if backend == "nvidia":
         return make_openai_compat_chat("https://integrate.api.nvidia.com/v1", cfg.nvidia_api_key,
-                                       cfg.nvidia_model, "NVIDIA_API_KEY")
-    raise BackendError(f"unknown model backend '{backend}'. choose from: openrouter, local, claude, chatgpt, gemini, nvidia")
+                                       model or cfg.nvidia_model, "NVIDIA_API_KEY")
+    raise BackendError(f"unknown model backend '{backend}'. choose from: {', '.join(BACKENDS)}")
+
+
+def get_chat_for(ref):
+    """Resolve a provider-neutral ModelRef without mutating global config."""
+    return get_chat(ref.provider, ref.model)
 
 
 def demo():
