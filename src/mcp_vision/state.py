@@ -174,7 +174,19 @@ def _risk(record: dict[str, Any], operation: Operation) -> Policy:
     return Policy.ROUTINE_WRITE
 
 
-def _identity(record: dict[str, Any], source: str) -> ElementIdentity:
+def _identity(record: dict[str, Any], source: str | None = None) -> ElementIdentity | str:
+    if source is None:
+        backend = record.get("backendNodeId") or record.get("backend_node_id")
+        frame = record.get("frameId") or record.get("frame_id") or "main"
+        if backend is not None:
+            return f"cdp:{frame}:{int(backend)}"
+        stable = {key: record.get(key) for key in (
+            "role", "name", "x", "y", "w", "h", "href", "input_type"
+        )}
+        digest = hashlib.sha256(json.dumps(
+            stable, sort_keys=True, separators=(",", ":"), default=str
+        ).encode()).hexdigest()[:24]
+        return f"observed:{frame}:{digest}"
     raw = record.get("identity") or {}
     dom = raw.get("dom") if isinstance(raw, dict) else None
     ax = raw.get("accessibility") if isinstance(raw, dict) else None
