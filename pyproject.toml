@@ -67,6 +67,7 @@ packages = ["src/mcp_vision", "phase1_vision", "phase2_mcp"]
 "skills.py" = "skills.py"
 "dashboard.py" = "dashboard.py"
 "providers.py" = "providers.py"
+"fast_policy.py" = "fast_policy.py"
 "readiness.py" = "readiness.py"
 "reasoning" = "reasoning"
 "specialists.toml" = "specialists.toml"
