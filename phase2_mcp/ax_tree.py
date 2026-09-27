@@ -16,6 +16,7 @@ INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "combobox", "checkbox",
     "radio", "menuitem", "menuitemcheckbox", "menuitemradio", "tab",
     "slider", "switch", "spinbutton", "option", "treeitem",
+    "date", "time",
 }
 
 

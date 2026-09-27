@@ -21,6 +21,7 @@ from mcp_vision.core.governor import Governor, classify
 from mcp_vision.redaction import redact
 from mcp_vision.core.models import BoundingBox, Policy, ScreenElement
 from phase2_mcp.page_snapshot import SNAPSHOT_JS
+from phase2_mcp.cdp_snapshot import PersistentCDPSnapshotter
 
 
 class Receipt(BaseModel):
@@ -43,14 +44,38 @@ class BrowserSnapshot(BaseModel):
     pruned: dict = Field(default_factory=dict)
     facts: list[dict] = Field(default_factory=list)
     identity: dict = Field(default_factory=dict)
+    completeness: dict = Field(default_factory=dict)
+    viewport: dict = Field(default_factory=dict)
+    protocol: dict = Field(default_factory=dict)
+    guard: dict = Field(default_factory=dict)
     source: str = "dom-accessibility"
 
 
 @dataclass
 class Target:
-    handle: object
+    handle: object | None
     signature: str
     record: dict
+    backend_node_id: int | None = None
+    object_id: str | None = None
+
+
+class _CDPHandle:
+    """Compatibility shim; identity and dispatch still stay on backendNodeId."""
+    def __init__(self, runtime, target):
+        self.runtime, self.target = runtime, target
+
+    async def evaluate(self, expression, *_args):
+        if "el.form" in expression and "submit" in expression:
+            return await self.runtime._cdp_call(
+                self.target, "function(){return !!this.form&&['submit','image'].includes(this.type)}")
+        raise RuntimeError("unsupported compatibility evaluation")
+
+    async def click(self, **_kwargs):
+        await self.runtime._cdp_click(self.target)
+
+    async def dispose(self):
+        return None
 
 
 _STATE_JS = r"""el => ({
@@ -109,6 +134,8 @@ class BrowserRuntime:
         self._snapshot = None
         self._targets = {}
         self._observed_at = 0.0
+        self._cdp_session = self._cdp_page = self._snapshotter = None
+        self._successor_ready = False
         self._lock = asyncio.Lock()
         self._root_id = f"browser-{uuid.uuid4().hex[:16]}"
 
@@ -157,6 +184,28 @@ class BrowserRuntime:
                 pass
         self._targets = {}
         self._snapshot = None
+        self._successor_ready = False
+
+    async def _detach_cdp(self):
+        session = self._cdp_session
+        self._cdp_session = self._cdp_page = self._snapshotter = None
+        if session is not None:
+            try:
+                await session.detach()
+            except Exception:
+                pass
+
+    async def _ensure_cdp(self):
+        if self._cdp_session is not None and self._cdp_page is self.page:
+            return self._snapshotter
+        await self._detach_cdp()
+        context = getattr(self.page, "context", None)
+        if context is None or not hasattr(context, "new_cdp_session"):
+            return None
+        self._cdp_session = await context.new_cdp_session(self.page)
+        self._cdp_page = self.page
+        self._snapshotter = PersistentCDPSnapshotter(self._cdp_session)
+        return self._snapshotter
 
     async def navigate(self, url: str) -> Receipt:
         async with self._lock:
@@ -174,12 +223,7 @@ class BrowserRuntime:
             except Exception as e:
                 return Receipt(status="error", action="navigate", executed=executed, message=redact(str(e)))
 
-    async def snapshot(self) -> BrowserSnapshot:
-        async with self._lock:
-            await self._ensure()
-            if self.page.url != "about:blank":
-                self._check_url(self.page.url)
-            await self._invalidate()
+    async def _legacy_snapshot(self) -> BrowserSnapshot:
             raw = await self.page.evaluate(SNAPSHOT_JS, 60)
             records = []
             for rec in raw["elements"]:
@@ -211,6 +255,61 @@ class BrowserRuntime:
             self._observed_at = time.monotonic()
             return self._snapshot
 
+    async def _cdp_snapshot(self, snapshotter) -> BrowserSnapshot:
+        before = snapshotter.budget.total
+        raw = await snapshotter.capture()
+        records = raw.get("elements") or []
+        self._targets = {}
+        for rec in records:
+            target = Target(None, _signature({
+                key: rec.get(key) for key in
+                ("identity", "role", "name", "x", "y", "w", "h", "input_type", "value", "checked")
+            }), rec, int(rec["backendNodeId"]))
+            target.handle = _CDPHandle(self, target)
+            self._targets[int(rec["index"])] = target
+        try:
+            text = await self.page.locator("body").inner_text(timeout=5000)
+        except Exception:
+            text = ""
+        url = raw.get("url") or self.page.url
+        title = raw.get("title") or await self.page.title()
+        self._snapshot = BrowserSnapshot(
+            snapshot_id=uuid.uuid4().hex, url=url, title=title, text=text[:12000],
+            elements=records, pruned=raw.get("pruned") or {},
+            completeness=raw.get("completeness") or {}, viewport=raw.get("viewport") or {},
+            protocol={"calls": raw.get("protocol_calls", 0) - before,
+                      "detail": raw.get("protocol_call_detail") or {}, "screenshot": False},
+            guard={"url": url, "root": raw.get("root_backend_node_id"),
+                   "focus": raw.get("focus") or ""},
+            source="cdp-dom-snapshot+full-ax",
+        )
+        self._observed_at = time.monotonic()
+        return self._snapshot
+
+    async def _observe_locked(self) -> BrowserSnapshot:
+        await self._ensure()
+        if self.page.url != "about:blank":
+            self._check_url(self.page.url)
+        await self._invalidate()
+        try:
+            snapshotter = await self._ensure_cdp()
+            if snapshotter is not None:
+                return await self._cdp_snapshot(snapshotter)
+        except Exception:
+            # Browsers may deny individual protocol domains. The semantic JS
+            # path remains a complete degradation mode, not a screenshot path.
+            pass
+        return await self._legacy_snapshot()
+
+    async def snapshot(self) -> BrowserSnapshot:
+        async with self._lock:
+            if (self._successor_ready and self._snapshot is not None
+                    and time.monotonic() - self._observed_at <= self.snapshot_ttl
+                    and self.page.url == self._snapshot.url):
+                self._successor_ready = False
+                return self._snapshot
+            return await self._observe_locked()
+
     async def _current_snapshot(self, snapshot_id):
         if (not self._snapshot or snapshot_id != self._snapshot.snapshot_id
                 or time.monotonic() - self._observed_at > self.snapshot_ttl
@@ -222,19 +321,91 @@ class BrowserRuntime:
     async def _target(self, snapshot_id, index):
         await self._current_snapshot(snapshot_id)
         target = self._targets.get(index)
-        if not target or _signature(await target.handle.evaluate(_STATE_JS)) != target.signature:
+        if not target:
+            raise ValueError("target changed; call browser_snapshot again")
+        if target.backend_node_id is not None:
+            await self._cdp_preflight(target)
+            return target
+        if _signature(await target.handle.evaluate(_STATE_JS)) != target.signature:
             raise ValueError("target changed; call browser_snapshot again")
         if not await target.handle.evaluate(_REACHABLE_JS):
             raise ValueError("target is covered, disabled, or detached; inspect again")
         return target
 
+    async def _cdp_object(self, target: Target) -> str:
+        result = await self._snapshotter.send("DOM.resolveNode", {"backendNodeId": target.backend_node_id})
+        object_id = result.get("object", {}).get("objectId")
+        if not object_id:
+            raise ValueError("target detached; call browser_snapshot again")
+        target.object_id = object_id
+        return object_id
+
+    async def _cdp_call(self, target: Target, declaration: str, *, arguments=None, return_by_value=True):
+        object_id = await self._cdp_object(target)
+        result = await self._snapshotter.send("Runtime.callFunctionOn", {
+            "objectId": object_id, "functionDeclaration": declaration,
+            "returnByValue": return_by_value, "awaitPromise": True,
+            "arguments": [{"value": value} for value in (arguments or [])],
+        })
+        if result.get("exceptionDetails"):
+            raise ValueError("target detached; call browser_snapshot again")
+        return result.get("result", {}).get("value")
+
+    async def _cdp_preflight(self, target: Target):
+        rec = target.record
+        state = await self._cdp_call(target, """function(){
+          if (!this.isConnected || this.disabled || this.matches(':disabled') || this.closest('[inert]') || this.getAttribute('aria-disabled') === 'true') return null;
+          const r=this.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2;
+          const hit=this.ownerDocument.elementFromPoint(x,y);
+          const root=this.getRootNode(), host=root&&root.host;
+          return {tag:this.tagName.toLowerCase(),type:(this.getAttribute('type')||'').toLowerCase(),
+            value:this.isContentEditable?this.textContent:('value' in this?this.value:null),checked:'checked' in this?!!this.checked:null,
+            x:r.x,y:r.y,w:r.width,h:r.height,reachable:!!hit&&(hit===this||this.contains(hit)||hit===host||(host&&host.contains(hit))),url:this.ownerDocument.location.href};
+        }""")
+        if (not state or not state.get("reachable")
+                or (rec.get("document_url") and state.get("url") != rec.get("document_url"))
+                or self.page.url != self._snapshot.url):
+            raise ValueError("target changed, covered, or page guard changed; call browser_snapshot again")
+        if state.get("tag", "").upper() != rec.get("node_name", "").upper():
+            raise ValueError("target semantics changed; call browser_snapshot again")
+        expected = dict(rec)
+        scroll_x = 0 if rec.get("root_document") else float(rec.get("root_scroll_x", 0))
+        scroll_y = 0 if rec.get("root_document") else float(rec.get("root_scroll_y", 0))
+        expected["x"] = float(rec.get("x", 0)) - float(rec.get("frame_offset_x", 0)) + scroll_x
+        expected["y"] = float(rec.get("y", 0)) - float(rec.get("frame_offset_y", 0)) + scroll_y
+        for key in ("x", "y", "w", "h"):
+            if abs(float(state.get(key, 0)) - float(expected.get(key, 0))) > 2:
+                raise ValueError("target geometry changed; call browser_snapshot again")
+        if (rec.get("node_name", "").upper() != "SELECT" and rec.get("input_type") != "password"
+                and rec.get("value") is not None and state.get("value") != rec.get("value")):
+            raise ValueError("target value changed; call browser_snapshot again")
+        if rec.get("checked") is not None and bool(state.get("checked")) != bool(rec.get("checked")):
+            raise ValueError("target state changed; call browser_snapshot again")
+        return state
+
+    async def _cdp_click(self, target: Target):
+        x, y = float(target.record["cx"]), float(target.record["cy"])
+        await self._snapshotter.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y,
+                                                                   "button": "left", "clickCount": 1})
+        await self._snapshotter.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y,
+                                                                   "button": "left", "clickCount": 1})
+
+    async def _successor(self) -> BrowserSnapshot | None:
+        try:
+            successor = await self._observe_locked()
+            self._successor_ready = True
+            return successor
+        except Exception:
+            await self._invalidate()
+            return None
+
     def _allow(self, action, target, text=""):
         if not self.allow_writes:
             return False
         rec = target.record
-        box = BoundingBox(x=rec["x"], y=rec["y"], w=rec["w"], h=rec["h"])
+        box = BoundingBox(x=round(rec["x"]), y=round(rec["y"]), w=round(rec["w"]), h=round(rec["h"]))
         element = ScreenElement(id=rec["index"], label=rec["name"], role=rec["role"],
-                                bbox=box, cx=rec["cx"], cy=rec["cy"])
+                                bbox=box, cx=round(rec["cx"]), cy=round(rec["cy"]))
         page_url = self.page.url if self.page else ""
         policy = classify(action, element=element, text=text, url=page_url)
         return self.governor.allow(policy, f'{action}: {rec["role"]} {rec["name"]}\nSite: {origin(page_url)}')
@@ -245,7 +416,10 @@ class BrowserRuntime:
             try:
                 target = await self._target(snapshot_id, index)
                 # Form submission is semantic, even when the label is "Next".
-                submits = await target.handle.evaluate("el => !!el.form && ['submit','image'].includes(el.type)")
+                submits = (await self._cdp_call(target,
+                    "function(){return !!this.form && ['submit','image'].includes(this.type)}")
+                    if isinstance(target.handle, _CDPHandle) else
+                    await target.handle.evaluate("el => !!el.form && ['submit','image'].includes(el.type)"))
                 allowed = self.allow_writes and (
                     self.governor.allow(Policy.RESTRICTED_ACTION,
                                         f'Submit this form: {target.record["name"]}\nSite: {origin(self.page.url)}')
@@ -256,78 +430,111 @@ class BrowserRuntime:
                 # Approval can take time: revalidate the exact same target.
                 await self._target(snapshot_id, index)
                 executed = None  # a timeout may happen after input was dispatched
-                await target.handle.click(timeout=5000)
+                if isinstance(target.handle, _CDPHandle):
+                    await self._cdp_click(target)
+                else:
+                    await target.handle.click(timeout=5000)
                 executed = True
+                successor = await self._successor()
                 return Receipt(status="unverified", action="click", executed=True,
                     message="Click dispatched. Check an explicit postcondition before claiming completion.",
                     evidence={"target": target.record["name"], "url": self.page.url,
-                              "execution_path": "dom", "background": True})
+                              "execution_path": "dom", "background": True,
+                              "successor_snapshot_id": successor.snapshot_id if successor else None})
             except ValueError as e:
                 return Receipt(status="stale", action="click", message=redact(str(e)))
             except Exception as e:
                 return Receipt(status="error", action="click", executed=executed, message=redact(str(e)))
             finally:
-                await self._invalidate()
+                if not self._successor_ready:
+                    await self._invalidate()
 
     async def select(self, snapshot_id: str, index: int, value: str) -> Receipt:
         async with self._lock:
             executed = False
             try:
                 target = await self._target(snapshot_id, index)
-                if await target.handle.evaluate("el => el.tagName.toLowerCase()") != "select":
+                tag = (await self._cdp_call(target, "function(){return this.tagName.toLowerCase()}")
+                       if target.backend_node_id is not None else
+                       await target.handle.evaluate("el => el.tagName.toLowerCase()"))
+                if tag != "select":
                     raise TypeError("target is not a select control")
                 if not self._allow("select_option", target, value):
                     return Receipt(status="blocked", action="select", message="Write policy or confirmation denied the action.")
                 await self._target(snapshot_id, index)
                 executed = None
-                await target.handle.select_option(value=value, timeout=5000)
+                if target.backend_node_id is not None:
+                    actual = await self._cdp_call(target, """function(value){
+                      const option=Array.from(this.options||[]).find(o=>o.value===value);
+                      if(!option)return null; this.value=value;
+                      this.dispatchEvent(new Event('input',{bubbles:true}));
+                      this.dispatchEvent(new Event('change',{bubbles:true})); return this.value;
+                    }""", arguments=[value])
+                else:
+                    await target.handle.select_option(value=value, timeout=5000)
+                    actual = await target.handle.evaluate("el => el.value")
                 executed = True
-                actual = await target.handle.evaluate("el => el.value")
                 matches = actual == value
+                successor = await self._successor()
                 return Receipt(status="verified" if matches else "unverified", action="select", executed=True,
                     message="Selected value read back." if matches else "Control did not retain the selected value.",
                     evidence={"value_matches": matches, "selected_value": actual,
-                              "execution_path": "dom", "background": True})
+                              "execution_path": "dom", "background": True,
+                              "successor_snapshot_id": successor.snapshot_id if successor else None})
             except ValueError as e:
                 return Receipt(status="stale", action="select", message=redact(str(e)))
             except Exception as e:
                 return Receipt(status="error", action="select", executed=executed, message=redact(str(e)))
             finally:
-                await self._invalidate()
+                if not self._successor_ready:
+                    await self._invalidate()
 
     async def set_checked(self, snapshot_id: str, index: int, checked: bool) -> Receipt:
         async with self._lock:
             executed = False
             try:
                 target = await self._target(snapshot_id, index)
-                input_type = await target.handle.evaluate("el => (el.type || '').toLowerCase()")
+                input_type = (await self._cdp_call(target, "function(){return (this.type||'').toLowerCase()}")
+                              if target.backend_node_id is not None else
+                              await target.handle.evaluate("el => (el.type || '').toLowerCase()"))
                 if input_type not in {"checkbox", "radio"}:
                     raise TypeError("target is not a checkbox or radio control")
                 if not self._allow("set_checked", target):
                     return Receipt(status="blocked", action="set_checked", message="Write policy or confirmation denied the action.")
                 await self._target(snapshot_id, index)
                 executed = None
-                await target.handle.set_checked(checked, timeout=5000)
+                if target.backend_node_id is not None:
+                    current = bool(await self._cdp_call(target, "function(){return !!this.checked}"))
+                    if current is not checked:
+                        await self._cdp_click(target)
+                    actual = bool(await self._cdp_call(target, "function(){return !!this.checked}"))
+                else:
+                    await target.handle.set_checked(checked, timeout=5000)
+                    actual = bool(await target.handle.evaluate("el => el.checked"))
                 executed = True
-                actual = bool(await target.handle.evaluate("el => el.checked"))
                 matches = actual is checked
+                successor = await self._successor()
                 return Receipt(status="verified" if matches else "unverified", action="set_checked", executed=True,
                     message="Checked state read back." if matches else "Control did not retain the requested checked state.",
                     evidence={"checked_matches": matches, "checked": actual,
-                              "execution_path": "dom", "background": True})
+                              "execution_path": "dom", "background": True,
+                              "successor_snapshot_id": successor.snapshot_id if successor else None})
             except ValueError as e:
                 return Receipt(status="stale", action="set_checked", message=redact(str(e)))
             except Exception as e:
                 return Receipt(status="error", action="set_checked", executed=executed, message=redact(str(e)))
             finally:
-                await self._invalidate()
+                if not self._successor_ready:
+                    await self._invalidate()
 
     async def upload(self, snapshot_id: str, index: int, path: str) -> Receipt:
         async with self._lock:
             executed = False
             try:
                 target = await self._target(snapshot_id, index)
-                input_type = await target.handle.evaluate("el => (el.type || '').toLowerCase()")
+                input_type = (await self._cdp_call(target, "function(){return (this.type||'').toLowerCase()}")
+                              if target.backend_node_id is not None else
+                              await target.handle.evaluate("el => (el.type || '').toLowerCase()"))
                 if input_type != "file":
                     raise TypeError("target is not a file input")
                 requested = Path(path).expanduser()
@@ -344,22 +551,31 @@ class BrowserRuntime:
                     return Receipt(status="error", action="upload", message="upload file is unavailable")
                 await self._target(snapshot_id, index)
                 executed = None
-                await target.handle.set_input_files(str(file), timeout=5000)
+                if target.backend_node_id is not None:
+                    await self._snapshotter.send("DOM.setFileInputFiles", {
+                        "backendNodeId": target.backend_node_id, "files": [str(file)]})
+                    uploaded = await self._cdp_call(target,
+                        "function(){return Array.from(this.files||[]).map(f=>({name:f.name,size:f.size}))}")
+                else:
+                    await target.handle.set_input_files(str(file), timeout=5000)
+                    uploaded = await target.handle.evaluate(
+                        "el => Array.from(el.files || []).map(f => ({name: f.name, size: f.size}))")
                 executed = True
-                uploaded = await target.handle.evaluate(
-                    "el => Array.from(el.files || []).map(f => ({name: f.name, size: f.size}))")
                 matches = len(uploaded) == 1 and uploaded[0]["name"] == file.name
+                successor = await self._successor()
                 return Receipt(status="verified" if matches else "unverified", action="upload", executed=True,
                     message="Selected file read back." if matches else "File input did not retain the selected file.",
                     evidence={"file_matches": matches, "file_name": file.name,
                               "execution_path": "dom", "background": True,
-                              "bytes": uploaded[0]["size"] if uploaded else None})
+                              "bytes": uploaded[0]["size"] if uploaded else None,
+                              "successor_snapshot_id": successor.snapshot_id if successor else None})
             except ValueError as e:
                 return Receipt(status="stale", action="upload", executed=executed, message=redact(str(e)))
             except Exception as e:
                 return Receipt(status="error", action="upload", executed=executed, message=redact(str(e)))
             finally:
-                await self._invalidate()
+                if not self._successor_ready:
+                    await self._invalidate()
 
     async def scroll(self, snapshot_id: str, delta_y: int) -> Receipt:
         async with self._lock:
@@ -396,26 +612,50 @@ class BrowserRuntime:
                 if len(text) > 100000:
                     raise ValueError("text exceeds 100000 characters")
                 target = await self._target(snapshot_id, index)
-                password = await target.handle.get_attribute("type") == "password"
+                password = ((target.record.get("input_type") or "").lower() == "password"
+                            if target.backend_node_id is not None else
+                            await target.handle.get_attribute("type") == "password")
                 if not self._allow("type_text", target, text) or (password and not self.governor.allow(
                         Policy.RESTRICTED_ACTION, "Fill password field")):
                     return Receipt(status="blocked", action="fill", message="Write policy or confirmation denied the action.")
                 await self._target(snapshot_id, index)
                 executed = None
-                await target.handle.fill(text, timeout=5000)
+                if target.backend_node_id is not None:
+                    if (target.record.get("input_type") or "").lower() in {
+                            "date", "time", "month", "week", "datetime-local", "color", "range"}:
+                        await self._cdp_call(target, """function(value){
+                          this.focus(); this.value=value;
+                          this.dispatchEvent(new Event('input',{bubbles:true}));
+                          this.dispatchEvent(new Event('change',{bubbles:true})); return this.value;
+                        }""", arguments=[text])
+                    else:
+                        await self._cdp_call(target, """function(){
+                          this.focus();
+                          if(typeof this.select==='function')this.select();
+                          else {const s=this.ownerDocument.getSelection();const r=this.ownerDocument.createRange();r.selectNodeContents(this);s.removeAllRanges();s.addRange(r)}
+                          return true;
+                        }""")
+                        await self._snapshotter.send("Input.insertText", {"text": text})
+                    actual = await self._cdp_call(target,
+                        "function(){return this.isContentEditable?this.textContent:this.value}")
+                else:
+                    await target.handle.fill(text, timeout=5000)
+                    actual = await target.handle.evaluate("el => el.isContentEditable ? el.textContent : el.value")
                 executed = True
-                actual = await target.handle.evaluate("el => el.isContentEditable ? el.textContent : el.value")
                 matches = actual == text
+                successor = await self._successor()
                 return Receipt(status="verified" if matches else "unverified", action="fill", executed=True,
                     message="Field value read back." if matches else "Field did not retain the expected value.",
                     evidence={"value_matches": matches, "characters": len(text),
-                              "execution_path": "dom", "background": True})
+                              "execution_path": "dom", "background": True,
+                              "successor_snapshot_id": successor.snapshot_id if successor else None})
             except ValueError as e:
                 return Receipt(status="stale", action="fill", message=redact(str(e)))
             except Exception as e:
                 return Receipt(status="error", action="fill", executed=executed, message=redact(str(e)))
             finally:
-                await self._invalidate()
+                if not self._successor_ready:
+                    await self._invalidate()
 
     async def verify_text(self, text: str) -> Receipt:
         async with self._lock:
@@ -478,9 +718,51 @@ class BrowserRuntime:
         """Compatibility no-op; semantic predicate waits own readiness timing."""
         return None
 
+    async def act_batch(self, snapshot_id: str, actions: list[dict]) -> list[Receipt]:
+        """Run a bounded local batch, stopping at the first state guard change.
+
+        Each action consumes the predecessor observation and produces a cached
+        successor.  Callers never carry a raw index across that boundary.
+        """
+        if len(actions) > 8:
+            raise ValueError("local action batches are limited to eight actions")
+        receipts = []
+        current_id = snapshot_id
+        current = await self._current_snapshot(current_id)
+        guard = dict(current.guard)
+        for spec in actions:
+            action = spec.get("action")
+            identity = spec.get("identity")
+            matches = [rec for rec in current.elements if rec.get("identity") == identity]
+            if len(matches) != 1:
+                receipts.append(Receipt(status="stale", action=str(action),
+                    message="target identity is absent or ambiguous in the current observation"))
+                break
+            index = matches[0]["index"]
+            if action == "click":
+                receipt = await self.click(current_id, index)
+            elif action == "fill":
+                receipt = await self.fill(current_id, index, str(spec.get("text", "")))
+            else:
+                receipts.append(Receipt(status="error", action=str(action),
+                    message="batch actions support click and fill"))
+                break
+            receipts.append(receipt)
+            successor_id = receipt.evidence.get("successor_snapshot_id")
+            if not successor_id or not self._snapshot or self._snapshot.snapshot_id != successor_id:
+                break
+            current = self._snapshot
+            current_id = successor_id
+            new_guard = dict(current.guard)
+            if any(guard.get(key) != new_guard.get(key) for key in ("url", "root", "focus")):
+                break
+            guard = new_guard
+        return receipts
+
     async def close(self):
         async with self._lock:
             await self._invalidate()
+            await self._detach_cdp()
             if self._browser:
                 await self._browser.close()
             if self._playwright:

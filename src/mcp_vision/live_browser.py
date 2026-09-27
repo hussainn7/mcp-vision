@@ -114,6 +114,7 @@ class LiveBrowserRuntime(BrowserRuntime):
     async def close(self):
         async with self._lock:
             await self._invalidate()
+            await self._detach_cdp()
             # Stop our driver only. Chrome and all user tabs belong to the user.
             if self._playwright:
                 await self._playwright.stop()

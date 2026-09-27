@@ -178,6 +178,10 @@ def _identity(record: dict[str, Any], source: str) -> ElementIdentity:
     raw = record.get("identity") or {}
     dom = raw.get("dom") if isinstance(raw, dict) else None
     ax = raw.get("accessibility") if isinstance(raw, dict) else None
+    backend = record.get("backendNodeId") or record.get("backend_node_id")
+    if backend is not None:
+        frame = record.get("frameId") or record.get("frame_id") or "main"
+        dom = f"cdp:{frame}:{int(backend)}"
     if source.startswith("macos") and not ax:
         ax = record.get("ax_ref")
     return ElementIdentity(dom=dom, accessibility=ax, visual=raw.get("visual") if isinstance(raw, dict) else None)
