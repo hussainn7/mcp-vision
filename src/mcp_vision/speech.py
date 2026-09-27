@@ -3,8 +3,14 @@ from __future__ import annotations
 
 import math
 import threading
+import inspect
+import uuid
+from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any
+
+from mcp_vision.interaction_metrics import InteractionMetrics
+from mcp_vision.partial_intent import PartialIntentWatcher, PreparedArtifacts
 
 
 class HoldToTalk:
@@ -287,3 +293,73 @@ class AppleSpeechSession:
             return max(0.0, min(1.0, rms * 8))
         except (AttributeError, TypeError, ValueError):
             return 0.0
+
+
+@dataclass
+class TaskState:
+    task_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    status: str = "listening"
+    request: str = ""
+    question: str = ""
+    answers: list[str] = field(default_factory=list)
+    prepared: PreparedArtifacts | None = None
+
+
+class InputLifecycle:
+    """Typed and spoken final input share one task and action boundary."""
+
+    def __init__(self, *, observers=None, action=None, release_input=None, clock=None):
+        self.state = TaskState()
+        self.metrics = InteractionMetrics(self.state.task_id, **({"clock": clock} if clock else {}))
+        self.watcher = PartialIntentWatcher(observers, metrics=self.metrics)
+        self.action = action
+        self.release_input = release_input or (lambda: None)
+        self.metrics.mark("input_started")
+
+    async def partial(self, text: str):
+        if self.state.status == "cancelled":
+            return None
+        prepared = await self.watcher.partial(text)
+        if prepared:
+            self.state.status = "preparing"
+        return prepared
+
+    async def submit(self, text: str):
+        request = " ".join(text.split())
+        if not request:
+            raise ValueError("final input is empty")
+        self.metrics.mark("final_transcript", generation=self.watcher.generation)
+        self.state.request = request
+        self.state.prepared = self.watcher.finalize(request)
+        self.state.status = "acting"
+        if self.action is None:
+            return None
+        self.metrics.mark("first_useful_action")
+        result = self.action(self.state, request, self.state.prepared)
+        return await result if inspect.isawaitable(result) else result
+
+    def ask(self, question: str) -> TaskState:
+        self.state.status, self.state.question = "question", question
+        self.metrics.mark("clarification_requested")
+        return self.state
+
+    async def answer(self, text: str):
+        if self.state.status != "question":
+            raise RuntimeError("task is not awaiting clarification")
+        self.state.answers.append(text)
+        self.metrics.mark("clarification_answered")
+        return await self.submit(text)
+
+    def verified(self) -> None:
+        self.state.status = "done"
+        self.metrics.mark("verification_complete")
+
+    def cancel(self) -> None:
+        self.release_input()
+        self.watcher.cancel()
+        self.state.prepared = None
+        self.state.status = "cancelled"
+        self.metrics.mark("cancelled", generation=self.watcher.generation)
+
+
+HoldToTalkSession = InputLifecycle

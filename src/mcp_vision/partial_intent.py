@@ -1,58 +1,155 @@
-"""Safe preparation while speech is still streaming.
-
-Partial transcripts are unreliable, so this module only returns *labels* and
-idempotent warmup hints. It never performs a mutation; the final transcript
-still routes through the normal task pipeline.
-"""
+"""Safe partial-intent preparation with generation-scoped artifacts."""
 from __future__ import annotations
 
+import asyncio
+import inspect
 import re
-import time
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable
+
+Observer = Callable[[str], Any | Awaitable[Any]]
 
 
-def preparation_for(text: str) -> dict | None:
-    """Return a safe preparation hint for a stable speech prefix, if any."""
-    text = (text or "").strip()
-    if not text:
-        return None
-    if re.search(r"\bflights?\b", text, re.I):
-        return {"kind": "flights", "label": "Finding flights…"}
-    if re.search(r"\b(search|research|look\s?up|google)\b", text, re.I):
-        return {"kind": "search", "label": "Preparing search…"}
-    from mcp_vision.native_apps import parse_intent
-    intent = parse_intent(text)
-    if intent is not None and intent.action == "open_app":
-        return {"kind": "open_app", "label": f"Opening {intent.value}…", "app": intent.value}
-    return None
+@dataclass(frozen=True)
+class Preparation:
+    capability: str
+    observe_app: bool = True
+    capture_window: bool = True
+    attach_browser: bool = False
+    warm_provider: bool = True
+    resolve_app: bool = True
+
+
+@dataclass
+class PreparedArtifacts:
+    generation: int
+    partial: str
+    preparation: Preparation
+    values: dict[str, Any] = field(default_factory=dict)
+    valid: bool = True
+
+
+def _words(text: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def preparation_for(text: str) -> Preparation:
+    """Classify by required runtime capability, never by a named task/domain."""
+    words = set(_words(text))
+    browser = bool(words & {"browser", "website", "web", "page", "tab", "url", "online",
+                            "search", "navigate", "open", "click", "select", "fill"})
+    capability = "act" if words & {"open", "click", "type", "fill", "select", "press", "submit"} \
+        else "observe"
+    return Preparation(capability=capability, attach_browser=browser)
+
+
+def compatible(partial: str, final: str) -> bool:
+    p, f = _words(partial), _words(final)
+    if not p or not f:
+        return False
+    common = 0
+    for left, right in zip(p, f):
+        if left != right:
+            break
+        common += 1
+    return common >= max(1, min(len(p), len(f)) * 2 // 3)
 
 
 class PartialIntentWatcher:
-    """Fires once per preparation kind once the prefix is stable enough.
+    """Runs only injected read-only preparation and adopts it after final text."""
 
-    Apple Speech partials revise aggressively, so a hint is only emitted after
-    the same kind is seen twice with at least `min_gap` seconds of speech.
-    """
+    def __init__(self, observers: dict[str, Observer] | None = None, *, metrics=None):
+        self.observers = observers or {}
+        self.metrics = metrics
+        self.generation = 0
+        self.current: PreparedArtifacts | None = None
+        self._last = ""
+        self._tasks: set[asyncio.Task] = set()
+        self._sync_previous = ""
 
-    def __init__(self, min_gap: float = 0.4):
-        self.min_gap = min_gap
-        self.seen: dict[str, float] = {}
-        self.fired: set[str] = set()
+    async def partial(self, text: str) -> PreparedArtifacts | None:
+        normalized = " ".join(text.split())
+        if not normalized:
+            return None
+        if self.metrics and not self._last:
+            self.metrics.mark("first_partial", generation=self.generation)
+        old_words, new_words = _words(self._last), _words(normalized)
+        stable = normalized == self._last or (len(new_words) >= 2 and old_words and new_words[:len(old_words)] == old_words)
+        self._last = normalized
+        if not stable:
+            self.invalidate()
+            return None
+        self.invalidate()
+        generation = self.generation
+        plan = preparation_for(normalized)
+        prepared = PreparedArtifacts(generation, normalized, plan)
+        self.current = prepared
+        if self.metrics:
+            self.metrics.mark("stable_partial", generation=generation)
+            self.metrics.mark("preparation_started", generation=generation)
+        requested = {
+            "app_observed": plan.observe_app,
+            "window_captured": plan.capture_window,
+            "browser_attached": plan.attach_browser,
+            "provider_warm": plan.warm_provider,
+            "app_resolved": plan.resolve_app,
+        }
+
+        async def run(name: str, callback: Observer):
+            value = callback(normalized)
+            if inspect.isawaitable(value):
+                value = await value
+            if prepared.valid and self.current is prepared:
+                prepared.values[name] = value
+                if self.metrics:
+                    self.metrics.mark(name, generation=generation)
+
+        for name, enabled in requested.items():
+            if enabled and (callback := self.observers.get(name)):
+                task = asyncio.create_task(run(name, callback))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+        if self._tasks:
+            await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+        return prepared
+
+    def invalidate(self) -> None:
+        self.generation += 1
+        if self.current:
+            self.current.valid = False
+        self.current = None
+        for task in tuple(self._tasks):
+            task.cancel()
+        self._tasks.clear()
+
+    def finalize(self, text: str) -> PreparedArtifacts | None:
+        prepared = self.current
+        if prepared and prepared.valid and compatible(prepared.partial, text):
+            if self.metrics:
+                self.metrics.mark("preparation_adopted", generation=prepared.generation)
+            self.current = None
+            return prepared
+        if self.metrics:
+            self.metrics.mark("preparation_discarded", generation=self.generation)
+        self.invalidate()
+        return None
+
+    def cancel(self) -> None:
+        self.invalidate()
 
     def observe(self, text: str) -> dict | None:
-        prep = preparation_for(text)
-        if prep is None:
+        """Compatibility path for the native UI; still preparation-only."""
+        normalized = " ".join(text.split())
+        previous = _words(self._sync_previous)
+        current = _words(normalized)
+        stable = bool(previous and len(current) >= 2 and current[:len(previous)] == previous)
+        self._sync_previous = normalized
+        if not stable:
             return None
-        kind = prep["kind"]
-        now = time.monotonic()
-        first = self.min_gap if kind == "flights" else self.min_gap
-        if kind not in self.seen:
-            self.seen[kind] = now
-            return None
-        if kind in self.fired or now - self.seen[kind] < first:
-            return None
-        self.fired.add(kind)
-        return prep
+        plan = preparation_for(normalized)
+        return {"kind": plan.capability, "label": "Preparing…", "browser": plan.attach_browser}
 
     def reset(self) -> None:
-        self.seen.clear()
-        self.fired.clear()
+        self.cancel()
+        self._last = ""
+        self._sync_previous = ""
