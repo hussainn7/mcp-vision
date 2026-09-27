@@ -6,7 +6,7 @@ import re
 
 _SYSTEM = (
     "You clean up computer-use results for a human. "
-    "Given a user query and raw page text or notes, reply with a short, clear answer only. "
+    "Given a user query and raw observed evidence, reply with a short, clear answer only. "
     "Use bullets or a small table when comparing options. "
     "No tool talk, no JSON, no speculation beyond the evidence. "
     "If the evidence is incomplete, say what is missing in one line."
@@ -19,8 +19,6 @@ def _heuristic(query: str, evidence: str) -> str:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     prices = re.findall(r"(?:US)?\$\d[\d,]*(?:\.\d{2})?", text)
     times = re.findall(r"\b\d{1,2}:\d{2}(?:\+1)?\b", text)
-    airlines = [a for a in ("United", "Delta", "American", "Southwest", "Frontier", "JetBlue", "Alaska", "Spirit")
-                if a in text]
     title = next((ln for ln in lines if len(ln) > 8 and len(ln) < 100
                   and not ln.lower().startswith("skip to")), "")
 
@@ -33,13 +31,10 @@ def _heuristic(query: str, evidence: str) -> str:
     if times:
         uniq_t = list(dict.fromkeys(times))[:12]
         bits.append("Times: " + ", ".join(uniq_t))
-    if airlines:
-        bits.append("Airlines: " + ", ".join(dict.fromkeys(airlines)))
-
-    # Keep a few dense lines that look like options
+    # Keep compact lines containing comparable numeric facts.
     options = []
     for ln in lines:
-        if re.search(r"\$\d|non-?stop|\d stop|hr ", ln, re.I) and len(ln) < 160:
+        if re.search(r"(?:US)?\$\d|\b\d{1,2}:\d{2}\b|\b\d+(?:\.\d+)?\s*(?:hr|min|km|mi|%)\b", ln, re.I) and len(ln) < 160:
             options.append(ln)
         if len(options) >= 8:
             break

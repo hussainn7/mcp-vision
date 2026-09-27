@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import json
 import re
-from calendar import monthrange
-from datetime import date, timedelta
 from urllib.parse import quote_plus, urlsplit
 
 # Seed aliases only. Planner logic decides *when* to use a product vs Google.
@@ -45,23 +43,6 @@ _RESEARCH = re.compile(
     re.I,
 )
 _SHOP = re.compile(r"\b(buy|price|cheap|under \$?\d|for sale|listing|shop)\b", re.I)
-_FLIGHT = re.compile(r"\b(flight|flights|round.?trip|one.?way|airport|sfo|lax|jfk)\b", re.I)
-
-# Any of these means the user has *decided* the travel window without pinning a
-# specific date — Google Flights is allowed to (and must) pick one for us.
-_ANY_DATES = re.compile(
-    r"\b(anytime|flexible|whenever|any\s+(?:dates?|days?|time|week|month)|open.?ended|"
-    r"your (?:choice|call|pick)|whatever|pick\s+(?:the\s+dates|any))\b",
-    re.I,
-)
-# A concrete or Google-parsable departure/return signal is already given.
-_HAS_DATE = re.compile(
-    r"\b(?:today|tomorrow|this week|next week|this weekend|next weekend|this month|next month|"
-    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}|\d{1,2}\s+"
-    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?|\d{1,4}[-/]\d{1,2})\b",
-    re.I,
-)
-
 
 def _host(url: str) -> str:
     try:
@@ -112,8 +93,8 @@ _PLAN_SYSTEM = (
     "Rules: "
     "1) If they ask about THEIR account/activity/inbox/commits/orders on a named service, "
     "open that service's real site (logged-in home), never a Google search of the sentence. "
-    "2) Public web search only for open-ended research (what is / how to / compare). "
-    "3) Flights → Google Flights. Shopping on a named store → that store. "
+    "2) Google Search only for open-ended research (what is / how to / compare). "
+    "3) Use the most appropriate public application for the requested capability. "
     "4) Prefer https URLs with no tracking junk."
 )
 
@@ -173,116 +154,6 @@ def _best_tab(open_tabs: list[dict], host: str, *, personal: bool) -> dict | Non
     return best
 
 
-def _flight_term(q: str) -> str:
-    """A Google-read flight search phrase with origin/destination + concrete dates.
-
-    Google Flights only shows offer cards once a *concrete* date range is set;
-    without one it just shows the search form (which a read-only mission cannot
-    fill). When the user defers ("pick any dates", "flexible") or leaves the
-    dates out, we pick a sensible upcoming long weekend so real results render.
-    """
-    q = (q or "").strip()
-    relative = _relative_flight_dates(q)
-    if relative:
-        start, end, phrase = relative
-        # Give Google concrete dates rather than hoping its query parser and our
-        # verifier interpret "next week" identically.
-        clean = re.sub(
-            r"\b(?:today|tomorrow|this week|next week|this weekend|next weekend)\b",
-            "", q, flags=re.I,
-        )
-        clean = re.sub(re.escape(phrase), "", clean, flags=re.I)
-        clean = re.sub(
-            r"\b(?:flights?|tickets?|trip)\s+(?:from\s+)?([a-z0-9][a-z0-9 .'-]*?)\s+to\s+",
-            r"flights from \1 to ",
-            clean,
-            flags=re.I,
-        )
-        clean = re.sub(r"\s+", " ", clean).strip(" ,")
-        rendered = start.strftime("%b %d").replace(" 0", " ")
-        if end != start:
-            rendered += " to " + end.strftime("%b %d, %Y").replace(" 0", " ")
-        else:
-            rendered += ", " + str(start.year)
-        return f"{clean} {rendered}".strip()
-    if _HAS_DATE.search(q):
-        return re.sub(r"\s+", " ", q).strip()
-    # No date signal yet: build a clean origin → destination phrase and let
-    # Google Flights render real offer cards for a picked long weekend.
-    stop = r"(?=\s+(?:to|from|on|in|at|for|returning|departing|arriving|with|next|this|sep|oct|stay|whenever|anytime|flexible|any)\b|[,;!.?]|$)"
-    origin = re.search(r"\bfrom\s+([a-z][a-z0-9 \-']*?)" + stop, q, re.I)
-    dest = re.search(r"\bto\s+([a-z][a-z0-9 \-']*?)" + stop, q, re.I)
-    o = (re.sub(r"\s+", " ", origin.group(1)).strip() if origin else "")
-    d = (re.sub(r"\s+", " ", dest.group(1)).strip() if dest else "")
-    if not o:
-        shorthand = re.search(
-            r"\b(?:flights?|tickets?|trip)\s+([a-z0-9][a-z0-9 .'-]*?)\s+to\s+",
-            q,
-            re.I,
-        )
-        before_to = shorthand or re.search(r"\b([a-z][a-z0-9 \-']*?)\s+to\b", q, re.I)
-        if before_to and re.search(r'\b(?:flights?|tickets?|trip)\b', before_to.group(1), re.I):
-            before_to = None
-        o = (re.sub(r"\s+", " ", before_to.group(1)).strip() if before_to else "")
-    if not d:
-        after_from = re.search(r"\bfrom\s+([a-z][a-z0-9 \-']*?)\s*$", q, re.I)
-        d = (re.sub(r"\s+", " ", after_from.group(1)).strip() if after_from else "")
-    phrase = ("flights from " + o) if o else "flights"
-    if d:
-        phrase += " to " + d
-    # Pick next Thursday out, four days back (a typical long weekend) so
-    # Google Flights actually renders offer cards.
-    days = (3 - date.today().weekday()) % 7 or 7
-    d1 = date.today() + timedelta(days=days)
-    d2 = d1 + timedelta(days=4)
-    fmt = lambda d: d.strftime("%b %d").replace(" 0", " ")
-    return f"{phrase} {fmt(d1)} to {fmt(d2)}"
-
-
-def _relative_flight_dates(q: str, today: date | None = None) -> tuple[date, date, str] | None:
-    """Resolve common relative travel windows once, for planning and proof."""
-    today = today or date.today()
-    low = (q or "").lower()
-    if re.search(r"\btomorrow\b", low):
-        day = today + timedelta(days=1)
-        return day, day, "tomorrow"
-    ordinal = re.search(r"\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b", low)
-    if ordinal:
-        wanted = int(ordinal.group(1))
-        year, month = today.year, today.month
-        # An unqualified day means its next calendar occurrence, never a date
-        # that has already passed. Invalid days (for example February 31st)
-        # remain unresolved and fall back to the planner's safe default window.
-        for _ in range(13):
-            if wanted <= monthrange(year, month)[1]:
-                candidate = date(year, month, wanted)
-                if candidate >= today:
-                    return candidate, candidate, ordinal.group(0)
-            month += 1
-            if month == 13:
-                month, year = 1, year + 1
-        return None
-    if re.search(r"\bnext week\b", low):
-        start = today + timedelta(days=(7 - today.weekday()))
-        return start, start + timedelta(days=6), "next week"
-    if re.search(r"\bthis week\b", low):
-        start = today + timedelta(days=1)
-        end = today + timedelta(days=max(1, 6 - today.weekday()))
-        return start, end, "this week"
-    weekend = re.search(r"\b(next|this) weekend\b", low)
-    if weekend:
-        days_to_friday = (4 - today.weekday()) % 7
-        if weekend.group(1) == "next" or days_to_friday == 0:
-            days_to_friday += 7
-        start = today + timedelta(days=days_to_friday)
-        return start, start + timedelta(days=2), weekend.group(0)
-    return None
-
-
-def _flight_search_url(q: str) -> str:
-    return "https://www.google.com/travel/flights?q=" + quote_plus(_flight_term(q)) + "&curr=USD"
-
-
 def plan_url(query: str, *, backend: str | None = "local",
              open_tabs: list[dict] | None = None) -> dict:
     """Decide the first page to open. Prefer product sites for personal tasks."""
@@ -294,11 +165,15 @@ def plan_url(query: str, *, backend: str | None = "local",
     if product == "google" and low != "google":
         product = None
 
-    # Unknown destinations start at search. Model-invented deep links can be
-    # stale or nonexistent; only observed result links are navigated afterward.
-    if _FLIGHT.search(low):
-        return {"url": _flight_search_url(_search_term(q)),
-                "reason": "flight search", "source": "rule"}
+    planned = None if product or research else plan_with_model(q, backend)
+    if planned:
+        host = _host(planned["url"])
+        tab = _best_tab(open_tabs, host, personal=personal) if host else None
+        if tab:
+            return {"url": tab["url"], "reason": f"reuse open tab for {host}",
+                    "source": "tab", "tab_id": tab.get("tab_id"),
+                    "expected_url": tab.get("url")}
+        return planned
 
     if product and (personal or not research):
         url = origin_for(product)

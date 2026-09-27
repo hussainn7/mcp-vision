@@ -58,8 +58,9 @@ def test_personal_skips_deep_tab_opens_home():
     assert plan["source"] == "rule"
 
 
-def test_flights_and_ebay_still_route():
-    assert "travel/flights" in plan_url("flights to SFO next week", backend="none")["url"]
+def test_unrecognized_tasks_and_named_store_route_generically():
+    route = plan_url("find transport to the coast next week", backend="none")
+    assert "google.com/search" in route["url"]
     assert "ebay.com" in plan_url("ebay mechanical keyboard under 100", backend="none")["url"]
 
 
