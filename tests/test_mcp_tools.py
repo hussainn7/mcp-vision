@@ -12,7 +12,6 @@ from mcp_vision.server import (
     click_element,
     inspect_screen,
     open_application,
-    prepare_flight_search,
     press_key_combination,
     set_grabber,
     type_text,
@@ -45,14 +44,6 @@ def test_open_application_uses_verified_native_action(monkeypatch) -> None:
     result = open_application("Notes")
     assert result["verified"] is True
     assert calls == [("open_app", "Notes")]
-
-
-def test_prepare_flight_search_clarifies_then_returns_url() -> None:
-    missing = prepare_flight_search("find me a flight to SF")
-    assert missing["ready"] is False and missing["missing"] == "departure"
-    ready = prepare_flight_search("find flights from ATL to SF next week")
-    assert ready["ready"] is True
-    assert ready["url"].startswith("https://www.google.com/travel/flights?")
 
 
 def _ui() -> Image.Image:

@@ -165,7 +165,7 @@ def plan_url(query: str, *, backend: str | None = "local",
     if product == "google" and low != "google":
         product = None
 
-    planned = None if product or research else plan_with_model(q, backend)
+    planned = None if product or research or re.search(r"\b(search|find|look up|research)\b", low) else plan_with_model(q, backend)
     if planned:
         host = _host(planned["url"])
         tab = _best_tab(open_tabs, host, personal=personal) if host else None

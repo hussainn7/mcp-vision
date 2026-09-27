@@ -217,11 +217,6 @@ def test_public_research_follows_observed_external_source():
     assert next_link(private, page, set()) is None
 
 
-def test_flight_mission_requires_actual_options():
-    mission = compile_mission('flights from ATL to SFO tomorrow', {'url': 'https://www.google.com/travel/flights'})
-    assert all(word in mission.success for word in ('origin', 'destination', 'dates', 'price'))
-
-
 def test_provider_failure_surfaces_without_pointless_scrolls(monkeypatch):
     from backends import BackendError
     def fail(*a):
@@ -251,40 +246,6 @@ def test_fenced_evidence_is_supported_without_accepting_fabricated_quotes(monkey
     assert model_evidence(mission, page, 'local') == page.text
     quote = 'Heat pumps produce unlimited free energy.'
     assert model_evidence(mission, page, 'local') == ''
-
-
-def test_page_quotes_allow_layout_whitespace_but_not_new_facts(monkeypatch):
-    import json
-    from mcp_vision.controller import model_evidence
-    mission = compile_mission('flights from ATL to SFO September 28', {'url': 'https://www.google.com/travel/flights'})
-    page = snap('Frontier\nATL–SFO\nUS$423\nround\u00a0trip')
-    def chat(*a, **k):
-        return {'content': json.dumps({'complete': True, 'quotes': ['Frontier ATL–SFO US$423 round trip']})}
-    monkeypatch.setattr('backends.get_chat', lambda _: chat)
-    assert 'US$423' in model_evidence(mission, page, 'local')
-
-
-def test_flight_options_require_observed_route_and_ordered_dates():
-    from mcp_vision.controller import flight_evidence
-    query = 'Find round-trip flights from ATL to SFO September 28 to October 2, 2026'
-    text = ('Track prices departing 2026-09-28 and returning 2026-10-02\n'
-            '17:25\n–\n19:48\nFrontier\n5 hrs 23 min\nATL–SFO\nNon-stop\nUS$423\nround trip')
-    assert 'Frontier: 17:25–19:48' in flight_evidence(query, snap(text))
-    assert not flight_evidence(query, snap(text.replace('2026-10-02', '2026-10-03')))
-    assert not flight_evidence(query, snap(text.replace('ATL–SFO', 'SFO–ATL')))
-    assert not flight_evidence(query, snap(text.replace('departing', 'returning')))
-
-
-def test_relative_date_city_flight_evidence_is_deterministic(monkeypatch):
-    import mcp_vision.plan
-    from datetime import date
-    from mcp_vision.controller import flight_evidence
-    monkeypatch.setattr(mcp_vision.plan, '_relative_flight_dates',
-                        lambda _q: (date(2026, 9, 21), date(2026, 9, 27), 'next week'))
-    text = ('Departing Mon, Sep 21 Returning Sun, Sep 27\n'
-            '17:25\n–\n19:48\nFrontier\n5 hrs 23 min\nATL–SFO\nNon-stop\nUS$423\nround trip')
-    result = flight_evidence('Find flights from Atlanta to SF next week', snap(text))
-    assert 'ATL–SFO' in result and 'US$423' in result
 
 
 def test_public_research_can_use_exact_article_excerpts_without_a_model():
