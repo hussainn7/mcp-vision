@@ -21,6 +21,7 @@ outputs/*.jpg
 outputs/elements_*.json
 outputs/real_tasks/
 outputs/workflow_test/
+outputs/release_gate/
 
 # Environment config
 .env
