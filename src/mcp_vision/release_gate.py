@@ -148,6 +148,18 @@ def new_report(root: Path, *, permissions: dict | None = None,
     }
 
 
+def report_for_current_build(report: dict | None, root: Path, *,
+                             permissions: dict | None = None,
+                             provider_roles: dict | None = None,
+                             product_path: str = "/Applications/MCP-Vision.app") -> dict[str, Any]:
+    """Reuse evidence only while it belongs to the exact current commit."""
+    current = git_sha(root)
+    if report is not None and report.get("schema") == SCHEMA and report.get("build_sha") == current:
+        return report
+    return new_report(root, permissions=permissions, provider_roles=provider_roles,
+                      product_path=product_path)
+
+
 def empty_live_result(category: str) -> dict[str, Any]:
     return {
         "category": category,

@@ -6,7 +6,7 @@ import pytest
 from mcp_vision.release_gate import (
     LIVE_CATEGORIES, ReleaseGateError, artifact, automated_result,
     metrics_from_replay, new_report, permission_summary, save, set_live_result,
-    validate,
+    report_for_current_build, validate,
 )
 
 
@@ -109,3 +109,12 @@ def test_permission_summary_removes_process_paths_and_pid():
     })
     assert "pid" not in safe and "bundlePath" not in safe and "executablePath" not in safe
     assert safe["accessibility"] is True
+
+
+def test_commit_change_invalidates_all_previous_evidence(tmp_path):
+    previous = complete_report(tmp_path)
+    previous["build_sha"] = "f" * 40
+    current = report_for_current_build(previous, tmp_path)
+    assert current["build_sha"] == "unknown"
+    assert current["automated"]["checks"] == []
+    assert all(item["status"] == "not_run" for item in current["live"]["categories"])

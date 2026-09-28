@@ -19,7 +19,7 @@ from mcp_vision.native_permissions import native_permission_snapshot
 from mcp_vision.release_gate import (
     COUNT_FIELDS, INPUT_MODES, LATENCY_FIELDS, LIVE_CATEGORIES, artifact,
     automated_result, load, metrics_from_replay, new_report, permission_summary,
-    save, set_live_result, validate,
+    report_for_current_build, save, set_live_result, validate,
 )
 
 
@@ -53,8 +53,9 @@ def init_report(path: Path) -> int:
 
 
 def run_automated(path: Path) -> int:
-    report = load(path) if path.exists() else new_report(
-        ROOT, permissions=permission_summary(native_permission_snapshot()),
+    existing = load(path) if path.exists() else None
+    report = report_for_current_build(
+        existing, ROOT, permissions=permission_summary(native_permission_snapshot()),
         provider_roles=role_readiness(cfg))
     results = []
     for name, command, additions in DEFAULT_CHECKS:
