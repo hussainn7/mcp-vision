@@ -5,10 +5,13 @@ ROOT = Path(__file__).parents[1]
 RUNTIME = [
     ROOT / "src/mcp_vision/plan.py",
     ROOT / "src/mcp_vision/controller.py",
+    ROOT / "src/mcp_vision/request_routing.py",
     ROOT / "src/mcp_vision/partial_intent.py",
     ROOT / "src/mcp_vision/summarize.py",
-    ROOT / "reasoning/intent.py",
-    ROOT / "reasoning/reasoners.py",
+    ROOT / "src/mcp_vision/tasks.py",
+    ROOT / "src/mcp_vision/server.py",
+    ROOT / "src/mcp_vision/reasoning/intent.py",
+    ROOT / "src/mcp_vision/reasoning/reasoners.py",
 ]
 
 
