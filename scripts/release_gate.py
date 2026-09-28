@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 import time
+import json
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +39,20 @@ DEFAULT_CHECKS = (
 )
 
 
+def permission_evidence() -> dict:
+    """Prefer the process that actually performs installed-product actions."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:7331/api/status", timeout=1) as response:
+            payload = json.load(response)
+        permissions = payload.get("permissions", {})
+        if (payload.get("runtime") == "ready"
+                and permissions.get("bundleId") == "org.mcpvision.contextual"):
+            return permission_summary({**permissions, "source": "installed_product"})
+    except (OSError, ValueError):
+        pass
+    return permission_summary({**native_permission_snapshot(), "source": "runner_process"})
+
+
 def report_path(value: str) -> Path:
     return Path(value).resolve()
 
@@ -44,7 +60,7 @@ def report_path(value: str) -> Path:
 def init_report(path: Path) -> int:
     report = new_report(
         ROOT,
-        permissions=permission_summary(native_permission_snapshot()),
+        permissions=permission_evidence(),
         provider_roles=role_readiness(cfg),
     )
     save(report, path)
@@ -55,7 +71,7 @@ def init_report(path: Path) -> int:
 def run_automated(path: Path) -> int:
     existing = load(path) if path.exists() else None
     report = report_for_current_build(
-        existing, ROOT, permissions=permission_summary(native_permission_snapshot()),
+        existing, ROOT, permissions=permission_evidence(),
         provider_roles=role_readiness(cfg))
     results = []
     for name, command, additions in DEFAULT_CHECKS:

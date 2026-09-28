@@ -111,10 +111,11 @@ def test_permission_summary_removes_process_paths_and_pid():
     safe = permission_summary({
         "pid": 123, "bundlePath": "/Users/person/private", "executablePath": "/private/bin",
         "platform": "darwin", "process": "MCP-Vision", "bundleId": "org.mcpvision.contextual",
-        "accessibility": True,
+        "accessibility": True, "source": "installed_product",
     })
     assert "pid" not in safe and "bundlePath" not in safe and "executablePath" not in safe
     assert safe["accessibility"] is True
+    assert safe["source"] == "installed_product"
 
 
 def test_commit_change_invalidates_all_previous_evidence(tmp_path):

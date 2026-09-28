@@ -85,7 +85,7 @@ def permission_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     allowed = (
         "platform", "process", "bundleId", "accessibility", "screenRecording",
         "microphone", "microphoneStatus", "speechRecognition",
-        "speechRecognitionStatus", "scope",
+        "speechRecognitionStatus", "scope", "source",
     )
     return {key: snapshot.get(key) for key in allowed}
 
