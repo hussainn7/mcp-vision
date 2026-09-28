@@ -14,7 +14,7 @@ import subprocess
 import sys
 import sysconfig
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', default='outputs/MCP-Vision.app')
@@ -51,37 +51,36 @@ plist_data = plistlib.dumps(info)
 (app / 'Contents' / 'Info.plist').write_bytes(plist_data)
 
 icon_source = root / 'dist' / 'logoW.png'
-if not icon_source.is_file():
-    raise SystemExit(f'App icon is unavailable: {icon_source}')
 cropped_icon = root / 'outputs' / 'MCPVision.icon.png'
-with Image.open(icon_source).convert('RGBA') as source_image:
-    visible_alpha = source_image.getchannel('A').point(lambda value: 255 if value > 10 else 0)
-    bounds = visible_alpha.getbbox()
-    if bounds is None:
-        raise SystemExit(f'App icon has no visible pixels: {icon_source}')
-    left, top, right, bottom = bounds
-    side = min(source_image.width, source_image.height, int(max(right - left, bottom - top) * 1.2))
-    center_x = (left + right) // 2
-    center_y = (top + bottom) // 2
-    crop_left = max(0, min(source_image.width - side, center_x - side // 2))
-    crop_top = max(0, min(source_image.height - side, center_y - side // 2))
-    source_image.crop((crop_left, crop_top, crop_left + side, crop_top + side)).save(cropped_icon)
-iconset = root / 'outputs' / 'MCPVision.iconset'
-if iconset.exists():
-    shutil.rmtree(iconset)
-iconset.mkdir(parents=True)
-for points in (16, 32, 128, 256, 512):
-    for scale in (1, 2):
-        pixels = points * scale
-        suffix = '' if scale == 1 else '@2x'
-        subprocess.run([
-            'sips', '-z', str(pixels), str(pixels), str(cropped_icon),
-            '--out', str(iconset / f'icon_{points}x{points}{suffix}.png'),
-        ], check=True, stdout=subprocess.DEVNULL)
-subprocess.run([
-    'iconutil', '-c', 'icns', str(iconset), '-o', str(resources / 'MCPVision.icns'),
-], check=True)
-shutil.rmtree(iconset)
+if icon_source.is_file():
+    with Image.open(icon_source).convert('RGBA') as source_image:
+        visible_alpha = source_image.getchannel('A').point(lambda value: 255 if value > 10 else 0)
+        bounds = visible_alpha.getbbox()
+        if bounds is None:
+            raise SystemExit(f'App icon has no visible pixels: {icon_source}')
+        left, top, right, bottom = bounds
+        side = min(source_image.width, source_image.height, int(max(right - left, bottom - top) * 1.2))
+        center_x = (left + right) // 2
+        center_y = (top + bottom) // 2
+        crop_left = max(0, min(source_image.width - side, center_x - side // 2))
+        crop_top = max(0, min(source_image.height - side, center_y - side // 2))
+        source_image.crop((crop_left, crop_top, crop_left + side, crop_top + side)).save(cropped_icon)
+else:
+    # Clean checkouts do not carry ignored dist assets. Reproduce the checked-in
+    # favicon geometry directly so packaging never depends on a developer file.
+    source_image = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(source_image)
+    draw.rounded_rectangle((0, 0, 1023, 1023), radius=307, fill='#d2f3a3')
+    line = 102
+    ink = '#254b36'
+    draw.line((512, 179, 512, 845), fill=ink, width=line)
+    draw.line((179, 512, 845, 512), fill=ink, width=line)
+    draw.line((282, 282, 742, 742), fill=ink, width=line)
+    draw.line((282, 742, 742, 282), fill=ink, width=line)
+    source_image.save(cropped_icon)
+icon_digest = icon_source.read_bytes() if icon_source.is_file() else cropped_icon.read_bytes()
+with Image.open(cropped_icon) as icon_image:
+    icon_image.save(resources / 'MCPVision.icns', format='ICNS')
 cropped_icon.unlink()
 
 library = Path(sys.base_prefix) / 'lib' / sysconfig.get_config_var('LDLIBRARY')
@@ -150,7 +149,7 @@ int main(int argc, char **argv) {
 
 launcher = root / 'outputs' / 'MCPVisionLauncher.m'
 launcher.write_text(source)
-digest = hashlib.sha256(source.encode() + plist_data + icon_source.read_bytes()).hexdigest()
+digest = hashlib.sha256(source.encode() + plist_data + icon_digest).hexdigest()
 binary = macos / 'MCP-Vision'
 need_rebuild = args.force or not binary.exists() or not stamp.exists() or stamp.read_text().strip() != digest
 
