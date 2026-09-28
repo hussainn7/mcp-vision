@@ -76,6 +76,12 @@ def test_private_or_raw_fields_are_rejected(tmp_path):
     assert "forbidden" in validate(report, tmp_path)[0]
 
 
+def test_user_specific_absolute_paths_are_rejected(tmp_path):
+    report = complete_report(tmp_path)
+    report["automated"]["checks"][0]["command"][0] = "/Users/person/.venv/bin/python"
+    assert validate(report, tmp_path) == ["user-specific absolute paths are forbidden"]
+
+
 def test_failed_result_needs_reproducible_blocker(tmp_path):
     report = new_report(tmp_path)
     report["build_sha"] = "c" * 40

@@ -253,6 +253,9 @@ def validate(report: dict, artifact_root: Path, *, require_complete: bool = Fals
     errors: list[str] = []
     try:
         _walk_for_private_fields(report)
+        encoded = json.dumps(report, ensure_ascii=True)
+        if re.search(r"/(?:Users|home)/[^/\"\\]+", encoded):
+            raise ReleaseGateError("user-specific absolute paths are forbidden")
         if report.get("schema") != SCHEMA:
             raise ReleaseGateError("unsupported release report schema")
         if not re.fullmatch(r"[0-9a-f]{40}|unknown", str(report.get("build_sha"))):

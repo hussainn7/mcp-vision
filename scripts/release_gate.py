@@ -64,8 +64,9 @@ def run_automated(path: Path) -> int:
         environment.update(additions)
         completed = subprocess.run(command, cwd=ROOT, env=environment,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        recorded_command = ("python", *command[1:]) if command[0] == sys.executable else command
         results.append(automated_result(
-            name, command, returncode=completed.returncode,
+            name, recorded_command, returncode=completed.returncode,
             duration_ms=(time.monotonic() - started) * 1000,
             output=completed.stdout,
         ))
