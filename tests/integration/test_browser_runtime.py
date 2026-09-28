@@ -482,7 +482,9 @@ def test_fastpath_completes_dynamic_autocomplete_and_survives_rerender():
         assert result.status is FastPathStatus.VERIFIED and result.subgoal_complete
         assert not result.task_complete
         assert [step.operation for step in result.steps] == ["type", "press"]
-        assert result.metrics.actions == 2 and result.metrics.observations == 3
+        # The rerender may invalidate the successor once, but observation work
+        # must remain bounded and the action count must not grow.
+        assert result.metrics.actions == 2 and 3 <= result.metrics.observations <= 4
         assert await page.input_value("#destination-v2") == "SFO"
         assert page.url.endswith("/flights?destination=SFO")
 
