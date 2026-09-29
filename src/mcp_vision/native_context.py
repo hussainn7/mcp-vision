@@ -1,10 +1,13 @@
 """Native macOS accessibility observation, guidance, and bounded Act."""
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
 from uuid import uuid4
+
+_CAMEL_SPLIT = re.compile(r"(?<!^)(?=[A-Z])")
 
 from mcp_vision.browser import BrowserSnapshot, Receipt
 from mcp_vision.context import ContextBounds, ContextElement
@@ -21,9 +24,8 @@ from mcp_vision.redaction import redact
 
 
 def role_label(role: str) -> str:
-    import re
     text = (role or '').removeprefix('AX').strip()
-    return re.sub(r'(?<!^)(?=[A-Z])', ' ', text).strip()
+    return _CAMEL_SPLIT.sub(' ', text).strip()
 
 
 def normalize_role(role: str) -> str:

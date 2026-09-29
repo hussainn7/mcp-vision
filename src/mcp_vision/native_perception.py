@@ -33,11 +33,23 @@ class WindowCapture:
     scale: float = 1.0
 
 
+_WIN_INFO_CACHE: tuple[float, list[dict[str, Any]]] | None = None
+_WIN_INFO_TTL = 0.05
+
+
 def _window_info(_pid: int) -> list[dict[str, Any]]:
+    """Query WindowServer; result is cached for 50ms to avoid redundant IPC calls."""
+    import time
     import Quartz
 
+    global _WIN_INFO_CACHE
+    now = time.monotonic()
+    if _WIN_INFO_CACHE is not None and now - _WIN_INFO_CACHE[0] < _WIN_INFO_TTL:
+        return _WIN_INFO_CACHE[1]
     options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
-    return list(Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or [])
+    result = list(Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or [])
+    _WIN_INFO_CACHE = (now, result)
+    return result
 
 
 def visible_window_ids(pid: int) -> tuple[int, ...]:
