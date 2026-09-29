@@ -29,10 +29,6 @@ class Reasoner(Protocol):
     def decide(self, state: AgentState, meta: Any) -> Decision: ...
 
 
-def _find_flight(state: AgentState) -> bool:
-    return bool(re.search(r"\b(flights?|fly|flying|round.?trip|one.?way)\b",
-                          state.objective.lower()))
-
 
 def _consequential(state: AgentState) -> bool:
     return int(state.consequence_level) >= int(ConsequenceLevel.SIGNIFICANT)
@@ -100,20 +96,10 @@ class HeuristicReasoner:
         return ""
 
     def _first_action(self, state: AgentState, goal: str) -> Decision:
-        if _find_flight(state):
-            state.add_assumption(
-                "dates flexible; one traveler; economy class",
-                basis="reasonable defaults for exploratory flight research",
-                confidence=0.5, reversible=True, verify_before=ConsequenceLevel.SIGNIFICANT)
-            return Decision(
-                strategy="compare flight options",
-                next=ProposedAction(
-                    action="search", params={"query": goal, "kind": "flights"},
-                    expected=ExpectedOutcome(action="search", expected_effect="flight options",
-                                             success_signal="results"),
-                    consequence=ConsequenceLevel.NONE, reversible=True,
-                    rationale="research only; dates assumed flexible"),
-                meta="research path; never purchase without confirmation")
+        from mcp_vision.domain_slots import get_domain_decision
+        domain = get_domain_decision(state)
+        if domain is not None:
+            return domain
         if re.search(r"\b(clean|organize|sort|tidy)\b", goal):
             state.add_assumption(
                 "goal is reversible organization; leave ambiguous files alone",

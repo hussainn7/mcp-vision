@@ -172,7 +172,7 @@ _EQUALS_BUTTONS = ('equals', '=', 'equal', 'result')
 
 
 def explicit_arithmetic_clicks(request: str, snapshot) -> list[Step] | None:
-    """Compile arithmetic into grounded button presses on a calculator surface.
+    """Compile arithmetic into grounded button presses on a numeric keypad surface.
 
     Deterministic Rules-level execution: the observed keypad must contain every
     needed control or the compilation aborts to the model. Works for any app

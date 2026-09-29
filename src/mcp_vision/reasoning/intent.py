@@ -74,7 +74,8 @@ def analyze(raw: str, context: object | None = None, *,
     if any(word in text for word in _DATE_HINTS):
         state.constraints_explicit["timing"] = [w for w in _DATE_HINTS if w in text]
         state.constraints_inferred["timing_flexible"] = bool(re.search(r"\b(anytime|whenever|flexible|any )\b", text))
-    if re.search(r"\b(flight|flights)\b", text):
+    from mcp_vision.domain_slots import is_travel_objective
+    if is_travel_objective(text):
         state.constraints_explicit["travel"] = True
     if _PREF_CHEAP.search(text):
         state.preferences["cost"] = "low"
