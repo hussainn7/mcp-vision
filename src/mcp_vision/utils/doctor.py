@@ -56,7 +56,7 @@ def _screen_recording(helper: dict | None = None) -> Check:
         identity = "MCP-Vision.app" if helper else "this CLI process"
         return Check("screen-recording", bool(ok), f"{identity}: " + ("granted" if ok else "not granted"))
     except Exception as e:
-        return Check("screen-recording", True, f"could not probe TCC ({e})")
+        return Check("screen-recording", False, f"could not probe TCC ({e})")
 
 
 def _accessibility(helper: dict | None = None) -> Check:
@@ -73,7 +73,7 @@ def _accessibility(helper: dict | None = None) -> Check:
             detail += " — start MCP-Vision.app to check the stable helper identity"
         return Check("accessibility", bool(ok), detail)
     except Exception as e:
-        return Check("accessibility", True, f"could not probe AX ({e})")
+        return Check("accessibility", False, f"could not probe AX ({e})")
 
 
 def _ollama() -> Check:
@@ -129,13 +129,25 @@ def _which() -> Check:
     return Check("cli", bool(exe), exe or "mcp-vision not on PATH (pipx install mcp-vision)")
 
 
+def _jev() -> Check:
+    try:
+        from mcp_vision.fast_policy import jev_status
+        s = jev_status()
+        if s["configured"]:
+            return Check("jev-fast-policy", True, f"model={s['model']} status={s['status']}")
+        return Check("jev-fast-policy", False,
+                     "TYPESAFE_API_KEY not set — add it to .env for 200x faster decisions (optional)")
+    except Exception as e:
+        return Check("jev-fast-policy", False, f"could not load jev status ({e})")
+
+
 def status_checks() -> list[Check]:
     helper = _helper_permissions()
     return [_screen_recording(helper), _accessibility(helper), _contextual_ui(), _chrome_extension(), _ollama()]
 
 
 def run_doctor() -> list[Check]:
-    checks = [_python(), _fastmcp(), _mss(), *status_checks(), _hud(), _which()]
+    checks = [_python(), _fastmcp(), _mss(), *status_checks(), _jev(), _hud(), _which()]
     for c in checks:
         log.info("%s %s — %s", "ok" if c.ok else "FAIL", c.name, c.detail)
     return checks

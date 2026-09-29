@@ -28,3 +28,21 @@ def role_readiness(config) -> dict:
         except Exception as exc:
             roles[role] = {"status": "invalid", "error": type(exc).__name__}
     return {"roles": roles, "secrets": "redacted"}
+
+
+def fast_policy_readiness() -> dict:
+    """Report Jev fast-policy status without exposing the key."""
+    from mcp_vision.fast_policy import jev_status
+    auto_policy = os.environ.get("SCREEN_AGENT_FAST_POLICY") or (
+        "jev" if os.environ.get("TYPESAFE_API_KEY") else "rules"
+    )
+    return {"auto_policy": auto_policy, "jev": jev_status()}
+
+
+def full_readiness(config) -> dict:
+    result = role_readiness(config)
+    try:
+        result["fast_policy"] = fast_policy_readiness()
+    except Exception as exc:
+        result["fast_policy"] = {"status": "error", "error": type(exc).__name__}
+    return result

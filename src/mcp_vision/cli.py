@@ -53,11 +53,17 @@ def _contextual_ui_ready(port: int) -> bool:
               help="live mode: native AppleScript (no automation banner) or CDP (shows banner).")
 @click.option("--cdp-endpoint", default=None, help="Optional loopback endpoint for --driver cdp.")
 @click.option("--fast-policy", type=click.Choice(["rules", "jev", "local", "system2", "disabled"]),
-              default="rules", show_default=True, help="Bounded routine-action chooser; execution remains local.")
+              default=None, show_default=False,
+              help="Bounded routine-action chooser. Defaults to 'jev' when TYPESAFE_API_KEY is set, else 'rules'.")
 def serve(allow_browser_writes: bool, headed: bool, origin: tuple[str, ...], browser_mode: str,
-          live_driver: str, cdp_endpoint: str | None, fast_policy: str) -> None:
+          live_driver: str, cdp_endpoint: str | None, fast_policy: str | None) -> None:
     """Run the MCP server on stdio (stdout is JSON-RPC only)."""
+    import os
     from mcp_vision.server import main
+    if fast_policy is None:
+        fast_policy = os.environ.get("SCREEN_AGENT_FAST_POLICY") or (
+            "jev" if os.environ.get("TYPESAFE_API_KEY") else "rules"
+        )
     if cdp_endpoint and browser_mode != "live":
         raise click.UsageError("--cdp-endpoint requires --browser live")
     if cdp_endpoint:
@@ -370,7 +376,7 @@ def doctor() -> None:
     """Check display permissions, accessibility, and local backends."""
     from mcp_vision.utils.doctor import run_doctor
     checks = run_doctor()
-    optional = {"ollama", "cli"}
+    optional = {"ollama", "cli", "jev-fast-policy"}
     failed = False
     for c in checks:
         mark = "ok" if c.ok else ("skip" if c.name in optional else "FAIL")
@@ -378,6 +384,60 @@ def doctor() -> None:
         if not c.ok and c.name not in optional:
             failed = True
     sys.exit(1 if failed else 0)
+
+
+@cli.command()
+@click.option("--request", is_flag=True, default=False,
+              help="Trigger system permission prompts for Accessibility and Screen Recording.")
+def permissions(request: bool) -> None:
+    """Show macOS TCC permission status; optionally request missing grants."""
+    from mcp_vision.native_permissions import (
+        native_permission_snapshot, request_accessibility, request_screen_recording,
+    )
+    if request:
+        click.echo("Requesting Accessibility permission…")
+        request_accessibility()
+        click.echo("Requesting Screen Recording permission…")
+        request_screen_recording()
+    snap = native_permission_snapshot()
+    rows = [
+        ("accessibility",    snap.get("accessibility")),
+        ("screen-recording", snap.get("screenRecording")),
+        ("microphone",       snap.get("microphone")),
+        ("speech",           snap.get("speechRecognition")),
+    ]
+    for name, state in rows:
+        if state is True:
+            mark, detail = "ok  ", "granted"
+        elif state is False:
+            mark, detail = "FAIL", "denied — open System Settings › Privacy & Security"
+        else:
+            mark, detail = "----", "unknown / not applicable"
+        click.echo(f"  [{mark}] {name}: {detail}")
+    ax_ok = snap.get("accessibility") is True
+    sc_ok = snap.get("screenRecording") is True
+    if not ax_ok or not sc_ok:
+        click.echo("")
+        click.echo("  Run `mcp-vision permissions --request` to trigger system prompts.")
+    sys.exit(0 if (ax_ok and sc_ok) else 1)
+
+
+@cli.command()
+def jev() -> None:
+    """Show Jev fast-policy configuration status."""
+    import os
+    from mcp_vision.fast_policy import jev_status
+    s = jev_status()
+    auto = os.environ.get("SCREEN_AGENT_FAST_POLICY") or ("jev" if os.environ.get("TYPESAFE_API_KEY") else "rules")
+    click.echo(f"  configured : {s['configured']}")
+    click.echo(f"  model      : {s['model']}")
+    click.echo(f"  status     : {s['status']}")
+    click.echo(f"  auto-select: {auto}")
+    if not s["configured"]:
+        click.echo("")
+        click.echo("  Add TYPESAFE_API_KEY=<key> to your .env to enable Jev.")
+        click.echo("  Keys at https://jevapi.dev — $0.042/1M tokens, output free.")
+    sys.exit(0 if s["configured"] else 1)
 
 
 if __name__ == "__main__":

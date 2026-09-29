@@ -15,8 +15,8 @@ def native_permission_snapshot() -> dict[str, Any]:
         "bundleId": None,
         "bundlePath": None,
         "executablePath": sys.executable,
-        "accessibility": True,
-        "screenRecording": True,
+        "accessibility": None,
+        "screenRecording": None,
         "microphone": None,
         "microphoneStatus": "unavailable",
         "speechRecognition": None,
@@ -76,4 +76,25 @@ def request_screen_recording() -> dict[str, Any]:
         from Quartz import CGRequestScreenCaptureAccess
 
         CGRequestScreenCaptureAccess()
+    return native_permission_snapshot()
+
+
+def request_accessibility() -> dict[str, Any]:
+    """Prompt macOS to add this process to the Accessibility TCC list.
+
+    The system dialog only appears the first time, or after the user removes the
+    entry. Subsequent calls return the current grant state without re-prompting.
+    """
+    if sys.platform == "darwin":
+        try:
+            import ApplicationServices as AX
+
+            options = {AX.kAXTrustedCheckOptionPrompt: True}
+            AX.AXIsProcessTrustedWithOptions(options)
+        except Exception:
+            import subprocess
+            subprocess.Popen(
+                ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
     return native_permission_snapshot()
