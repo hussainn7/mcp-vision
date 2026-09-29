@@ -6,19 +6,65 @@ they never execute them.  Consequential candidates always escalate to System-2.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import math
 import os
+import threading
+import urllib.parse
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mcp_vision.core.models import Policy
 from mcp_vision.state import ActionCandidate, Operation, UIState
+
+
+class _JevHTTPPool:
+    """Reuse HTTPS connections to the Jev endpoint instead of reconnecting every call."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._conns: dict[str, http.client.HTTPSConnection] = {}
+
+    def post(self, url: str, body: bytes, auth: str, timeout: int = 25) -> bytes:
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.netloc
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        headers = {"Authorization": auth, "Content-Type": "application/json",
+                   "Connection": "keep-alive"}
+        for attempt in range(2):
+            try:
+                conn = self._get(host, timeout)
+                conn.request("POST", path, body=body, headers=headers)
+                resp = conn.getresponse()
+                data = resp.read()
+                if resp.status >= 400:
+                    raise http.client.HTTPException(
+                        f"HTTP {resp.status} from Jev: {data[:256].decode(errors='replace')}")
+                return data
+            except http.client.HTTPException:
+                raise
+            except Exception:
+                with self._lock:
+                    self._conns.pop(host, None)
+                if attempt == 1:
+                    raise
+
+        raise RuntimeError("unreachable")
+
+    def _get(self, host: str, timeout: int) -> http.client.HTTPSConnection:
+        with self._lock:
+            conn = self._conns.get(host)
+            if conn is None:
+                conn = http.client.HTTPSConnection(host, timeout=timeout)
+                self._conns[host] = conn
+            return conn
+
+
+_jev_pool = _JevHTTPPool()
 
 
 class PolicyDecision(BaseModel):
@@ -197,10 +243,8 @@ class JevPolicy:
 
         def request() -> dict[str, Any]:
             raw = json.dumps(body).encode()
-            req = Request(self.endpoint, data=raw, method="POST", headers={
-                "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-            with urlopen(req, timeout=25) as response:
-                return json.loads(response.read())
+            data = _jev_pool.post(self.endpoint, body=raw, auth=f"Bearer {key}")
+            return json.loads(data)
 
         try:
             result = await asyncio.to_thread(request)
@@ -233,7 +277,8 @@ class JevPolicy:
             )
             return validate_decision(decision, state, safe)
         except Exception as exc:
-            failure = f"HTTP {exc.code}" if isinstance(exc, HTTPError) else type(exc).__name__
+            failure = (f"HTTP {exc.status}" if isinstance(exc, http.client.HTTPException)
+                       else type(exc).__name__)
             return PolicyDecision(state_id=state.state_id, disposition="replan", needs_system2=True,
                                   reason=f"Jev unavailable or invalid: {failure}", provider="jev",
                                   latency_ms=(time.perf_counter() - started) * 1000,
@@ -284,8 +329,13 @@ class JevPolicy:
 def jev_status() -> dict[str, Any]:
     """Expose configuration presence without pretending it is a health check."""
     settings = _jev_settings()
-    configured = bool(settings.typesafe_api_key)
+    env_key = os.environ.get("TYPESAFE_API_KEY")
+    raw_key = settings.typesafe_api_key
+    configured = bool(raw_key)
+    key_source = ("env" if env_key else "file") if configured else "unset"
+    key_preview = (raw_key[:4] + "****" + raw_key[-2:]) if raw_key and len(raw_key) > 6 else ("****" if raw_key else "")
     return {"configured": configured, "verified": False, "model": settings.typesafe_model,
+            "key_source": key_source, "key_preview": key_preview,
             "status": "configured_unverified" if configured else "not_configured"}
 
 

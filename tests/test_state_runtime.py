@@ -243,5 +243,10 @@ def test_jev_system2_head_escalates_without_execution(monkeypatch):
 def test_jev_status_loads_repo_style_dotenv_without_exposing_key(tmp_path, monkeypatch):
     (tmp_path / ".env").write_text("TYPESAFE_API_KEY=test-secret\nTYPESAFE_MODEL=jev-test\n")
     monkeypatch.chdir(tmp_path)
-    assert jev_status() == {"configured": True, "verified": False, "model": "jev-test",
-                            "status": "configured_unverified"}
+    status = jev_status()
+    assert status["configured"] is True
+    assert status["verified"] is False
+    assert status["model"] == "jev-test"
+    assert status["status"] == "configured_unverified"
+    assert status["key_source"] in {"env", "file"}
+    assert "****" in status["key_preview"]
