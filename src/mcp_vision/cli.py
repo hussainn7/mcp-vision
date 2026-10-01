@@ -375,15 +375,9 @@ def probe(live: bool, headed: bool, summarize: bool) -> None:
 def doctor() -> None:
     """Check display permissions, accessibility, and local backends."""
     from mcp_vision.utils.doctor import run_doctor
-    from mcp_vision.mascot import print_banner
     checks = run_doctor()
     optional = {"ollama", "cli", "jev-fast-policy"}
     failed = False
-    check_map = {c.name: c.ok for c in checks}
-    print_banner(
-        ax_ok=check_map.get("accessibility", True),
-        sc_ok=check_map.get("screen-recording", True),
-    )
     for c in checks:
         mark = "ok" if c.ok else ("skip" if c.name in optional else "FAIL")
         click.echo(f"  [{mark}] {c.name}: {c.detail}")
@@ -400,7 +394,6 @@ def permissions(request: bool) -> None:
     from mcp_vision.native_permissions import (
         native_permission_snapshot, request_accessibility, request_screen_recording,
     )
-    from mcp_vision.mascot import print_banner
     if request:
         click.echo("Requesting Accessibility permission…")
         request_accessibility()
@@ -423,8 +416,8 @@ def permissions(request: bool) -> None:
         click.echo(f"  [{mark}] {name}: {detail}")
     ax_ok = snap.get("accessibility") is True
     sc_ok = snap.get("screenRecording") is True
-    print_banner(ax_ok=ax_ok, sc_ok=sc_ok)
     if not ax_ok or not sc_ok:
+        click.echo("")
         click.echo("  Run `mcp-vision permissions --request` to trigger system prompts.")
     sys.exit(0 if (ax_ok and sc_ok) else 1)
 

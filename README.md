@@ -1,27 +1,10 @@
-<div align="center">
+# MCP-Vision
 
-```
-         ▄▄████▄▄
-       ██▀██████▀██
-       ██●████●██
-       ████████████
-        ▀████████▀
-    ▄▄  ▄██████▄  ▄▄
-   ████▄ ████████ ▄████
-   █████ ████████ █████
-   ▀████ ▀██████▀ ████▀
-    ▀▀▀  ▀▀▀▀▀▀  ▀▀▀
-```
+An open-source contextual action layer for your computer. Point at what you're
+working on, invoke MCP-Vision, and let your preferred model Ask, Guide, or Act—with
+verification and evidence for meaningful actions.
 
-# mcp-vision
-
-**Your model. Your Mac. Eight tentacles. Zero excuses.**
-
-An open-source Mac agent that sees your screen, reads any UI, and acts — click,
-type, open apps, drive the browser — with Jev-powered fast decisions and
-full verification after every action.
-
-</div>
+**Your model. Your computer. Evidence for every action.**
 
 Needs **Python 3.12+** (macOS `/usr/bin/python3` is often 3.9 and will fail).
 
