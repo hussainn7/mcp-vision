@@ -6,6 +6,7 @@ tested on any OS.
 """
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,9 @@ class SettingsService:
     on_refresh: Callable[[], None] = lambda: None          # re-probe engines/permissions in the background
     memory: Any = None                                     # buddy.memory.Memory
     run_import: Callable[[str], None] = lambda source: None   # background import (Contacts, Mail, ...)
+    routines: Any = None                                   # buddy.routines.Routines
+    action_log: Any = None                                 # buddy.actions.ActionLog (for suggestions)
+    phone_status: Callable[[], dict] = lambda: {"status": "off"}
 
     @property
     def prefs(self) -> Prefs:
@@ -77,8 +81,27 @@ class SettingsService:
             "skills": {skill: bool(prefs.skills.get(skill, True)) for skill in SKILL_IDS},
             "companion": prefs.companion,
             "phone": {"enabled": bool(prefs.phone.get("enabled")), "handles": list(prefs.phone.get("handles") or []),
-                      "prefix": prefs.phone.get("prefix") or "/plip"},
+                      "prefix": prefs.phone.get("prefix") or "/plip",
+                      "detected": list(self.memory.handles) if self.memory is not None else [],
+                      **self.phone_status()},
+            "routines": self.routines.cards() if self.routines is not None else [],
+            "suggestions": self._suggestions(),
+            "stats": self._stats(),
         }
+
+    def _suggestions(self) -> list[dict]:
+        if self.routines is None or self.action_log is None:
+            return []
+        from mcp_vision.buddy.routines import suggest_routines
+
+        return suggest_routines(self.action_log.entries(), self.routines.items, self.routines.dismissed)
+
+    def _stats(self) -> dict:
+        entries = self.action_log.entries() if self.action_log is not None else []
+        week = [entry for entry in entries if entry.get("at", 0) > time.time() - 7 * 86400 and entry.get("ok")]
+        answered = len(self.history.items())
+        return {"actionsWeek": len(week), "answers": answered,
+                "minutesSaved": round(len(week) * 0.75 + answered * 1.5)}
 
     def push(self) -> None:
         self.post([{"type": "settings", "state": self.snapshot()}])
@@ -217,6 +240,30 @@ class SettingsService:
     def _cmd_set_companion(self, command):
         if command.get("style") in {"notch", "cursor", "hidden"}:
             self._update_prefs(companion=command["style"])
+
+    # -- routines ----------------------------------------------------------------------------------
+    def _cmd_routine_accept(self, command):
+        if self.routines is None:
+            return
+        suggestion = next((item for item in self._suggestions() if item["key"] == command.get("key")), None)
+        if suggestion is not None:
+            self.routines.add(command.get("name") or suggestion["name"], command.get("phrase") or suggestion["phrase"],
+                              suggestion["steps"], source="suggested")
+            self.routines.save()
+            self.reload()
+            self.push()
+
+    def _cmd_routine_dismiss(self, command):
+        if self.routines is not None and command.get("key"):
+            self.routines.dismissed.append(str(command["key"]))
+            self.routines.save()
+            self.push()
+
+    def _cmd_routine_delete(self, command):
+        if self.routines is not None and self.routines.remove(str(command.get("id") or "")):
+            self.routines.save()
+            self.reload()
+            self.push()
 
     def _cmd_set_phone(self, command):
         phone = dict(self.prefs.phone)

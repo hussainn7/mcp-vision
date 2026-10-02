@@ -129,6 +129,7 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
         walkthroughs=prefs.walkthroughs if prefs is not None else True,
         actions=actions if actions is not None else make_actions(settings, prefs, memory=memory, routines=routines),
         notes=notes if notes is not None else make_notes(memory, routines),
+        routines=routines,
     )
 
 

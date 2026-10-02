@@ -98,6 +98,7 @@ class ActionEngine:
 
         self.ctx = ctx
         self.specs = {spec.name: spec for spec in (specs if specs is not None else all_specs())}
+        ctx.state["specs"] = self.specs                  # routines run other actions' steps
         self.enabled = enabled
         self.log = log
         self.timeout = timeout

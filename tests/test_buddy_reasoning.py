@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 from PIL import Image
 
 from mcp_vision.buddy.capture import ScreenCapturer

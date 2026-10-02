@@ -376,5 +376,6 @@ def test_settings_skills_companion_and_phone(service):
     state = calls["posted"][-1]["state"]
     assert state["skills"]["messages"] is False and state["skills"]["apps"] is True
     assert state["companion"] == "cursor"
-    assert state["phone"] == {"enabled": True, "handles": ["+15550102000"], "prefix": "/hey"}
+    assert state["phone"] == {"enabled": True, "handles": ["+15550102000"], "prefix": "/hey", "detected": [],
+                              "status": "off"}
     assert calls["reload"] == 3

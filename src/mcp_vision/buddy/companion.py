@@ -165,7 +165,8 @@ class Companion:
                  snap_timeout: float = 0.6, context: ContextSource | None = None,
                  observer: Observer | None = None, watcher: Watcher | None = None,
                  walkthroughs: bool = True, guide_timeout: float = 90.0, max_guide_turns: int = 10,
-                 actions: Any = None, notes: Callable[[], str] | None = None, max_followups: int = 3):
+                 actions: Any = None, notes: Callable[[], str] | None = None, max_followups: int = 3,
+                 routines: Any = None):
         self.brain = brain
         self.capturer = capturer
         self.speaker = speaker or _NullSpeaker()
@@ -184,6 +185,7 @@ class Companion:
         self.max_guide_turns = max_guide_turns
         self.actions = actions
         self.notes = notes
+        self.routines = routines
         self.max_followups = max_followups
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
@@ -269,6 +271,9 @@ class Companion:
             else:
                 self.actions.cancel_pending()          # they moved on to something else
                 self.emit("confirm", cleared=True)
+        routine = self.routines.match(transcript) if self.routines is not None and self.actions is not None else None
+        if routine is not None:
+            return await self._run_routine(routine, transcript)
         result = await self._turn(transcript)
         turns, followups = 1, 0
         while result.state == "done" and (result.reports or result.look_after) and followups < self.max_followups:
@@ -335,6 +340,30 @@ class Companion:
         result.spoken = text
         self.conversation.record(transcript or ("yes" if accept else "no"),
                                  text + (f" (did: {'; '.join(result.did)})" if result.did else ""))
+        self.emit("done", latency_ms=None, spoken=text)
+        await self.speaker.drain()
+        return result
+
+    async def _run_routine(self, routine, transcript: str) -> TurnResult:
+        """A taught phrase: run it right away, no model call."""
+        result = TurnResult(transcript=transcript)
+        self.emit("phase", phase="thinking", transcript=transcript, guide=False)
+        self.emit("step", id="routine", label=f"Routine: {routine.name}", status="active")
+        outcome = await self.actions.handle("run_routine", {"name": routine.name})
+        if outcome.status == "done":
+            text = outcome.result.say or f"Running {routine.name}."
+            result.did.append(f"ran {routine.name}")
+            self.emit("step", id="routine", label=f"Routine: {routine.name}", status="done",
+                      detail=outcome.result.detail)
+        else:
+            text = outcome.message
+            result.state, result.error = "error", outcome.message
+            self.emit("step", id="routine", label=f"Routine: {routine.name}", status="failed", detail=text)
+        self.emit("phase", phase="answering")
+        self.emit("answer", text=text)
+        self.speaker.speak(text)
+        result.spoken = text
+        self.conversation.record(transcript, f"{text} (did: ran the {routine.name} routine)")
         self.emit("done", latency_ms=None, spoken=text)
         await self.speaker.drain()
         return result

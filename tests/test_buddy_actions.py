@@ -17,7 +17,7 @@ from mcp_vision.buddy.actions.core import (
 )
 from mcp_vision.buddy.actions.host import FileHit, PortableHost
 from mcp_vision.buddy.companion import Companion
-from mcp_vision.buddy.pointing import ActionTag, PlanTag, ReplyStream, SpeechChunk
+from mcp_vision.buddy.pointing import ActionTag, ReplyStream, SpeechChunk
 
 
 def run(coro):
