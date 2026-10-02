@@ -44,7 +44,8 @@ def _has(mod):
     try:
         __import__(mod)
         return True
-    except ImportError:
+    except (ImportError, SystemExit):
+        # pyautogui -> mouseinfo calls sys.exit() on Linux when tkinter is missing.
         return False
 
 

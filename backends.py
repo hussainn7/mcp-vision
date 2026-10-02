@@ -411,7 +411,12 @@ BACKENDS = ("openrouter", "local", "anthropic", "openai", "gemini", "nvidia", "a
 def get_chat(backend=None, model=None):
     """Build the chat callable for cfg.model_backend, or an explicit override."""
     from mcp_vision.providers import resolve_provider
-    backend = resolve_provider(backend or cfg.model_backend)
+    requested = backend or cfg.model_backend
+    try:
+        backend = resolve_provider(requested)
+    except ValueError as exc:
+        # Callers catch BackendError to end a run cleanly; keep that contract.
+        raise BackendError(f"unknown model backend '{requested}'. choose from: {', '.join(BACKENDS)}") from exc
     if backend == "local":
         return make_local_chat(cfg.ollama_host, model or cfg.planning_model, cfg.ollama_keep_alive)
     if backend == "openrouter":
