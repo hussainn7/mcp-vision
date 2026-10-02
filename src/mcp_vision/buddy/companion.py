@@ -166,7 +166,7 @@ class Companion:
                  observer: Observer | None = None, watcher: Watcher | None = None,
                  walkthroughs: bool = True, guide_timeout: float = 90.0, max_guide_turns: int = 10,
                  actions: Any = None, notes: Callable[[], str] | None = None, max_followups: int = 3,
-                 routines: Any = None):
+                 routines: Any = None, capture_timeout: float = 6.0):
         self.brain = brain
         self.capturer = capturer
         self.speaker = speaker or _NullSpeaker()
@@ -186,6 +186,7 @@ class Companion:
         self.actions = actions
         self.notes = notes
         self.routines = routines
+        self.capture_timeout = capture_timeout
         self.max_followups = max_followups
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
@@ -491,8 +492,8 @@ class Companion:
                       label=f"{'Jev' if route.provider == 'jev' else 'Rules'}: "
                             f"{'needs screen' if route.needs_screen else 'no screen needed'}")
         try:
-            shots = await capture
-        except Exception:
+            shots = await asyncio.wait_for(capture, self.capture_timeout)
+        except Exception:                       # includes a screen grab that never returns
             # No display, or Screen Recording not granted yet: answer without the screen.
             shots = []
             if route.needs_screen:

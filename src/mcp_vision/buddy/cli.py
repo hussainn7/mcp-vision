@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 
 import click
@@ -60,7 +61,11 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
                                    routines=Routines())
     except SetupError as exc:
         raise click.ClickException(str(exc)) from exc
-    result = asyncio.run(companion.respond(question))
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # Not asyncio.run(): it waits for every worker thread, and a stuck screen grab or
+    # CLI brain must not keep this one-shot command alive after it has answered.
+    result = loop.run_until_complete(companion.respond(question))
     if as_json:
         click.echo(json.dumps({
             "engine": getattr(companion.brain, "label", None),
@@ -83,7 +88,32 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
                    f"screens={'yes' if result.route.needs_screen else 'no'} "
                    f"first_speech={result.timings.get('first_speech', '-')}ms "
                    f"total={result.timings.get('spoken', '-')}ms", err=True)
-    sys.exit(0 if result.state == "done" else 1)
+    code = 0 if result.state == "done" else 1
+    _finish(loop, companion, code)
+    sys.exit(code)
+
+
+def _finish(loop, companion, code: int = 0) -> None:
+    """Close down without waiting on a worker that will never return (a hung screen grab)."""
+    import threading
+    import time
+
+    pool = getattr(companion, "_pool", None)
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+    loop.close()                       # shuts the default executor down without waiting
+    deadline = time.monotonic() + 1.0
+    stuck = []
+    for thread in threading.enumerate():
+        if thread is threading.main_thread() or thread.daemon:
+            continue
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            stuck.append(thread)
+    if stuck:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
 
 
 @buddy.group()

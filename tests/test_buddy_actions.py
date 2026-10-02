@@ -438,3 +438,24 @@ def test_cursor_lookup_survives_pyautogui_exiting(monkeypatch):
     monkeypatch.setitem(sys.modules, "pyautogui", broken)
     monkeypatch.setattr(capture.sys, "platform", "linux")
     assert capture.cursor_position() is None
+
+
+def test_a_hung_screen_grab_times_out_and_still_answers():
+    import threading
+
+    gate = threading.Event()
+
+    class Stuck(Capturer):
+        def capture(self, *, only_cursor_screen=False):
+            gate.wait(5)
+            return []
+    brain = ScriptedBrain("Here you go.")
+    buddy = Companion(brain=brain, capturer=Stuck(), speaker=Speaker(), pointer=Pointer(), capture_timeout=0.2)
+    async def timed():
+        started = time.monotonic()
+        result = await buddy.respond("what's up")
+        elapsed = time.monotonic() - started
+        gate.set()                      # let the stuck grab finish so the loop can close
+        return result, elapsed
+    result, elapsed = run(timed())
+    assert result.spoken == "Here you go." and elapsed < 2

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import textwrap
@@ -76,11 +77,20 @@ def plip(tmp_path):
            if not key.endswith("_API_KEY") and not key.startswith(("BUDDY_", "CLAUDE", "MCP_VISION"))}
     env.update(PATH=f"{bin_dir}{os.pathsep}{env.get('PATH', '')}", HOME=str(home), FAKE_CLAUDE_LOG=str(log),
                MCP_VISION_CONFIG_DIR=str(tmp_path / "config"), MCP_VISION_STATE_DIR=str(tmp_path / "state"),
-               PYTHONPATH=f"{ROOT / 'src'}{os.pathsep}{ROOT}", BUDDY_ROUTER="rules", BUDDY_ENGINE="claude-code")
+               PYTHONPATH=f"{ROOT / 'src'}{os.pathsep}{ROOT}", BUDDY_ROUTER="rules", BUDDY_ENGINE="claude-code",
+               PYTHONFAULTHANDLER="1")
 
     def run(*args, stdin: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
-        done = subprocess.run([sys.executable, "-m", "mcp_vision.cli", "buddy", *args], capture_output=True,
-                              text=True, env=env, cwd=tmp_path, timeout=120, input=stdin)
+        command = [sys.executable, "-m", "mcp_vision.cli", "buddy", *args]
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, env=env, cwd=tmp_path) as proc:
+            try:
+                out, err = proc.communicate(stdin, timeout=90)
+            except subprocess.TimeoutExpired:
+                proc.send_signal(signal.SIGABRT)            # faulthandler prints every thread's stack
+                out, err = proc.communicate()
+                pytest.fail(f"plip {' '.join(args)} hung\n{out}\n{err[-6000:]}")
+        done = subprocess.CompletedProcess(command, proc.returncode, out, err)
         if check:
             assert done.returncode == 0, done.stdout + done.stderr
         return done
