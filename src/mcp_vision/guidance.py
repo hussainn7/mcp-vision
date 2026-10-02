@@ -4,12 +4,31 @@ from __future__ import annotations
 import json
 
 
+# Browsers disagree on roles for native inputs: older Chromium exposes a date
+# field as "textbox", newer builds as "date"; a file chooser is a "button" in
+# the accessibility tree but planners describe it as a field. Match by family.
+_ROLE_FAMILIES = {
+    'textbox': {'textbox', 'searchbox', 'date', 'datetime', 'time', 'inputtime', 'month', 'week'},
+}
+_FIELD_INPUT_TYPES = {'file', 'date', 'datetime-local', 'time', 'month', 'week'}
+
+
+def role_matches(element, role: str) -> bool:
+    if not role:
+        return True
+    wanted = role.casefold()
+    have = str(element.get('role', '')).casefold()
+    if have == wanted or have in _ROLE_FAMILIES.get(wanted, ()):
+        return True
+    return wanted == 'textbox' and str(element.get('input_type') or '').casefold() in _FIELD_INPUT_TYPES
+
+
 def resolve_target(elements, name, role=''):
     role = {'textarea': 'textbox', 'input': 'textbox', 'select': 'combobox',
             'axbutton': 'button', 'axtextfield': 'textbox', 'axtextarea': 'textbox',
             'axcheckbox': 'checkbox', 'axpopupbutton': 'combobox'}.get(role.lower(), role)
     matches = [e for e in elements if e.get('name', '').casefold().strip() == name.casefold().strip()
-               and (not role or e.get('role', '').casefold() == role.casefold())]
+               and role_matches(e, role)]
     if len(matches) != 1 or not name.strip():
         return None
     target = matches[0]
@@ -19,10 +38,22 @@ def resolve_target(elements, name, role=''):
 
 
 def overlay_script(index, label='Next step', duration=8000):
-    return '''(() => {
+    """Highlight the element a snapshot tagged with ``data-agent-index`` (native driver)."""
+    return ('(() => { const el = document.querySelector(\'[data-agent-index="' + str(int(index)) + '"]\');'
+            ' if (!el) return false; return (' + overlay_function() + ').call(el, '
+            + json.dumps(label) + ', ' + str(int(duration)) + '); })()')
+
+
+def overlay_function():
+    """``function(label, duration)`` run with ``this`` bound to the target element.
+
+    The CDP runtime resolves elements by backend node id and calls this with
+    ``Runtime.callFunctionOn``, so it needs no marker attribute in the page.
+    """
+    return '''function(LABEL_ARG, DURATION_ARG) {
       window.__mcpVisionHighlight?.();
-      let target = document.querySelector('[data-agent-index="INDEX"]');
-      if (!target) return false;
+      let target = this;
+      if (!target || !target.isConnected) return false;
       const identity = {id: target.id, tag: target.tagName, name: target.getAttribute('aria-label') || target.textContent.trim()};
       const host = document.createElement('div');
       host.style.cssText = 'position:fixed;inset:0;pointer-events:none!important;z-index:2147483647';
@@ -32,7 +63,7 @@ def overlay_script(index, label='Next step', duration=8000):
       const ring = document.createElement('div');
       ring.style.cssText = 'position:fixed;border:3px solid #38bda4;border-radius:7px;box-shadow:0 0 0 4px #38bda430;pointer-events:none;box-sizing:border-box';
       const label = document.createElement('span');
-      label.textContent = LABEL;
+      label.textContent = String(LABEL_ARG);
       label.style.cssText = 'position:absolute;bottom:calc(100% + 7px);left:0;background:#143b35;color:white;padding:4px 8px;border-radius:6px;font:12px system-ui;white-space:nowrap';
       const marker = document.createElement('div');
       marker.setAttribute('data-mcp-agent-marker','1');
@@ -58,5 +89,5 @@ def overlay_script(index, label='Next step', duration=8000):
         label.style.bottom = r.y < 32 ? 'auto' : 'calc(100% + 7px)';
         frame = requestAnimationFrame(update);
       };
-      update(); setTimeout(clean, DURATION); return true;
-    })()'''.replace('INDEX', str(int(index))).replace('LABEL', json.dumps(label)).replace('DURATION', str(int(duration)))
+      update(); setTimeout(clean, Number(DURATION_ARG) || 8000); return true;
+    }'''

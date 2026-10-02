@@ -790,6 +790,7 @@ class ContextTask:
                 else:
                     verification = self.verify(step, target, snapshot, after,
                                                expected_url=expected_navigation)
+                    verification = self.upload_read_back(step, target, receipt, after, verification)
                 success = (verification.outcome is VerificationOutcome.SATISFIED
                            and not verification.preexisting)
                 self.outcomes.append({
@@ -873,6 +874,24 @@ class ContextTask:
             checked=checked, expected_text=step.expected_text or None,
             expected_url=expected_url or None,
         )
+
+    @staticmethod
+    def upload_read_back(step, target, receipt, after, verification: VerificationResult) -> VerificationResult:
+        """An upload has no snapshot-level predicate; the file input's own read-back is the postcondition.
+
+        The backend reads ``input.files`` from the live element after setting it,
+        which observes the resulting state directly rather than trusting dispatch.
+        """
+        evidence = receipt.evidence or {}
+        if (step.action != 'upload' or verification.outcome is not VerificationOutcome.UNKNOWN
+                or receipt.status != 'verified' or not evidence.get('file_matches')):
+            return verification
+        return VerificationResult(
+            outcome=VerificationOutcome.SATISFIED, predicate='attribute_equals', state_id=after.snapshot_id,
+            target=f"@e{target['index']}" if target and 'index' in target else None,
+            expected=evidence.get('file_name'), observed=evidence.get('file_name'),
+            evidence={'operation': 'upload', 'source': 'input.files read-back'},
+            message='The file input holds the selected file.')
 
     def verify(self, step, target, before, after, *, expected_url='') -> VerificationResult:
         predicate = self.verification_predicate(step, target, expected_url)

@@ -112,13 +112,32 @@ def _covered(candidate: dict, visible: list[dict]) -> bool:
     return False
 
 
+def layout_scale(documents: list[dict], viewport: dict) -> float:
+    """How many DOMSnapshot layout units make one CSS pixel.
+
+    Chromium builds that zoom for device scale report layout bounds in device
+    pixels; current builds report CSS pixels. Assuming either breaks clicks
+    on Retina displays (every target looks "moved" by a factor of two), so
+    measure it: the root document's ``contentWidth`` is in layout units and
+    ``documentElement.scrollWidth`` is in CSS pixels.
+    """
+    dpr = float(viewport.get("deviceScaleFactor") or 1)
+    if dpr <= 0:
+        dpr = 1.0
+    root = documents[0] if documents else {}
+    content = float(root.get("contentWidth") or 0)
+    css = float(viewport.get("cssContentWidth") or 0)
+    if content <= 0 or css <= 0:
+        return dpr                      # no calibration data: keep the historical assumption
+    ratio = content / css
+    return dpr if abs(ratio - dpr) < abs(ratio - 1.0) else 1.0
+
+
 def fuse_snapshot(dom: dict, ax_trees: list[dict], viewport: dict, *, max_elements=60) -> dict:
     """Fuse a CDP DOMSnapshot capture and per-frame AX trees."""
     strings, documents = dom.get("strings", []), dom.get("documents", [])
     offsets = _frame_offsets(documents)
-    device_scale = float(viewport.get("deviceScaleFactor") or 1)
-    if device_scale <= 0:
-        device_scale = 1
+    device_scale = layout_scale(documents, viewport)
     scroll_x = float(viewport.get("scrollX") or 0)
     scroll_y = float(viewport.get("scrollY") or 0)
     dom_nodes: dict[int, dict] = {}
@@ -317,7 +336,8 @@ def fuse_snapshot(dom: dict, ax_trees: list[dict], viewport: dict, *, max_elemen
     return {"elements": kept, "pruned": pruned, "completeness": completeness,
             "viewport": {"width": vw, "height": vh,
                          "scrollX": scroll_x, "scrollY": scroll_y,
-                         "deviceScaleFactor": device_scale}}
+                         "deviceScaleFactor": float(viewport.get("deviceScaleFactor") or 1),
+                         "layoutScale": device_scale}}
 
 
 def _walk_frames(frame: dict) -> list[str]:
@@ -359,7 +379,7 @@ class PersistentCDPSnapshotter:
             "includeDOMRects": True, "includeBlendedBackgroundColors": False,
         })
         viewport_task = self.send("Runtime.evaluate", {
-            "expression": "({width:innerWidth,height:innerHeight,scrollX:scrollX,scrollY:scrollY,deviceScaleFactor:devicePixelRatio,url:location.href,title:document.title,focus:document.activeElement?document.activeElement.tagName:''})",
+            "expression": "({width:innerWidth,height:innerHeight,scrollX:scrollX,scrollY:scrollY,deviceScaleFactor:devicePixelRatio,cssContentWidth:document.documentElement?document.documentElement.scrollWidth:0,url:location.href,title:document.title,focus:document.activeElement?document.activeElement.tagName:''})",
             "returnByValue": True,
         })
         ax_tasks = [self.send("Accessibility.getFullAXTree", {"frameId": fid}) for fid in frame_ids]

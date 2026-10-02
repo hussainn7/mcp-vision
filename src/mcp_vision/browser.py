@@ -698,10 +698,13 @@ class BrowserRuntime:
             return await self.page.evaluate(FORM_STATE_JS)
 
     async def highlight(self, snapshot_id: str, index: int, label: str = "Next step", duration: int = 8000) -> bool:
-        from mcp_vision.guidance import overlay_script
+        from mcp_vision.guidance import overlay_function
         async with self._lock:
-            await self._target(snapshot_id, index)
-            return bool(await self.page.evaluate(overlay_script(index, label, duration)))
+            target = await self._target(snapshot_id, index)
+            if target.backend_node_id is not None:
+                return bool(await self._cdp_call(target, overlay_function(), arguments=[label, int(duration)]))
+            return bool(await target.handle.evaluate(
+                f"(el, args) => ({overlay_function()}).call(el, args[0], args[1])", [label, int(duration)]))
 
     async def clear_highlight(self):
         if self.page:
