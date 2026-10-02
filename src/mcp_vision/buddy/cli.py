@@ -135,7 +135,7 @@ def memory_show() -> None:
 
 
 @memory.command("import")
-@click.argument("source", type=click.Choice(["contacts", "autofill", "mail", "imessage", "chatgpt", "claude", "gemini"]))
+@click.argument("source", type=click.Choice(["contacts", "autofill", "mail", "chatgpt", "claude", "gemini"]))
 @click.option("--file", "path", type=click.Path(exists=True, dir_okay=False), help="AI memory text to import.")
 def memory_import(source: str, path: str | None) -> None:
     """Import your details from a source on this Mac, or AI memory from a file/stdin."""
@@ -153,12 +153,8 @@ def memory_import(source: str, path: str | None) -> None:
         facts, error = importers.import_contacts(default_host())
     elif source == "mail":
         facts, error = importers.import_mail(default_host())
-    elif source == "autofill":
-        facts, error = importers.import_autofill(os.path.expanduser("~"))
     else:
-        facts, handles, contacts, error = importers.import_imessage(os.path.expanduser("~"))
-        store.handles = handles or store.handles
-        store.contacts = contacts or store.contacts
+        facts, error = importers.import_autofill(os.path.expanduser("~"))
     added = store.merge(source, facts, error)
     store.save()
     if error and not facts:

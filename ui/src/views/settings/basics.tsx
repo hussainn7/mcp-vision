@@ -1,4 +1,4 @@
-import { AudioLines, Contact, Hand, HardDrive, MessageSquareText, Mic, MonitorUp, ShieldCheck, WandSparkles } from 'lucide-react'
+import { AudioLines, Contact, Hand, MessageSquareText, Mic, MonitorUp, ShieldCheck, WandSparkles } from 'lucide-react'
 import { send, type SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Button, Card, Empty, Header, KeyField, Pill, Section, Segmented } from './ui'
@@ -54,7 +54,6 @@ export function PermissionsTab({ state }: { state: SettingsState }) {
   const extra = [
     { key: 'contacts', icon: Contact, title: 'Contacts', why: 'Your card for Memory, and finding who to message.' },
     { key: 'automation', icon: WandSparkles, title: 'Automation', why: 'Lets Plip ask Messages, Reminders, Notes and Mail to do things.' },
-    { key: 'fulldisk', icon: HardDrive, title: 'Full Disk Access', why: 'Optional: reading Messages for Phone remote and iMessage import.' },
   ] as const
   return (
     <div>

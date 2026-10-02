@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  AtSign, Cake, Check, ClipboardPaste, Contact, Copy, Globe, Lock, Mail, MapPin, MessageCircle, Phone, Plus, Sparkles, X,
+  AtSign, Cake, Check, ClipboardPaste, Contact, Copy, Globe, Lock, Mail, MapPin, Phone, Plus, Sparkles, X,
 } from 'lucide-react'
 import { useState } from 'react'
 import { send, type FactCard, type SettingsState } from '../../bridge'
@@ -11,7 +11,6 @@ const SOURCES = [
   { id: 'contacts', name: 'Contacts', text: 'Your “My Card”', icon: Contact, tint: 'from-slate-200 to-slate-400' },
   { id: 'autofill', name: 'Browser autofill', text: 'Chrome, Arc, Brave, Edge', icon: Globe, tint: 'from-sky-200 to-blue-400' },
   { id: 'mail', name: 'Mail', text: 'Your accounts & addresses', icon: Mail, tint: 'from-cyan-200 to-sky-400' },
-  { id: 'imessage', name: 'iMessage', text: 'Your numbers, who you text most', icon: MessageCircle, tint: 'from-emerald-200 to-green-400' },
 ] as const
 
 const AI = [

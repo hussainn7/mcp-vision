@@ -257,7 +257,6 @@ def run_buddy_app() -> None:
 
     memory = Memory()
     routines = Routines()
-    state["relay"] = None
 
     def main(fn):
         return lambda *args: AppHelper.callAfter(fn, *args)
@@ -336,49 +335,7 @@ def run_buddy_app() -> None:
         except Exception as exc:          # a broken optional piece must not kill the app
             log.exception("could not build Plip's brain")
             error = f"Couldn't start the brain: {exc}"
-        remote = None
-        if companion is not None and prefs.phone.get("enabled"):
-            remote = build_remote(settings, prefs, statuses)
         AppHelper.callAfter(install, settings, prefs, companion, error)
-        AppHelper.callAfter(install_relay, prefs, remote)
-
-    def build_remote(settings, prefs, statuses):
-        """A second Plip for texts from your phone: same brain and skills, answers by iMessage."""
-        from mcp_vision.buddy.factory import make_notes
-        from mcp_vision.buddy.phone import REMOTE_NOTE, CollectSpeaker
-
-        base = make_notes(memory, routines)
-        try:
-            return make_companion(settings, speaker=CollectSpeaker(), observer=presenter, prefs=prefs,
-                                  engines=statuses, memory=memory, routines=routines,
-                                  notes=lambda: "\n".join(filter(None, [base() if base else "", REMOTE_NOTE])))
-        except Exception:
-            log.exception("could not build the phone companion")
-            return None
-
-    def install_relay(prefs, remote) -> None:
-        from mcp_vision.buddy.memory.importers import chat_db
-        from mcp_vision.buddy.messages import send_imessage
-        from mcp_vision.buddy.phone import PhoneRelay
-
-        if state["relay"] is not None:
-            state["relay"].stop()
-            state["relay"] = None
-        if remote is None:
-            return
-        host = default_host_cached()
-
-        def run(text: str) -> str:
-            future = asyncio.run_coroutine_threadsafe(remote.respond(text), loop)
-            result = future.result(timeout=180)
-            spoken = remote.speaker.take()
-            return spoken or result.spoken or result.error or "Done."
-        handles = list(prefs.phone.get("handles") or []) or list(memory.handles)
-        relay = PhoneRelay(chat_db(os.path.expanduser("~")), handles, run,
-                           lambda handle, text: send_imessage(host, handle, text),
-                           prefix=prefs.phone.get("prefix") or "/plip")
-        relay.start()
-        state["relay"] = relay
 
     def default_host_cached():
         if "host" not in state:
@@ -457,11 +414,7 @@ def run_buddy_app() -> None:
             elif source == "autofill":
                 facts, error = importers.import_autofill(home)
             else:
-                facts, handles, contacts, error = importers.import_imessage(home)
-                if handles:
-                    memory.handles = handles
-                if contacts:
-                    memory.contacts = contacts
+                return
             memory.merge(source, facts, error)
             memory.save()
             AppHelper.callAfter(service.push)
@@ -490,7 +443,6 @@ def run_buddy_app() -> None:
         run_import=run_import,
         routines=routines,
         action_log=ActionLog(),
-        phone_status=lambda: state["relay"].snapshot() if state["relay"] is not None else {"status": "off"},
     )
 
     def handle_command(command: dict[str, Any]) -> None:

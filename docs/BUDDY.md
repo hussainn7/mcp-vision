@@ -28,9 +28,8 @@ ElevenLabs settings. The differences are deliberate and are listed in the README
 | `speech_out.py` / `speech_in.py` | Sentence-pipelined TTS (ElevenLabs, `say`) and AssemblyAI v3 / Apple Speech input | any / macOS audio |
 | `actions/` | The action engine: `[DO:name {json}]` → registry lookup, skill toggle, preview + confirmation for consequential actions, timeouts, undo history, action log. `core.py` has apps, links, Spotlight, desktop tidy/undo, system settings, Shortcuts, typing/rewriting, reminders, notes, timers, flights. `host.py` does the platform work (`open`, `osascript`, `mdfind`, `shortcuts`, Quartz, Accessibility) | any / macOS |
 | `forms.py` / `messages.py` | Form filling from the screen map + your details (preview, then click-and-type each field; never submits). iMessage: resolve the person in Contacts, preview, send via Messages | any / macOS |
-| `memory/` | The knowledge panel: facts with sources, sensitive detection (passport, cards, SSN never reach the model), the prompt block. `importers.py` reads Contacts, Chromium autofill (`Web Data`), Mail accounts, iMessage `chat.db`, and pasted ChatGPT/Claude/Gemini memory | any / macOS |
+| `memory/` | The knowledge panel: facts with sources, sensitive detection (passport, cards, SSN never reach the model), the prompt block. `importers.py` reads Contacts, Chromium autofill (`Web Data`), Mail accounts, and pasted ChatGPT/Claude/Gemini memory | any / macOS |
 | `routines.py` | Taught routines (phrase → safe steps, run instantly without a model call) and habit mining over the action log | any |
-| `phone.py` | iMessage remote: polls `chat.db` for `/plip …` in your own chat, runs it through a second companion, texts the answer back | any (needs Full Disk Access on macOS) |
 | `controller.py` | The press / release / transcript / barge-in state machine | any |
 | `presenter.py` | Turns controller and companion events into island and mascot UI messages | any |
 | `settings_service.py` / `store.py` | Backs the Settings window: snapshot, key saving (0600), engine choice, depth, voice, history, permissions | any |
@@ -107,8 +106,8 @@ The model never runs anything. It writes tags, and Plip decides what happens:
 
 - **Asks first:** `send_message`, `fill_form`, `organize_desktop`. Plip builds a preview
   (recipient, each field → value, how many files go where), shows it in the island, and
-  speaks it if the model didn't ask. A spoken "yes" / "no", the island buttons, or
-  `/plip yes` from your phone answers it. Asking something else cancels it.
+  speaks it if the model didn't ask. A spoken "yes" / "no" or the island buttons
+  answer it. Asking something else cancels it.
 - **Never:** acting because text on screen says so (the prompt says so, and tags only
   come from the model's reply), opening files outside your home folder, opening
   non-web links, running consequential steps inside routines.
@@ -155,8 +154,7 @@ changing a macOS module, do these checks.
 6. Import Contacts under Memory, open any sign-up form, and say "fill this out for me".
    Check the preview, say "yes", and watch each field fill in. Nothing is submitted.
 7. Say "text me hello" (pick yourself), confirm, and check Messages.
-8. Turn on Phone, then text yourself `/plip open calculator` from your iPhone.
-9. Press the chord mid-answer: speech stops at once and it listens again.
+8. Press the chord mid-answer: speech stops at once and it listens again.
 
 If the hotkey does nothing, grant Accessibility (and Input Monitoring, if
 macOS asks) to the app or terminal that runs it, then restart Plip.

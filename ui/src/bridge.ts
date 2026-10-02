@@ -139,16 +139,6 @@ export interface Suggestion {
   around: string
 }
 
-export interface PhoneState {
-  enabled: boolean
-  handles: string[]
-  prefix: string
-  detected: string[]
-  status: 'off' | 'listening' | 'error'
-  error?: string
-  lastCommand?: string
-}
-
 export interface SettingsState {
   version: string
   engines: Engine[]
@@ -162,7 +152,6 @@ export interface SettingsState {
   memory: MemoryPanel | null
   skills: Record<string, boolean>
   companion: 'notch' | 'cursor' | 'hidden'
-  phone: PhoneState
   routines: RoutineCard[]
   suggestions: Suggestion[]
   stats: { actionsWeek: number; answers: number; minutesSaved: number }
@@ -203,7 +192,6 @@ export const defaultSettings: SettingsState = {
   memory: null,
   skills: {},
   companion: 'notch',
-  phone: { enabled: false, handles: [], prefix: '/plip', detected: [], status: 'off' },
   routines: [],
   suggestions: [],
   stats: { actionsWeek: 0, answers: 0, minutesSaved: 0 },

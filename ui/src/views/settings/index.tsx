@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  AudioLines, BookUser, BrainCircuit, Clock3, House, Info, Repeat2, ShieldCheck, Smartphone, WandSparkles,
+  AudioLines, BookUser, BrainCircuit, Clock3, House, Info, Repeat2, ShieldCheck, WandSparkles,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
@@ -10,11 +10,10 @@ import { AboutTab, HistoryTab, PermissionsTab, VoiceTab } from './basics'
 import { BrainTab } from './brain'
 import { HomeTab } from './home'
 import { MemoryTab } from './memory'
-import { PhoneTab } from './phone'
 import { RoutinesTab } from './routines'
 import { SkillsTab } from './skills'
 
-export type Tab = 'home' | 'brain' | 'skills' | 'memory' | 'routines' | 'phone' | 'voice' | 'permissions' | 'history' | 'about'
+export type Tab = 'home' | 'brain' | 'skills' | 'memory' | 'routines' | 'voice' | 'permissions' | 'history' | 'about'
 
 const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] }[] = [
   { title: '', tabs: [{ id: 'home', label: 'Home', icon: House }] },
@@ -24,7 +23,6 @@ const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: React.Compo
       { id: 'skills', label: 'Skills', icon: WandSparkles },
       { id: 'memory', label: 'Memory', icon: BookUser },
       { id: 'routines', label: 'Routines', icon: Repeat2 },
-      { id: 'phone', label: 'Phone', icon: Smartphone },
     ],
   },
   {
@@ -102,9 +100,6 @@ export function Settings() {
                     {id === 'routines' && state.suggestions.length > 0 && (
                       <span className="relative ml-auto rounded-full bg-plip-400/20 px-1.5 text-[10px] font-bold text-plip-200">{state.suggestions.length}</span>
                     )}
-                    {id === 'phone' && state.phone.enabled && (
-                      <span className={cn('relative ml-auto size-1.5 rounded-full', state.phone.status === 'error' ? 'bg-coral' : 'bg-mint')} />
-                    )}
                   </button>
                 ))}
               </div>
@@ -139,7 +134,6 @@ export function Settings() {
             {tab === 'skills' && <SkillsTab state={state} />}
             {tab === 'memory' && <MemoryTab state={state} />}
             {tab === 'routines' && <RoutinesTab state={state} />}
-            {tab === 'phone' && <PhoneTab state={state} go={setTab} />}
             {tab === 'voice' && <VoiceTab state={state} />}
             {tab === 'permissions' && <PermissionsTab state={state} />}
             {tab === 'history' && <HistoryTab state={state} />}

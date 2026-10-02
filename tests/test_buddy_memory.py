@@ -5,7 +5,6 @@ import asyncio
 import json
 import os
 import sqlite3
-import time
 from contextlib import closing
 
 import pytest
@@ -16,8 +15,8 @@ from mcp_vision.buddy.companion import Companion
 from mcp_vision.buddy.factory import make_notes
 from mcp_vision.buddy.memory import Memory, looks_sensitive, mask
 from mcp_vision.buddy.memory.importers import (
-    APPLE_EPOCH, MEMORY_PROMPT, browser_databases, decode_attributed_body, frequent_contacts, import_autofill,
-    import_contacts, import_imessage, own_handles, parse_ai_memory, parse_tab_lines, split_address,
+    MEMORY_PROMPT, browser_databases, import_autofill,
+    import_contacts, parse_ai_memory, parse_tab_lines, split_address,
 )
 
 
@@ -185,59 +184,6 @@ def test_ai_memory_paste_maps_known_keys_and_keeps_the_rest_as_notes():
     assert not any("Here's what" in value for _, value in facts)
     assert split_address("somewhere in Paris") == [("address.street", "somewhere in Paris")]
     assert "key: value" in MEMORY_PROMPT and "no markdown" in MEMORY_PROMPT
-
-
-# -- iMessage ---------------------------------------------------------------------------------
-
-def attributed(text: str) -> bytes:
-    body = text.encode()
-    length = bytes([len(body)]) if len(body) < 0x80 else b"\x81" + len(body).to_bytes(2, "little")
-    return (b"streamtyped\x81\xe8\x03\x84\x01@\x84\x84\x84\x12NSAttributedString\x00\x84\x84\x08NSObject\x00\x85"
-            b"\x92\x84\x84\x84\x08NSString\x01\x94\x84\x01+" + length + body + b"\x86\x84\x02iI\x01\x05\x92\x84")
-
-
-def make_chat_db(path, now=None):
-    now = now or time.time()
-    stamp = lambda seconds_ago: int((now - APPLE_EPOCH - seconds_ago) * 1e9)    # noqa: E731
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(path)) as db:
-        db.executescript("""
-            CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
-            CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, attributedBody BLOB, is_from_me INT,
-                                  handle_id INT, date INT, account TEXT);
-            CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, chat_identifier TEXT, account_login TEXT);
-            CREATE TABLE chat_message_join (chat_id INT, message_id INT);
-        """)
-        db.executemany("INSERT INTO handle VALUES (?, ?)", [(1, "+15550001111"), (2, "mom@example.com"),
-                                                            (3, "+15559998888")])
-        rows = [(None, "hey", None, 0, 1, stamp(60), "p:+15550102000"),
-                (None, None, attributed("see you soon"), 1, 1, stamp(50), "p:+15550102000"),
-                (None, "love you", None, 0, 2, stamp(40), "E:me@icloud.com"),
-                (None, "old", None, 0, 3, stamp(86400 * 400), None)]
-        rows += [(None, f"msg {n}", None, 0, 2, stamp(30), None) for n in range(3)]
-        db.executemany("INSERT INTO message (ROWID, text, attributedBody, is_from_me, handle_id, date, account) "
-                       "VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
-        db.execute("INSERT INTO chat VALUES (1, '+15550102000', 'E:me@icloud.com')")
-        db.commit()
-
-
-def test_attributed_body_decoding():
-    assert decode_attributed_body(attributed("/plip open spotify")) == "/plip open spotify"
-    long_text = "x" * 300 + " ✓"
-    assert decode_attributed_body(attributed(long_text)) == long_text
-    assert decode_attributed_body(b"garbage") == "" and decode_attributed_body(None) == ""
-
-
-def test_imessage_finds_your_handles_and_frequent_contacts(tmp_path):
-    home = tmp_path / "home"
-    make_chat_db(home / "Library/Messages/chat.db")
-    with closing(sqlite3.connect(home / "Library/Messages/chat.db")) as db:
-        assert own_handles(db) == ["+15550102000", "me@icloud.com"]
-        contacts = frequent_contacts(db)
-    assert contacts == [{"handle": "mom@example.com", "count": 4}, {"handle": "+15550001111", "count": 2}]
-    facts, handles, contacts, error = import_imessage(str(home))
-    assert error == "" and ("phone", "+15550102000") in facts and ("email", "me@icloud.com") in facts
-    assert import_imessage(str(tmp_path / "nobody"))[3] == "No Messages history on this Mac."
 
 
 # -- memory in action ----------------------------------------------------------------------------

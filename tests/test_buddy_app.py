@@ -366,19 +366,17 @@ def test_settings_memory_commands(service):
     assert oct((tmp_path / "memory.json").stat().st_mode & 0o777) == "0o600"
 
 
-def test_settings_skills_companion_and_phone(service):
+def test_settings_skills_and_companion(service):
     svc, calls, tmp_path = service
     svc.handle({"cmd": "set-skill", "skill": "messages", "enabled": False})
     svc.handle({"cmd": "set-skill", "skill": "rockets", "enabled": False})
     svc.handle({"cmd": "set-companion", "style": "cursor"})
     svc.handle({"cmd": "set-companion", "style": "giant"})
-    svc.handle({"cmd": "set-phone", "enabled": True, "handles": ["+15550102000", " "], "prefix": "/hey plip"})
     state = calls["posted"][-1]["state"]
     assert state["skills"]["messages"] is False and state["skills"]["apps"] is True
     assert state["companion"] == "cursor"
-    assert state["phone"] == {"enabled": True, "handles": ["+15550102000"], "prefix": "/hey", "detected": [],
-                              "status": "off"}
-    assert calls["reload"] == 3
+    assert "phone" not in state
+    assert calls["reload"] == 2
 
 
 def test_notch_home_droplet_drips_out_points_and_returns():

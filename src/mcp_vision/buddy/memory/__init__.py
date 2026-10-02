@@ -1,7 +1,7 @@
 """What Plip knows about you, kept on your Mac.
 
-Facts come from your own data (Contacts card, browser autofill, Mail and
-iMessage accounts, the memory you paste from ChatGPT or Claude) and from
+Facts come from your own data (Contacts card, browser autofill, Mail
+accounts, the memory you paste from ChatGPT or Claude) and from
 things you tell Plip to remember. Each fact keeps its source. Sensitive ones
 (passport, card numbers, SSN) are stored but never sent to the model; Plip
 asks before using them.

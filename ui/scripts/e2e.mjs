@@ -120,7 +120,7 @@ await test('settings: memory paste, copy prompt, add and forget facts, import', 
   await page.close()
 })
 
-await test('settings: skills, companion style, routines, phone', async () => {
+await test('settings: skills, companion style, routines', async () => {
   const skills = await open('settings?tab=skills')
   await skills.page.getByRole('switch', { name: 'Messages' }).click()
   assert.deepEqual((await skills.take('set-skill')), { cmd: 'set-skill', skill: 'messages', enabled: false })
@@ -137,17 +137,10 @@ await test('settings: skills, companion style, routines, phone', async () => {
   assert.ok((await routines.take('routine-dismiss')))
   await routines.page.close()
 
-  const phone = await open('settings?tab=phone')
-  await phone.page.getByPlaceholder('+1 555 010 2000 or you@icloud.com').fill('+15550109999')
-  await phone.page.getByRole('button', { name: 'Add' }).click()
-  assert.deepEqual((await phone.take('set-phone')).handles, ['+15550102000', 'hussain@icloud.com', '+15550109999'])
-  await phone.page.getByRole('switch', { name: 'Remote control' }).click()
-  assert.deepEqual((await phone.take('set-phone')), { cmd: 'set-phone', enabled: false })
-  await phone.page.close()
 })
 
 await test('settings: every tab renders without errors', async () => {
-  for (const tab of ['home', 'skills', 'memory', 'routines', 'phone', 'brain', 'voice', 'permissions', 'history', 'about']) {
+  for (const tab of ['home', 'skills', 'memory', 'routines', 'brain', 'voice', 'permissions', 'history', 'about']) {
     const { page } = await open(`settings?tab=${tab}`)
     assert.ok((await page.locator('h1').first().textContent()).length > 3, tab)
     await page.close()

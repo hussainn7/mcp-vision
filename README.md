@@ -4,7 +4,7 @@
 talk. Plip looks at your screen, explains things step by step, and does the busywork
 for you: finds files, tidies your desktop, fills forms with your details, texts
 people, pulls up flights, runs your routines. It thinks with the **Claude, ChatGPT,
-Cursor or Gemini plan you already pay for**, and you can even text it from your phone.
+Cursor or Gemini plan you already pay for**.
 
 ![Plip walking through a five-step checklist in the notch while the droplet points at the next click](docs/img/plip-plan.jpg)
 
@@ -91,7 +91,6 @@ seconds from what's already on your Mac:
 - **Contacts**: your "My Card" (name, emails, phones, address, birthday, company, links)
 - **Browser autofill**: Chrome, Arc, Brave and Edge profiles
 - **Mail**: your accounts and addresses
-- **iMessage**: your own numbers, and the people you text most
 - **ChatGPT, Claude or Gemini memory**: copy Plip's prompt into your assistant and paste
   its answer back. This is the same pattern as Claude's Import Memory.
 
@@ -109,22 +108,6 @@ notices what you already do together: if you open Slack, Calendar and Spotify wi
 few minutes of each other on three or more days, it suggests a routine you can save
 with one click. Routines only run safe steps on their own (apps, links, Shortcuts,
 settings, timers, notes).
-
-## Text Plip from your phone
-
-Turn on **Phone** and send yourself an iMessage that starts with `/plip`:
-
-```
-/plip find my lease pdf
-/plip start my day
-/plip text Sara running 10 min late      → "Reply /plip yes to send."
-```
-
-Your Mac sees it in Messages, runs it like a spoken request, and texts the answer back.
-Only messages in your own chat with your own number or Apple ID count. Reading
-Messages needs Full Disk Access.
-
-![Phone remote settings with an iMessage preview](docs/img/dashboard-phone.jpg)
 
 ## How it thinks
 

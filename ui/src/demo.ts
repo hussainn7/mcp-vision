@@ -158,7 +158,7 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
     facts: [
       { id: 'f1', key: 'name.full', label: 'Name', value: 'Hussain Syed', sensitive: false, sources: ['Contacts', 'ChatGPT'] },
       { id: 'f2', key: 'email', label: 'Email', value: 'hussain@plip.app', sensitive: false, sources: ['Contacts', 'Browser autofill'] },
-      { id: 'f3', key: 'phone', label: 'Phone', value: '+1 555 010 2000', sensitive: false, sources: ['iMessage'] },
+      { id: 'f3', key: 'phone', label: 'Phone', value: '+1 555 010 2000', sensitive: false, sources: ['Contacts'] },
       { id: 'f4', key: 'address.street', label: 'Street', value: '1 Main St', sensitive: false, sources: ['Browser autofill'] },
       { id: 'f5', key: 'company', label: 'Company', value: 'Plip Labs', sensitive: false, sources: ['Contacts'] },
       { id: 'f6', key: 'note', label: 'Note', value: 'Prefers aisle seats on flights', sensitive: false, sources: ['You told Plip'] },
@@ -168,7 +168,7 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
     imports: {
       contacts: { count: 12, at: Date.now() / 1000 - 86400 },
       autofill: { count: 9, at: Date.now() / 1000 - 3600 * 5 },
-      imessage: { count: 0, at: Date.now() / 1000 - 600, error: 'Needs Full Disk Access (System Settings → Privacy & Security).' },
+      mail: { count: 0, at: Date.now() / 1000 - 600, error: 'Allow Automation for Mail in System Settings → Privacy & Security.' },
       chatgpt: { count: 23, at: Date.now() / 1000 - 3600 * 30 },
     },
     contacts: [{ handle: '+15550104444', count: 212, name: 'Sara' }],
@@ -181,7 +181,6 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
   suggestions: [
     { key: 'open_app:Calendar|open_app:Slack|open_app:Spotify', name: 'Morning setup', phrase: 'start my day', labels: ['open Slack', 'open Calendar', 'open Spotify'], days: 6, around: '9:05 AM' },
   ],
-  phone: { enabled: true, handles: [], prefix: '/plip', detected: ['+15550102000', 'hussain@icloud.com'], status: 'listening', lastCommand: 'find my lease pdf' },
   history: [
     { question: 'where is the wifi menu', answer: "It's the fan-shaped icon in your menu bar, just left of the battery.", at: 1759370000, engine: 'Claude' },
     { question: 'what does this error mean', answer: 'Your build can’t find the module “sharp”. Run npm install in the project folder, then restart the dev server.', at: 1759371800, engine: 'Claude' },

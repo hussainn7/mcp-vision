@@ -18,7 +18,7 @@ from mcp_vision.buddy.store import History, Prefs, config_dir
 KEY_NAMES = {"ANTHROPIC_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
 DEPTHS = {"fast", "balanced", "deep"}
 SKILL_IDS = ("apps", "files", "system", "writing", "planning", "travel", "memory", "forms", "messages", "routines")
-IMPORT_SOURCES = {"contacts", "autofill", "mail", "imessage"}
+IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
 
 
@@ -49,7 +49,6 @@ class SettingsService:
     run_import: Callable[[str], None] = lambda source: None   # background import (Contacts, Mail, ...)
     routines: Any = None                                   # buddy.routines.Routines
     action_log: Any = None                                 # buddy.actions.ActionLog (for suggestions)
-    phone_status: Callable[[], dict] = lambda: {"status": "off"}
 
     @property
     def prefs(self) -> Prefs:
@@ -80,10 +79,6 @@ class SettingsService:
             "memory": self.memory.panel() if self.memory is not None else None,
             "skills": {skill: bool(prefs.skills.get(skill, True)) for skill in SKILL_IDS},
             "companion": prefs.companion,
-            "phone": {"enabled": bool(prefs.phone.get("enabled")), "handles": list(prefs.phone.get("handles") or []),
-                      "prefix": prefs.phone.get("prefix") or "/plip",
-                      "detected": list(self.memory.handles) if self.memory is not None else [],
-                      **self.phone_status()},
             "routines": self.routines.cards() if self.routines is not None else [],
             "suggestions": self._suggestions(),
             "stats": self._stats(),
@@ -231,7 +226,7 @@ class SettingsService:
 
         self.platform.copy(MEMORY_PROMPT)
 
-    # -- skills, companion style, phone ----------------------------------------------------------
+    # -- skills, companion style ----------------------------------------------------------
     def _cmd_set_skill(self, command):
         if command.get("skill") in SKILL_IDS:
             skills = dict(self.prefs.skills)
@@ -266,15 +261,6 @@ class SettingsService:
             self.reload()
             self.push()
 
-    def _cmd_set_phone(self, command):
-        phone = dict(self.prefs.phone)
-        if "enabled" in command:
-            phone["enabled"] = bool(command["enabled"])
-        if isinstance(command.get("handles"), list):
-            phone["handles"] = [str(item).strip() for item in command["handles"] if str(item).strip()][:5]
-        if isinstance(command.get("prefix"), str) and command["prefix"].strip().startswith("/"):
-            phone["prefix"] = command["prefix"].strip().split()[0][:16]
-        self._update_prefs(phone=phone)
 
 
 def _key(settings: Any, name: str) -> str | None:
