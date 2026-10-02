@@ -21,6 +21,8 @@ parser.add_argument('--output', default='outputs/MCP-Vision.app')
 parser.add_argument('--planning-model', default=None)
 parser.add_argument('--force', action='store_true', help='Force native rebuild + resign')
 parser.add_argument('--no-install', action='store_true', help='Build and sign without replacing /Applications/MCP-Vision.app')
+parser.add_argument('--entry', choices=['buddy', 'ui'], default='buddy',
+                    help='buddy: cursor companion (hold Control+Option). ui: legacy Option-Space popup.')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 app = Path(args.output).resolve()
@@ -44,8 +46,8 @@ info = {
     'CFBundleShortVersionString': '1.0',
     'LSUIElement': True,
     'NSAppleEventsUsageDescription': 'MCP-Vision reads and controls your selected Chrome tab when you ask it to.',
-    'NSMicrophoneUsageDescription': 'MCP-Vision listens only while you hold the talk shortcut.',
-    'NSSpeechRecognitionUsageDescription': 'MCP-Vision transcribes speech into the request you ask it to perform.',
+    'NSMicrophoneUsageDescription': 'MCP-Vision listens only while you hold Control+Option to talk.',
+    'NSSpeechRecognitionUsageDescription': 'MCP-Vision turns what you say into the question you ask it.',
 }
 plist_data = plistlib.dumps(info)
 (app / 'Contents' / 'Info.plist').write_bytes(plist_data)
@@ -127,7 +129,7 @@ int main(int argc, char **argv) {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES});
-        InstallHotKeys();
+        INSTALL_HOTKEYS
         chdir(ROOT);
         ENVIRONMENT
         void *library = dlopen(LIBRARY, RTLD_NOW | RTLD_GLOBAL);
@@ -137,13 +139,21 @@ int main(int argc, char **argv) {
             alert.informativeText = @"Rebuild the launcher from the current virtual environment.";
             [alert runModal]; return 1;
         }
-        char **arguments = calloc(argc + 5, sizeof(char *));
-        arguments[0] = PYTHON; arguments[1] = "-m"; arguments[2] = "mcp_vision.cli"; arguments[3] = "ui";
-        for (int i = 1; i < argc; i++) arguments[i + 3] = argv[i];
-        return pythonMain(argc + 3, arguments);
+        char **arguments = calloc(argc + 6, sizeof(char *));
+        ENTRY_ARGUMENTS
+        for (int i = 1; i < argc; i++) arguments[i + ENTRY_COUNT] = argv[i];
+        return pythonMain(argc + ENTRY_COUNT, arguments);
     }
 }
-'''.replace('PYTHON', json.dumps(str(Path(sys.executable).absolute()))).replace(
+'''
+# The buddy listens for a modifier-only chord (Control+Option) from Python's
+# event tap, which Carbon hot keys cannot express; only the legacy popup needs them.
+entry_words = ['-m', 'mcp_vision.cli'] + (['buddy', 'run'] if args.entry == 'buddy' else ['ui'])
+entry_arguments = 'arguments[0] = PYTHON; ' + ' '.join(
+    f'arguments[{index}] = {json.dumps(word)};' for index, word in enumerate(entry_words, start=1))
+source = source.replace('INSTALL_HOTKEYS', 'InstallHotKeys();' if args.entry == 'ui' else '(void)InstallHotKeys;').replace(
+    'ENTRY_ARGUMENTS', entry_arguments).replace('ENTRY_COUNT', str(len(entry_words))).replace(
+    'PYTHON', json.dumps(str(Path(sys.executable).absolute()))).replace(
     'ROOT', json.dumps(str(root))).replace('LIBRARY', json.dumps(str(library))).replace(
     'ENVIRONMENT', '\n        '.join(env_lines))
 
