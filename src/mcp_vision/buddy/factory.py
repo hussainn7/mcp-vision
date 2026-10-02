@@ -81,14 +81,14 @@ def make_context(settings: BuddySettings):
     return MacAXContext()
 
 
-def make_actions(settings: BuddySettings, prefs: Prefs | None = None, *, memory=None, routines=None,
+def make_actions(settings: BuddySettings, prefs: Prefs | None = None, *, memory=None,
                  host=None, source: str = "voice"):
     from mcp_vision.buddy.actions import ActionContext, ActionEngine, ActionLog
     from mcp_vision.buddy.actions.host import default_host
     from mcp_vision.paths import state_dir
 
     skills = dict(prefs.skills) if prefs is not None else {}
-    ctx = ActionContext(host=host or default_host(), memory=memory, routines=routines)
+    ctx = ActionContext(host=host or default_host(), memory=memory)
     return ActionEngine(ctx, enabled=lambda skill: bool(skills.get(skill, True)), log=ActionLog(),
                         undo_path=state_dir() / "undo.json", source=source)
 
@@ -106,7 +106,7 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
                    speaker: Speaker | None = None, capturer: ScreenCapturer | None = None,
                    brain: Any = None, observer: Observer | None = None, prefs: Prefs | None = None,
                    engines: list | None = None, watch: bool = False, actions=None,
-                   notes=None, memory=None, routines=None) -> Companion:
+                   notes=None, memory=None) -> Companion:
     settings = apply_prefs(settings, prefs)
     jev = make_jev(settings)
     capturer = capturer or ScreenCapturer(max_edge=settings.max_image_edge, quality=settings.jpeg_quality)
@@ -127,25 +127,16 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
         observer=observer,
         watcher=watcher,
         walkthroughs=prefs.walkthroughs if prefs is not None else True,
-        actions=actions if actions is not None else make_actions(settings, prefs, memory=memory, routines=routines),
-        notes=notes if notes is not None else make_notes(memory, routines),
-        routines=routines,
+        actions=actions if actions is not None else make_actions(settings, prefs, memory=memory),
+        notes=notes if notes is not None else make_notes(memory),
     )
 
 
-def make_notes(memory=None, routines=None):
-    """What Plip knows about the user and their routines, added to every turn."""
-    if memory is None and routines is None:
+def make_notes(memory=None):
+    """What Plip knows about the user, added to every turn."""
+    if memory is None:
         return None
-
-    def notes() -> str:
-        parts = []
-        if memory is not None:
-            parts.append(memory.summary())
-        if routines is not None:
-            parts.append(routines.summary())
-        return "\n".join(part for part in parts if part)
-    return notes
+    return memory.summary
 
 
 __all__ = ["SetupError", "apply_prefs", "make_actions", "make_brain", "make_companion", "make_jev", "make_notes",

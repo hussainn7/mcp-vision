@@ -135,7 +135,7 @@ export function AboutTab({ state }: { state: SettingsState }) {
         <div className="mt-1 font-mono text-[12px] text-white/35">version {state.version}</div>
         <p className="mx-auto mt-4 max-w-[400px] text-[13.5px] leading-relaxed text-white/50">
           A little droplet of personal staff for your Mac. It sees what you see, explains it step by step, and does the busywork:
-          files, forms, messages, flights, routines. Open source, and private by default.
+          files, reminders, flights. Open source, and private by default.
         </p>
         <div className="mx-auto mt-4 flex w-fit items-center gap-2 text-[11.5px] text-white/35">
           <ShieldCheck className="size-3.5 text-mint" /> Your memory, history and keys never leave this Mac.

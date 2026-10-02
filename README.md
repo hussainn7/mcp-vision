@@ -2,8 +2,8 @@
 
 **Personal staff that lives in your MacBook's notch.** Hold **Control+Option** and
 talk. Plip looks at your screen, explains things step by step, and does the busywork
-for you: finds files, tidies your desktop, fills forms with your details, texts
-people, pulls up flights, runs your routines. It thinks with the **Claude, ChatGPT,
+for you: finds files, tidies your desktop, pulls up flights, sets reminders,
+rewrites your text. It thinks with the **Claude, ChatGPT,
 Cursor or Gemini plan you already pay for**.
 
 ![Plip walking through a five-step checklist in the notch while the droplet points at the next click](docs/img/plip-plan.jpg)
@@ -12,24 +12,21 @@ Cursor or Gemini plan you already pay for**.
 > → a five-step checklist drops out of the notch, and a little droplet drips down to
 > point at the next click. Plip watches your screen and checks each step off as you go.
 
-> "text Sara I'm running ten minutes late"
-> → *"I'll text Sara that you're running ten minutes late."* A card shows the message
-> and who it goes to. Say "yes" or click **Send**.
+> "tidy up my desktop"
+> → *"I'll sort your desktop into folders. Here's the plan."* A card shows what goes
+> where. Say "yes" or click **Tidy up**, and "undo" puts it all back.
 
 | Ask | Plip |
 |---|---|
 | "find my lease pdf" | Spotlight search, reads you the hits, opens the one you want |
 | "tidy up my desktop" | shows the plan (Screenshots 12, Documents 5…), moves files on your yes, "undo" puts them back |
-| "fill this out for me" | maps the form's fields to your saved details, previews them, types them in, never presses submit |
-| "text Mom I'm on my way" | finds Mom in Contacts, shows the message, sends it by iMessage after you confirm |
 | "flights to Miami next Friday" | opens Google Flights, waits for results, tells you the best options and points at the cheapest |
 | "rewrite this email to sound friendlier" | replaces the selected text in place |
 | "remind me to call the dentist at 4" · "set a 10 minute tea timer" | Reminders, Notes and timers that ping you |
 | "turn on dark mode" · "volume 30" · "run my Log Water shortcut" | Mac settings and your Apple Shortcuts |
-| "when I say focus time, open Linear and turn on dark mode" | saves a routine; saying the phrase runs it instantly |
 | "remember I prefer aisle seats" | adds it to what Plip knows about you |
 
-Anything that sends, moves or fills something shows you a preview first, and nothing
+Anything that moves your files shows you a preview first, and nothing
 happens until you say yes.
 
 ## Quick start
@@ -54,7 +51,7 @@ Plip runs the CLI once per question in an empty scratch folder with its own tool
 switched off, so the model only ever sends back words and Plip's action tags. Plip
 does the actions itself, inside the skills you enable.
 
-![Plip's dashboard: stats, a habit it noticed, and things to try](docs/img/dashboard-home.jpg)
+![Plip's dashboard: stats and things to try](docs/img/dashboard-home.jpg)
 
 Then hold **Control+Option**, talk, and let go.
 
@@ -84,8 +81,8 @@ plip ask --engine codex --json "find my lease pdf"     # prints what Plip said, 
 
 ## Memory: Plip knows you
 
-Plip keeps a small knowledge panel about you on your Mac, and uses it to fill forms,
-message the right people, and answer like someone who knows you. Import it in a few
+Plip keeps a small knowledge panel about you on your Mac, and uses it to answer like
+someone who knows you. Import it in a few
 seconds from what's already on your Mac:
 
 - **Contacts**: your "My Card" (name, emails, phones, address, birthday, company, links)
@@ -100,15 +97,6 @@ From the terminal: `plip memory import contacts`, `plip memory show`, `plip memo
 
 ![The knowledge panel and import sources](docs/img/dashboard-memory.jpg)
 
-## Routines that learn
-
-Teach a phrase by voice ("when I say *wind down*, turn on dark mode and open
-Spotify") and saying it runs the steps instantly, with no model call. Plip also
-notices what you already do together: if you open Slack, Calendar and Spotify within a
-few minutes of each other on three or more days, it suggests a routine you can save
-with one click. Routines only run safe steps on their own (apps, links, Shortcuts,
-settings, timers, notes).
-
 ## How it thinks
 
 ```
@@ -116,14 +104,13 @@ settings, timers, notes).
                                                │
  screenshots (prefetched) ─┐                   ▼
  Accessibility screen map ─┼──▶ Jev router (needs screen? which monitor? walkthrough?)
- what Plip knows about you ┤
- your routines ────────────┘
+ what Plip knows about you ┘
                            ▼
    your brain (Claude Code / Codex / Cursor / Gemini / API), streamed
      ├─▶ sentences ──▶ TTS queue (speaks sentence 1 while 2 is synthesized)
      ├─▶ [POINT:x,y:label]       ──▶ snap to the real control ──▶ the droplet drips out of the notch to it
      ├─▶ [STEPS:n] [PLAN: a | b] ──▶ checklist in the notch; Plip watches the screen and gives the next step
-     └─▶ [DO:name {json}]        ──▶ action engine ──▶ preview + your yes (if it sends/moves/fills) ──▶ done
+     └─▶ [DO:name {json}]        ──▶ action engine ──▶ preview + your yes (if it moves files) ──▶ done
                                        └──▶ results (search hits, a loaded page) go back for one more turn
 ```
 
@@ -135,7 +122,7 @@ settings, timers, notes).
   takes a fresh look before giving the next one.
 - **Actions.** The model asks for actions with `[DO:…]` tags. Plip runs them itself on
   your Mac (`open`, Spotlight, AppleScript, Shortcuts, Accessibility), with timeouts,
-  an undo history, and a log that routines learn from.
+  an undo history, and a local log.
 - **Depth.** Fast, Balanced and Deep map to low, medium and high effort.
 
 Everything above the windows is platform-neutral and tested, including the CLI

@@ -37,7 +37,6 @@ class ActionContext:
 
     host: Any
     memory: Any = None
-    routines: Any = None
     state: dict[str, Any] = field(default_factory=dict)       # e.g. last file results
     announce: Callable[[str], None] = lambda text: None       # speak + show later (timers)
     schedule: Callable[[float, Callable[[], None]], Any] = lambda delay, fn: None

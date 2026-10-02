@@ -253,10 +253,8 @@ def run_buddy_app() -> None:
     history = History()
     registry = EngineRegistry(lambda: state["settings"])
     from mcp_vision.buddy.memory import Memory
-    from mcp_vision.buddy.routines import Routines
 
     memory = Memory()
-    routines = Routines()
 
     def main(fn):
         return lambda *args: AppHelper.callAfter(fn, *args)
@@ -329,7 +327,7 @@ def run_buddy_app() -> None:
         companion, error = None, ""
         try:
             companion = make_companion(settings, pointer=MainThreadPointer(mascot), observer=presenter, prefs=prefs,
-                                       engines=statuses, watch=True, memory=memory, routines=routines)
+                                       engines=statuses, watch=True, memory=memory)
         except SetupError as exc:
             error = str(exc)
         except Exception as exc:          # a broken optional piece must not kill the app
@@ -441,7 +439,6 @@ def run_buddy_app() -> None:
         on_refresh=refresh_engines,
         memory=memory,
         run_import=run_import,
-        routines=routines,
         action_log=ActionLog(),
     )
 

@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  AudioLines, BookUser, BrainCircuit, Clock3, House, Info, Repeat2, ShieldCheck, WandSparkles,
+  AudioLines, BookUser, BrainCircuit, Clock3, House, Info, ShieldCheck, WandSparkles,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
@@ -10,10 +10,9 @@ import { AboutTab, HistoryTab, PermissionsTab, VoiceTab } from './basics'
 import { BrainTab } from './brain'
 import { HomeTab } from './home'
 import { MemoryTab } from './memory'
-import { RoutinesTab } from './routines'
 import { SkillsTab } from './skills'
 
-export type Tab = 'home' | 'brain' | 'skills' | 'memory' | 'routines' | 'voice' | 'permissions' | 'history' | 'about'
+export type Tab = 'home' | 'brain' | 'skills' | 'memory' | 'voice' | 'permissions' | 'history' | 'about'
 
 const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] }[] = [
   { title: '', tabs: [{ id: 'home', label: 'Home', icon: House }] },
@@ -22,7 +21,6 @@ const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: React.Compo
     tabs: [
       { id: 'skills', label: 'Skills', icon: WandSparkles },
       { id: 'memory', label: 'Memory', icon: BookUser },
-      { id: 'routines', label: 'Routines', icon: Repeat2 },
     ],
   },
   {
@@ -97,9 +95,6 @@ export function Settings() {
                     )}
                     <Icon className="relative size-4" />
                     <span className="relative">{label}</span>
-                    {id === 'routines' && state.suggestions.length > 0 && (
-                      <span className="relative ml-auto rounded-full bg-plip-400/20 px-1.5 text-[10px] font-bold text-plip-200">{state.suggestions.length}</span>
-                    )}
                   </button>
                 ))}
               </div>
@@ -133,7 +128,6 @@ export function Settings() {
             {tab === 'brain' && <BrainTab state={state} />}
             {tab === 'skills' && <SkillsTab state={state} />}
             {tab === 'memory' && <MemoryTab state={state} />}
-            {tab === 'routines' && <RoutinesTab state={state} />}
             {tab === 'voice' && <VoiceTab state={state} />}
             {tab === 'permissions' && <PermissionsTab state={state} />}
             {tab === 'history' && <HistoryTab state={state} />}

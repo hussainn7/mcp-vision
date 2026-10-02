@@ -2,7 +2,7 @@
 
 Safe actions run right away. Consequential ones (sending a message, moving
 files, filling a form) build a preview first and wait for the user's yes,
-spoken or clicked. Every run is logged so Plip can notice routines.
+spoken or clicked. Every run is logged.
 """
 from __future__ import annotations
 
@@ -98,7 +98,6 @@ class ActionEngine:
 
         self.ctx = ctx
         self.specs = {spec.name: spec for spec in (specs if specs is not None else all_specs())}
-        ctx.state["specs"] = self.specs                  # routines run other actions' steps
         self.enabled = enabled
         self.log = log
         self.timeout = timeout

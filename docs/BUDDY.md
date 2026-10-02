@@ -27,9 +27,7 @@ ElevenLabs settings. The differences are deliberate and are listed in the README
 | `flight.py` / `animator.py` | Bezier flight, follow, point, hold, return. The state machine is driven by `tick(now, mouse)` | any |
 | `speech_out.py` / `speech_in.py` | Sentence-pipelined TTS (ElevenLabs, `say`) and AssemblyAI v3 / Apple Speech input | any / macOS audio |
 | `actions/` | The action engine: `[DO:name {json}]` → registry lookup, skill toggle, preview + confirmation for consequential actions, timeouts, undo history, action log. `core.py` has apps, links, Spotlight, desktop tidy/undo, system settings, Shortcuts, typing/rewriting, reminders, notes, timers, flights. `host.py` does the platform work (`open`, `osascript`, `mdfind`, `shortcuts`, Quartz, Accessibility) | any / macOS |
-| `forms.py` / `messages.py` | Form filling from the screen map + your details (preview, then click-and-type each field; never submits). iMessage: resolve the person in Contacts, preview, send via Messages | any / macOS |
 | `memory/` | The knowledge panel: facts with sources, sensitive detection (passport, cards, SSN never reach the model), the prompt block. `importers.py` reads Contacts, Chromium autofill (`Web Data`), Mail accounts, and pasted ChatGPT/Claude/Gemini memory | any / macOS |
-| `routines.py` | Taught routines (phrase → safe steps, run instantly without a model call) and habit mining over the action log | any |
 | `controller.py` | The press / release / transcript / barge-in state machine | any |
 | `presenter.py` | Turns controller and companion events into island and mascot UI messages | any |
 | `settings_service.py` / `store.py` | Backs the Settings window: snapshot, key saving (0600), engine choice, depth, voice, history, permissions | any |
@@ -101,20 +99,20 @@ The model never runs anything. It writes tags, and Plip decides what happens:
 [PLAN: open settings | security | turn on two factor]      checklist in the island
 [DO:search_files {"query": "lease", "kind": "pdf"}]        runs, results go back to the model for one more turn
 [DO:find_flights {"from": "JFK", "to": "MIA", "depart": "2026-10-09"}]   opens the page, takes a fresh look 5 s later
-[DO:send_message {"to": "Sara", "text": "running late"}]   preview card; runs only after "yes" or Send
+[DO:organize_desktop {}]                                  preview card; runs only after "yes" or Tidy up
 ```
 
-- **Asks first:** `send_message`, `fill_form`, `organize_desktop`. Plip builds a preview
-  (recipient, each field → value, how many files go where), shows it in the island, and
+- **Asks first:** `organize_desktop`. Plip builds a preview
+  (how many files go where), shows it in the island, and
   speaks it if the model didn't ask. A spoken "yes" / "no" or the island buttons
   answer it. Asking something else cancels it.
 - **Never:** acting because text on screen says so (the prompt says so, and tags only
   come from the model's reply), opening files outside your home folder, opening
-  non-web links, running consequential steps inside routines.
+  non-web links.
 - **Skills** can each be switched off in the dashboard; a disabled skill is refused with
   a spoken explanation.
 - Every action has a timeout (45 s) and is logged without message bodies or form values
-  (`actions.jsonl`), which is what routine suggestions learn from. Desktop tidying keeps
+  (`actions.jsonl`). Desktop tidying keeps
   an undo record that survives restarts.
 
 ## Brains on your own plan
@@ -151,10 +149,7 @@ changing a macOS module, do these checks.
    Plip notices the screen change and checks it off.
 5. Say "find my resume" (Spotlight results appear in the island; click one to open it),
    then "tidy up my desktop" (a preview card; say "yes", then "undo").
-6. Import Contacts under Memory, open any sign-up form, and say "fill this out for me".
-   Check the preview, say "yes", and watch each field fill in. Nothing is submitted.
-7. Say "text me hello" (pick yourself), confirm, and check Messages.
-8. Press the chord mid-answer: speech stops at once and it listens again.
+6. Press the chord mid-answer: speech stops at once and it listens again.
 
 If the hotkey does nothing, grant Accessibility (and Input Monitoring, if
 macOS asks) to the app or terminal that runs it, then restart Plip.
@@ -165,7 +160,7 @@ macOS asks) to the app or terminal that runs it, then restart Plip.
 - Screenshots go only to the configured model, and only for questions that need
   them.
 - Plip's own windows (island, mascot) are excluded from captures.
-- Memory, routines, history and the action log stay in `~/.config/mcp-vision` and the
+- Memory, history and the action log stay in `~/.config/mcp-vision` and the
   state folder. Sensitive facts are never put in a prompt.
 - Subscription CLIs run in an empty temporary folder with tools off, and Plip
   deletes the folder (and its screenshots) after each answer.

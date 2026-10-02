@@ -121,24 +121,6 @@ export interface MemoryPanel {
   handles: string[]
 }
 
-export interface RoutineCard {
-  id: string
-  name: string
-  phrase: string
-  steps: string[]
-  runs: number
-  source: 'taught' | 'suggested'
-}
-
-export interface Suggestion {
-  key: string
-  name: string
-  phrase: string
-  labels: string[]
-  days: number
-  around: string
-}
-
 export interface SettingsState {
   version: string
   engines: Engine[]
@@ -152,8 +134,6 @@ export interface SettingsState {
   memory: MemoryPanel | null
   skills: Record<string, boolean>
   companion: 'notch' | 'cursor' | 'hidden'
-  routines: RoutineCard[]
-  suggestions: Suggestion[]
   stats: { actionsWeek: number; answers: number; minutesSaved: number }
 }
 
@@ -192,8 +172,6 @@ export const defaultSettings: SettingsState = {
   memory: null,
   skills: {},
   companion: 'notch',
-  routines: [],
-  suggestions: [],
   stats: { actionsWeek: 0, answers: 0, minutesSaved: 0 },
 }
 

@@ -368,12 +368,12 @@ def test_settings_memory_commands(service):
 
 def test_settings_skills_and_companion(service):
     svc, calls, tmp_path = service
-    svc.handle({"cmd": "set-skill", "skill": "messages", "enabled": False})
+    svc.handle({"cmd": "set-skill", "skill": "travel", "enabled": False})
     svc.handle({"cmd": "set-skill", "skill": "rockets", "enabled": False})
     svc.handle({"cmd": "set-companion", "style": "cursor"})
     svc.handle({"cmd": "set-companion", "style": "giant"})
     state = calls["posted"][-1]["state"]
-    assert state["skills"]["messages"] is False and state["skills"]["apps"] is True
+    assert state["skills"]["travel"] is False and state["skills"]["apps"] is True
     assert state["companion"] == "cursor"
     assert "phone" not in state
     assert calls["reload"] == 2

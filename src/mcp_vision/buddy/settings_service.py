@@ -17,7 +17,7 @@ from mcp_vision.buddy.store import History, Prefs, config_dir
 
 KEY_NAMES = {"ANTHROPIC_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
 DEPTHS = {"fast", "balanced", "deep"}
-SKILL_IDS = ("apps", "files", "system", "writing", "planning", "travel", "memory", "forms", "messages", "routines")
+SKILL_IDS = ("apps", "files", "system", "writing", "planning", "travel", "memory")
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
 
@@ -47,8 +47,7 @@ class SettingsService:
     on_refresh: Callable[[], None] = lambda: None          # re-probe engines/permissions in the background
     memory: Any = None                                     # buddy.memory.Memory
     run_import: Callable[[str], None] = lambda source: None   # background import (Contacts, Mail, ...)
-    routines: Any = None                                   # buddy.routines.Routines
-    action_log: Any = None                                 # buddy.actions.ActionLog (for suggestions)
+    action_log: Any = None                                 # buddy.actions.ActionLog (for stats)
 
     @property
     def prefs(self) -> Prefs:
@@ -79,17 +78,8 @@ class SettingsService:
             "memory": self.memory.panel() if self.memory is not None else None,
             "skills": {skill: bool(prefs.skills.get(skill, True)) for skill in SKILL_IDS},
             "companion": prefs.companion,
-            "routines": self.routines.cards() if self.routines is not None else [],
-            "suggestions": self._suggestions(),
             "stats": self._stats(),
         }
-
-    def _suggestions(self) -> list[dict]:
-        if self.routines is None or self.action_log is None:
-            return []
-        from mcp_vision.buddy.routines import suggest_routines
-
-        return suggest_routines(self.action_log.entries(), self.routines.items, self.routines.dismissed)
 
     def _stats(self) -> dict:
         entries = self.action_log.entries() if self.action_log is not None else []
@@ -236,31 +226,6 @@ class SettingsService:
     def _cmd_set_companion(self, command):
         if command.get("style") in {"notch", "cursor", "hidden"}:
             self._update_prefs(companion=command["style"])
-
-    # -- routines ----------------------------------------------------------------------------------
-    def _cmd_routine_accept(self, command):
-        if self.routines is None:
-            return
-        suggestion = next((item for item in self._suggestions() if item["key"] == command.get("key")), None)
-        if suggestion is not None:
-            self.routines.add(command.get("name") or suggestion["name"], command.get("phrase") or suggestion["phrase"],
-                              suggestion["steps"], source="suggested")
-            self.routines.save()
-            self.reload()
-            self.push()
-
-    def _cmd_routine_dismiss(self, command):
-        if self.routines is not None and command.get("key"):
-            self.routines.dismissed.append(str(command["key"]))
-            self.routines.save()
-            self.push()
-
-    def _cmd_routine_delete(self, command):
-        if self.routines is not None and self.routines.remove(str(command.get("id") or "")):
-            self.routines.save()
-            self.reload()
-            self.push()
-
 
 
 def _key(settings: Any, name: str) -> str | None:

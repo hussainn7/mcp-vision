@@ -120,27 +120,19 @@ await test('settings: memory paste, copy prompt, add and forget facts, import', 
   await page.close()
 })
 
-await test('settings: skills, companion style, routines', async () => {
+await test('settings: skills and companion style', async () => {
   const skills = await open('settings?tab=skills')
-  await skills.page.getByRole('switch', { name: 'Messages' }).click()
-  assert.deepEqual((await skills.take('set-skill')), { cmd: 'set-skill', skill: 'messages', enabled: false })
+  await skills.page.getByRole('switch', { name: 'Travel' }).click()
+  assert.deepEqual((await skills.take('set-skill')), { cmd: 'set-skill', skill: 'travel', enabled: false })
   await skills.page.getByRole('button', { name: 'Cursor', exact: true }).click()
   assert.deepEqual((await skills.take('set-companion')), { cmd: 'set-companion', style: 'cursor' })
   await skills.page.close()
 
-  const routines = await open('settings?tab=routines')
-  const phrase = routines.page.locator('input').first()
-  await phrase.fill('good morning')
-  await routines.page.getByRole('button', { name: 'Save routine' }).click()
-  assert.deepEqual((await routines.take('routine-accept')), { cmd: 'routine-accept', key: 'open_app:Calendar|open_app:Slack|open_app:Spotify', phrase: 'good morning' })
-  await routines.page.getByRole('button', { name: 'Not now' }).click()
-  assert.ok((await routines.take('routine-dismiss')))
-  await routines.page.close()
 
 })
 
 await test('settings: every tab renders without errors', async () => {
-  for (const tab of ['home', 'skills', 'memory', 'routines', 'brain', 'voice', 'permissions', 'history', 'about']) {
+  for (const tab of ['home', 'skills', 'memory', 'brain', 'voice', 'permissions', 'history', 'about']) {
     const { page } = await open(`settings?tab=${tab}`)
     assert.ok((await page.locator('h1').first().textContent()).length > 3, tab)
     await page.close()

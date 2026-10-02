@@ -108,8 +108,8 @@ export const FRAMES: Frame[] = [
       level: 0.3,
       done: true,
       engine: ENGINE,
-      answer: 'I’ll text Sara that you’re running ten minutes late.',
-      confirm: { title: 'Send to Sara', lines: ['“Running 10 minutes late, sorry!”', 'to +1 555 010 4444'], confirm: 'Send', name: 'send_message' },
+      answer: 'I’ll sort your desktop into folders. Here’s the plan.',
+      confirm: { title: 'Tidy 17 files', lines: ['Screenshots → 9', 'Documents → 5', 'Images → 3'], confirm: 'Tidy up', name: 'organize_desktop' },
       latencyMs: 1320,
     },
     mascot: { mood: 'thinking', at: 'notch' },
@@ -174,13 +174,6 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
     contacts: [{ handle: '+15550104444', count: 212, name: 'Sara' }],
     handles: ['+15550102000', 'hussain@icloud.com'],
   },
-  routines: [
-    { id: 'r1', name: 'Focus time', phrase: 'focus time', steps: ['open Linear', 'set dark mode on', 'set volume 20'], runs: 14, source: 'taught' },
-    { id: 'r2', name: 'Wind down', phrase: 'wind down', steps: ['set dark mode on', 'open Spotify'], runs: 6, source: 'suggested' },
-  ],
-  suggestions: [
-    { key: 'open_app:Calendar|open_app:Slack|open_app:Spotify', name: 'Morning setup', phrase: 'start my day', labels: ['open Slack', 'open Calendar', 'open Spotify'], days: 6, around: '9:05 AM' },
-  ],
   history: [
     { question: 'where is the wifi menu', answer: "It's the fan-shaped icon in your menu bar, just left of the battery.", at: 1759370000, engine: 'Claude' },
     { question: 'what does this error mean', answer: 'Your build can’t find the module “sharp”. Run npm install in the project folder, then restart the dev server.', at: 1759371800, engine: 'Claude' },

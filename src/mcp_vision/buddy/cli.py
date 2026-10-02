@@ -55,10 +55,8 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
     speaker = None if speak else QueueSpeaker(PrintVoice(write=lambda text: None))
     try:
         from mcp_vision.buddy.memory import Memory
-        from mcp_vision.buddy.routines import Routines
 
-        companion = make_companion(settings, capturer=capturer, speaker=speaker, prefs=prefs, memory=Memory(),
-                                   routines=Routines())
+        companion = make_companion(settings, capturer=capturer, speaker=speaker, prefs=prefs, memory=Memory())
     except SetupError as exc:
         raise click.ClickException(str(exc)) from exc
     loop = asyncio.new_event_loop()

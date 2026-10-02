@@ -3,7 +3,7 @@
 Everything between the command line and the model is real: settings and
 prefs, engine discovery and the sign-in probe, the Claude Code subprocess
 streaming protocol, the companion loop, actions and their follow-up turns,
-memory, and routines. Only the model's words are scripted.
+and memory. Only the model's words are scripted.
 """
 from __future__ import annotations
 
@@ -129,18 +129,6 @@ def test_memory_import_then_personal_answer(plip, tmp_path):
     assert plip("ask", "what's my email").stdout.splitlines()[0] == "Your email is ada@example.com."
     assert "- email: ada@example.com" in plip.calls()[-1]["text"]
     assert "key: value" in plip("memory", "prompt").stdout
-
-
-def test_routine_phrase_runs_without_the_model(plip):
-    plip.config.mkdir(parents=True, exist_ok=True)
-    (plip.config / "routines.json").write_text(json.dumps({"routines": [{
-        "name": "Morning", "phrase": "start my day",
-        "steps": [{"name": "set_timer", "args": {"minutes": 60, "label": "standup"}}]}]}))
-    out = plip("ask", "Start my day!").stdout
-    assert out.splitlines()[0] == "Running Morning." and "✓ ran Morning" in out
-    assert plip.calls() == []
-    saved = json.loads((plip.config / "routines.json").read_text())
-    assert saved["routines"][0]["runs"] == 1
 
 
 def test_how_to_questions_get_a_plan_and_a_point(plip):

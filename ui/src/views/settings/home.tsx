@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import { ArrowUpRight, Check, ChevronRight, Clock3, FolderSearch, MessageCircle, PenLine, Plane, Repeat2, TrendingUp, WandSparkles, Zap } from 'lucide-react'
+import { CalendarClock, Check, ChevronRight, Clock3, FolderSearch, Plane, Type, TrendingUp, WandSparkles, Zap } from 'lucide-react'
 import type { SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Keycap, cn } from '../../components/bits'
@@ -9,8 +9,8 @@ import { Card, Section, Stat } from './ui'
 const TRY = [
   { icon: FolderSearch, text: 'Find my lease PDF', hint: 'Spotlight search', tint: 'from-sky-300 to-cyan-400' },
   { icon: WandSparkles, text: 'Tidy up my desktop', hint: 'Sorted into folders, undoable', tint: 'from-teal-200 to-emerald-400' },
-  { icon: MessageCircle, text: 'Text Mom I’m on my way', hint: 'iMessage, asks first', tint: 'from-emerald-200 to-green-400' },
-  { icon: PenLine, text: 'Fill this form for me', hint: 'From your saved details', tint: 'from-amber-200 to-orange-400' },
+  { icon: Type, text: 'Make this email friendlier', hint: 'Rewrites your selection', tint: 'from-violet-200 to-indigo-400' },
+  { icon: CalendarClock, text: 'Remind me to call Mom at 6', hint: 'Reminders & timers', tint: 'from-amber-200 to-orange-400' },
   { icon: Plane, text: 'Flights to Miami next Friday', hint: 'Google Flights + summary', tint: 'from-indigo-200 to-sky-400' },
   { icon: Zap, text: 'How do I turn on 2FA in GitHub?', hint: 'Step-by-step checklist', tint: 'from-fuchsia-200 to-pink-400' },
 ]
@@ -33,7 +33,6 @@ export function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) =>
   ]
   const progress = steps.filter((step) => step.done).length / steps.length
   const first = state.memory?.profile['name.first']
-  const suggestion = state.suggestions[0]
 
   return (
     <div>
@@ -83,21 +82,6 @@ export function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) =>
         </Card>
       )}
 
-      {suggestion && (
-        <Card className="mb-7 overflow-hidden" onClick={() => go('routines')}>
-          <div className="pointer-events-none absolute -right-10 -top-16 size-48 rounded-full bg-plip-400/15 blur-3xl" />
-          <div className="flex items-center gap-4">
-            <span className="grid size-10 place-items-center rounded-xl bg-plip-400/15 text-plip-200"><Repeat2 className="size-5" /></span>
-            <div className="flex-1">
-              <div className="text-[13.5px] font-semibold">Plip noticed a habit</div>
-              <div className="text-[12.5px] text-white/50">
-                You {suggestion.labels.join(', ')} on {suggestion.days} days around {suggestion.around}. Make it one phrase?
-              </div>
-            </div>
-            <ArrowUpRight className="size-4 text-white/40" />
-          </div>
-        </Card>
-      )}
 
       <Section title="Try saying">
         <div className="grid grid-cols-2 gap-2.5">
