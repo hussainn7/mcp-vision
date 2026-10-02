@@ -20,6 +20,9 @@ class Prefs:
     depth: str = "balanced"          # fast | balanced | deep
     walkthroughs: bool = True
     buddy: bool = True               # show Plip by the cursor while idle
+    companion: str = "notch"         # notch: Plip lives in the notch and drips out to point | cursor | hidden
+    skills: dict = field(default_factory=dict)        # skill id -> enabled (missing = on)
+    phone: dict = field(default_factory=dict)         # iMessage remote: {"enabled": bool, "handles": [...]}
     tts: str = ""                    # "" = follow settings/env
     stt: str = ""
     onboarded: bool = False

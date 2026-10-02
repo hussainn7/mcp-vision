@@ -1,0 +1,146 @@
+"""Shared fakes for Plip's companion-level tests."""
+from __future__ import annotations
+
+from mcp_vision.buddy.geometry import Rect, ScreenInfo, Screenshot
+
+PRIMARY = Rect(0, 0, 1512, 982)
+
+
+def shot(index=1, size=(1280, 831), cursor=True) -> Screenshot:
+    screen = ScreenInfo(index=index, frame=PRIMARY, scale=2.0, is_cursor_screen=cursor)
+    return Screenshot(screen=screen, data=b"\xff\xd8jpeg", width=size[0], height=size[1])
+
+
+class ScriptedBrain:
+    """Replies with the next scripted answer on each call, streamed in small chunks."""
+
+    name = "scripted"
+    label = "Scripted"
+    kind = "api"
+    vision = True
+
+    def __init__(self, *replies: str, chunk: int = 5):
+        self.replies = list(replies)
+        self.chunk = chunk
+        self.calls = []
+
+    async def stream(self, *, system, turns, detailed=False):
+        self.calls.append(turns)
+        reply = self.replies.pop(0) if self.replies else "okay."
+        for start in range(0, len(reply), self.chunk):
+            yield reply[start:start + self.chunk]
+
+
+class Speaker:
+    def __init__(self):
+        self.said, self.stopped = [], 0
+
+    def speak(self, text):
+        self.said.append(text)
+
+    async def drain(self):
+        return None
+
+    def stop(self):
+        self.stopped += 1
+
+
+class Pointer:
+    def __init__(self):
+        self.events = []
+
+    def set_state(self, state, detail=""):
+        self.events.append(("state", state))
+
+    def point(self, x, y, label):
+        self.events.append(("point", round(x), round(y), label))
+
+    def release(self):
+        self.events.append(("release",))
+
+
+class Capturer:
+    def __init__(self, shots=None):
+        self.shots = shots if shots is not None else [shot()]
+        self.captures = 0
+
+    def screens(self):
+        return [item.screen for item in self.shots]
+
+    def capture(self, *, only_cursor_screen=False):
+        self.captures += 1
+        return list(self.shots)
+
+
+class Events:
+    """Collects observer events: ``events.of("step")`` returns the data dicts."""
+
+    def __init__(self):
+        self.items = []
+
+    def __call__(self, kind, data):
+        self.items.append((kind, data))
+
+    def of(self, kind):
+        return [data for name, data in self.items if name == kind]
+
+
+class FakeHost:
+    """Records what actions asked the platform to do."""
+
+    name = "fake"
+
+    def __init__(self, home="/Users/test", apps=None, shortcuts=None, osa_reply=""):
+        self.home = home
+        self.calls = []
+        self.apps = apps if apps is not None else {
+            "safari": "/Applications/Safari.app", "google chrome": "/Applications/Google Chrome.app",
+            "visual studio code": "/Applications/Visual Studio Code.app", "messages": "/System/Applications/Messages.app",
+            "system settings": "/System/Applications/System Settings.app", "notes": "/System/Applications/Notes.app",
+            "slack": "/Applications/Slack.app", "spotify": "/Applications/Spotify.app"}
+        self._shortcuts = shortcuts or ["Morning Routine", "Log Water"]
+        self.osa_reply = osa_reply
+        self.files = []
+
+    def list_apps(self):
+        return self.apps
+
+    def open_app(self, path):
+        self.calls.append(("open_app", path))
+
+    def open(self, target):
+        self.calls.append(("open", target))
+
+    def reveal(self, path):
+        self.calls.append(("reveal", path))
+
+    def find_files(self, query, kind="", limit=8):
+        self.calls.append(("find_files", query, kind))
+        return self.files[:limit]
+
+    def osascript(self, script, timeout=10.0):
+        self.calls.append(("osascript", script))
+        return self.osa_reply
+
+    def notify(self, title, text):
+        self.calls.append(("notify", title, text))
+
+    def shortcuts(self):
+        return list(self._shortcuts)
+
+    def run_shortcut(self, name):
+        self.calls.append(("shortcut", name))
+        return "ok"
+
+    def type_text(self, text):
+        self.calls.append(("type", text))
+
+    def replace_selection(self, text):
+        self.calls.append(("replace", text))
+
+    def click(self, x, y):
+        self.calls.append(("click", round(x), round(y)))
+
+    def set_field(self, x, y, value):
+        self.calls.append(("field", round(x), round(y), value))
+        return True

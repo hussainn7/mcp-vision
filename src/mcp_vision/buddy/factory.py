@@ -81,6 +81,18 @@ def make_context(settings: BuddySettings):
     return MacAXContext()
 
 
+def make_actions(settings: BuddySettings, prefs: Prefs | None = None, *, memory=None, routines=None,
+                 host=None, source: str = "voice"):
+    from mcp_vision.buddy.actions import ActionContext, ActionEngine, ActionLog
+    from mcp_vision.buddy.actions.host import default_host
+    from mcp_vision.paths import state_dir
+
+    skills = dict(prefs.skills) if prefs is not None else {}
+    ctx = ActionContext(host=host or default_host(), memory=memory, routines=routines)
+    return ActionEngine(ctx, enabled=lambda skill: bool(skills.get(skill, True)), log=ActionLog(),
+                        undo_path=state_dir() / "undo.json", source=source)
+
+
 def make_speaker(settings: BuddySettings) -> Speaker | None:
     if settings.tts.lower() == "off":
         return None
@@ -93,7 +105,8 @@ def make_speaker(settings: BuddySettings) -> Speaker | None:
 def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
                    speaker: Speaker | None = None, capturer: ScreenCapturer | None = None,
                    brain: Any = None, observer: Observer | None = None, prefs: Prefs | None = None,
-                   engines: list | None = None, watch: bool = False) -> Companion:
+                   engines: list | None = None, watch: bool = False, actions=None,
+                   notes=None) -> Companion:
     settings = apply_prefs(settings, prefs)
     jev = make_jev(settings)
     capturer = capturer or ScreenCapturer(max_edge=settings.max_image_edge, quality=settings.jpeg_quality)
@@ -114,8 +127,10 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
         observer=observer,
         watcher=watcher,
         walkthroughs=prefs.walkthroughs if prefs is not None else True,
+        actions=actions if actions is not None else make_actions(settings, prefs),
+        notes=notes,
     )
 
 
-__all__ = ["SetupError", "apply_prefs", "make_brain", "make_companion", "make_jev", "make_router",
+__all__ = ["SetupError", "apply_prefs", "make_actions", "make_brain", "make_companion", "make_jev", "make_router",
            "make_speaker"]

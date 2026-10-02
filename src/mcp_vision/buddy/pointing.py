@@ -7,15 +7,22 @@ The model answers in plain spoken prose and may embed tags such as::
     [POINT:none]
 
 Coordinates are pixels in the screenshot of the named screen (the cursor
-screen when omitted). Tags never reach the speech engine. Each tag is
+screen when omitted). It can also act and plan::
+
+    [DO:open_app {"name": "Safari"}]
+    [PLAN: open settings | pick privacy | turn on two-factor]
+
+Action arguments are JSON and may contain brackets, so ``[DO:`` tags are
+scanned with a JSON-aware matcher. Tags never reach the speech engine. Each tag is
 attached to the sentence it appears in and released just before that
 sentence, so the buddy starts flying as the sentence that mentions the
 control is spoken - without chopping the sentence in two.
 """
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 TAG_RE = re.compile(
     r"\[POINT:\s*(?:"
@@ -31,6 +38,9 @@ CONTROL_RE = re.compile(r"\[\s*(?:STEPS\s*:\s*(?P<steps>\d{1,2})|(?P<done>DONE))
 _SCREEN_SUFFIX_RE = re.compile(r"^(?P<label>.*?)(?:\s*:\s*screen\s*(?P<screen>\d+))?\s*$", re.IGNORECASE | re.S)
 _SENTENCE_END_RE = re.compile(r"[.!?…]+[\"'”’)\]]*\s+")
 _MAX_TAG_LEN = 200
+_MAX_ACTION_LEN = 6000               # fill_form tags carry every field
+_ACTION_HEAD_RE = re.compile(r"\[\s*DO\s*:\s*(?P<name>[a-z][a-z_]{1,40})\s*", re.IGNORECASE)
+_PLAN_RE = re.compile(r"\[\s*PLAN\s*:(?P<steps>[^\[\]]*)\]", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -56,7 +66,96 @@ class DoneTag:
     pass
 
 
-Event = SpeechChunk | PointTag | StepsTag | DoneTag
+@dataclass(frozen=True)
+class ActionTag:
+    name: str
+    args: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PlanTag:
+    steps: tuple[str, ...]
+
+
+Event = SpeechChunk | PointTag | StepsTag | DoneTag | ActionTag | PlanTag
+
+
+def _balanced_end(raw: str) -> int | None:
+    """Index just past the bracket that closes ``raw[0]``, counting nested brackets."""
+    depth = 0
+    for position, char in enumerate(raw):
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return position + 1
+    return None
+
+
+def scan_special(raw: str) -> tuple[int, ActionTag | PlanTag | None] | None:
+    """Match a ``[DO:...]`` or ``[PLAN:...]`` tag at the start of ``raw``.
+
+    Returns ``(length consumed, tag)``; the tag is ``None`` when malformed (it is
+    dropped, never spoken). Returns ``None`` when more text is needed.
+    """
+    head = raw[:7].upper().replace(" ", "")
+    if head.startswith("[PLAN:"):
+        match = _PLAN_RE.match(raw)
+        if match is None:
+            close = raw.find("]")
+            if close == -1:
+                return None
+            return close + 1, None
+        steps = tuple(step.strip(" .") for step in match.group("steps").split("|") if step.strip(" ."))[:10]
+        return match.end(), (PlanTag(steps) if steps else None)
+    match = _ACTION_HEAD_RE.match(raw)
+    if match is None:
+        if len(raw) < 12 and "]" not in raw:
+            return None
+        close = raw.find("]")
+        return (close + 1 if close != -1 else len(raw)), None
+    index = match.end()
+    if index >= len(raw):
+        return None
+    name = match.group("name").lower()
+    if raw[index] == "]":
+        return index + 1, ActionTag(name)
+    if raw[index] != "{":
+        end = _balanced_end(raw)
+        return (end, None) if end is not None else None
+    depth, in_string, escape = 0, False, False
+    for position in range(index, len(raw)):
+        char = raw[position]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = position + 1
+                rest = raw[end:]
+                stripped = len(rest) - len(rest.lstrip())
+                if end + stripped >= len(raw):
+                    return None
+                if raw[end + stripped] != "]":
+                    close = raw.find("]", end)
+                    return (close + 1, None) if close != -1 else None
+                try:
+                    args = json.loads(raw[index:end])
+                except ValueError:
+                    return end + stripped + 1, None
+                return end + stripped + 1, (ActionTag(name, args) if isinstance(args, dict) else None)
+    return None
 
 
 def parse_tag(raw: str) -> PointTag | None:
@@ -108,6 +207,8 @@ class ReplyStream:
         self.tags: list[PointTag] = []
         self.steps: int | None = None      # set by [STEPS:n]
         self.done = False                  # set by [DONE]
+        self.actions: list[ActionTag] = []
+        self.plan: tuple[str, ...] = ()
 
     @property
     def spoken_text(self) -> str:
@@ -123,6 +224,25 @@ class ReplyStream:
                 break
             self._text += raw[:start]
             raw = raw[start:]
+            special = raw[:7].upper().replace(" ", "")
+            if special.startswith(("[DO:", "[PLAN:")):
+                scanned = scan_special(raw)
+                if scanned is None:
+                    if len(raw) > _MAX_ACTION_LEN:       # runaway tag: drop it
+                        raw = ""
+                        break
+                    self._raw = raw
+                    break
+                consumed, tag = scanned
+                raw = raw[consumed:]
+                if tag is not None:
+                    events.extend(self._release(merge=False))
+                    if isinstance(tag, ActionTag):
+                        self.actions.append(tag)
+                    else:
+                        self.plan = tag.steps
+                    events.append(tag)
+                continue
             end = raw.find("]")
             inner = raw.find("[", 1)
             if inner != -1 and (end == -1 or inner < end):
@@ -164,10 +284,20 @@ class ReplyStream:
 
     def close(self) -> list[Event]:
         """Flush everything left at the end of the stream."""
-        leftover, self._raw = self._raw, ""
-        if not re.match(r"\[\s*(?:POINT|STEPS|DONE)\b", leftover, re.IGNORECASE):   # truncated tag: drop it
-            self._text += leftover
-        return self._release(final=True)
+        events: list[Event] = []
+        for _ in range(32):
+            leftover, self._raw = self._raw, ""
+            if not leftover:
+                break
+            if not re.match(r"\[\s*(?:POINT|STEPS|DONE|DO|PLAN)\b", leftover, re.IGNORECASE):
+                self._text += leftover
+                break
+            if re.match(r"\[\s*(?:DO|PLAN)\b", leftover, re.IGNORECASE) and "]" in leftover:
+                # A broken action tag: drop it and parse whatever came after it.
+                events.extend(self.feed(leftover[leftover.find("]") + 1:]))
+                continue
+            break                                    # a truncated tag with nothing after it: drop it
+        return events + self._release(final=True)
 
     def _release(self, *, final: bool = False, merge: bool = True) -> list[Event]:
         if final:

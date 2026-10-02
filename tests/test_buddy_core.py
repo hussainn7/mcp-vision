@@ -371,7 +371,8 @@ def test_turn_points_on_the_right_screen_and_speaks_clean_text():
     assert ("point", 2792, 520, "File menu") in pointer.events
     assert pointer.events[-1] == ("state", "idle")
     user_turn = brain.calls[0][-1]
-    assert user_turn.text == "where is export" and len(user_turn.images) == 2
+    assert user_turn.text.startswith("now: ") and user_turn.text.endswith("the user said: where is export")
+    assert len(user_turn.images) == 2
     history = buddy.conversation.history()
     assert history[0].text == "where is export"
     assert "pointed at: File menu on screen2" in history[1].text

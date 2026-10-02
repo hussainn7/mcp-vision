@@ -25,6 +25,7 @@ class Presenter:
         self._last_level = 0.0
         self.phase = "idle"
         self.walkthrough: dict[str, Any] | None = None
+        self.plan: list[str] = []
 
     def _island(self, **state: Any) -> None:
         self.post_island([{"type": "island", "state": state}])
@@ -33,6 +34,7 @@ class Presenter:
     def listening(self) -> None:
         self.phase = "listening"
         self.walkthrough = None
+        self.plan = []
         self.post_island([{"type": "reset"}, {"type": "island", "state": {"phase": "listening"}}])
         self.set_mood("listening", 0.0)
 
@@ -100,7 +102,10 @@ class Presenter:
     def _on_walkthrough(self, data: dict[str, Any]) -> None:
         self.walkthrough = {"index": int(data.get("index", 0)), "total": int(data.get("total", 1)),
                             "label": data.get("label") or ""}
-        messages: list[Message] = [{"type": "island", "state": {"walkthrough": self.walkthrough}}]
+        state: dict[str, Any] = {"walkthrough": self.walkthrough}
+        if self.plan:          # the step being worked on; all checked once finished
+            state["planIndex"] = len(self.plan) if data.get("finished") else self.walkthrough["index"]
+        messages: list[Message] = [{"type": "island", "state": state}]
         if data.get("waiting"):
             messages.append({"type": "step", "step": {"id": "wait", "label": "Your turn. I'm watching", "status": "active"}})
         elif data.get("timed_out"):
@@ -117,6 +122,28 @@ class Presenter:
 
     def _on_error(self, data: dict[str, Any]) -> None:
         self.failed(data.get("message") or "Something went wrong.")
+
+    def _on_plan(self, data: dict[str, Any]) -> None:
+        self.plan = [str(step) for step in data.get("steps") or []][:10]
+        self._island(plan=self.plan, planIndex=0)
+
+    def _on_confirm(self, data: dict[str, Any]) -> None:
+        if data.get("cleared"):
+            self._island(confirm=None)
+            return
+        self._island(confirm={"title": data.get("title", ""), "lines": list(data.get("lines") or [])[:6],
+                              "confirm": data.get("confirm") or "Do it", "name": data.get("name", "")})
+        self.set_mood("thinking", 0.0)
+
+    def _on_action(self, data: dict[str, Any]) -> None:
+        items = data.get("items") or []
+        if items:
+            self._island(results=[{key: item.get(key) for key in ("title", "detail", "path")} for item in items[:6]])
+
+    def _on_notice(self, data: dict[str, Any]) -> None:
+        self.post_island([{"type": "reset"}, {"type": "island", "state": {
+            "phase": "answering", "answer": data.get("text", ""), "done": True}}])
+        self.set_mood("happy", 0.0)
 
     def _on_point(self, data: dict[str, Any]) -> None:
         # Flight and the label bubble are driven by the native animator.

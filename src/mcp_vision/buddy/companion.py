@@ -24,8 +24,10 @@ from typing import Any, Protocol
 
 from mcp_vision.buddy.conversation import Conversation, Turn
 from mcp_vision.buddy.geometry import Rect, ScreenInfo, Screenshot
-from mcp_vision.buddy.pointing import DoneTag, PointTag, ReplyStream, SpeechChunk, StepsTag
-from mcp_vision.buddy.prompt import GUIDE_FOLLOWUP, SYSTEM_PROMPT, system_prompt, user_turn_text
+from mcp_vision.buddy.pointing import ActionTag, DoneTag, PlanTag, PointTag, ReplyStream, SpeechChunk, StepsTag
+from mcp_vision.buddy.prompt import (
+    ACTION_FOLLOWUP, GUIDE_FOLLOWUP, LOOK_FOLLOWUP, SYSTEM_PROMPT, system_prompt, user_turn_text,
+)
 from mcp_vision.buddy.screen_context import ScreenContext
 
 Observer = Callable[[str, dict[str, Any]], None]
@@ -113,6 +115,11 @@ class TurnResult:
     steps_total: int | None = None   # walkthrough length announced by [STEPS:n]
     finished: bool = False           # [DONE] seen
     turns: int = 1                   # model turns in this session (walkthroughs > 1)
+    did: list[str] = field(default_factory=list)          # actions carried out, for history and UI
+    reports: list[str] = field(default_factory=list)      # action results the model should see next
+    look_after: float | None = None  # an action wants a fresh look (e.g. a page loading)
+    pending: str = ""                # an action is waiting for the user's yes
+    plan: tuple[str, ...] = ()
 
 
 class _NullPointer:
@@ -157,7 +164,8 @@ class Companion:
                  system_prompt: str | None = None, clock: Callable[[], float] = time.perf_counter,
                  snap_timeout: float = 0.6, context: ContextSource | None = None,
                  observer: Observer | None = None, watcher: Watcher | None = None,
-                 walkthroughs: bool = True, guide_timeout: float = 90.0, max_guide_turns: int = 10):
+                 walkthroughs: bool = True, guide_timeout: float = 90.0, max_guide_turns: int = 10,
+                 actions: Any = None, notes: Callable[[], str] | None = None, max_followups: int = 3):
         self.brain = brain
         self.capturer = capturer
         self.speaker = speaker or _NullSpeaker()
@@ -174,6 +182,10 @@ class Companion:
         self.walkthroughs = walkthroughs
         self.guide_timeout = guide_timeout
         self.max_guide_turns = max_guide_turns
+        self.actions = actions
+        self.notes = notes
+        self.max_followups = max_followups
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
         self._token: int | None = None
         self._prefetched: tuple[float, concurrent.futures.Future] | None = None
@@ -228,18 +240,54 @@ class Companion:
     async def respond(self, transcript: str, token: int | None = None) -> TurnResult:
         if token is not None and token != self._token:
             return TurnResult(transcript=transcript, state="cancelled")
+        return await self._own(self._session(transcript), transcript)
+
+    async def answer_pending(self, accept: bool) -> TurnResult | None:
+        """The island's Confirm / Cancel buttons for a waiting action."""
+        if self.actions is None or self.actions.pending is None:
+            return None
+        return await self._own(self._answer(accept, "yes" if accept else "no"), "")
+
+    async def _own(self, coroutine, transcript: str) -> TurnResult:
+        self._loop = asyncio.get_running_loop()
         self._stop_current()
-        self._task = asyncio.ensure_future(self._session(transcript))
+        self._task = asyncio.ensure_future(coroutine)
         try:
             return await self._task
         except asyncio.CancelledError:
             return TurnResult(transcript=transcript, state="cancelled")
 
     async def _session(self, transcript: str) -> TurnResult:
+        if self.actions is not None and self.actions.pending is not None:
+            from mcp_vision.buddy.actions import answer_kind
+
+            kind = answer_kind(transcript)
+            if kind:
+                answered = await self._answer(kind == "yes", transcript)
+                if answered is not None:
+                    return answered
+            else:
+                self.actions.cancel_pending()          # they moved on to something else
+                self.emit("confirm", cleared=True)
         result = await self._turn(transcript)
+        turns, followups = 1, 0
+        while result.state == "done" and (result.reports or result.look_after) and followups < self.max_followups:
+            if result.look_after:
+                self.emit("step", id="wait", label="Waiting for it to load", status="active")
+                await asyncio.sleep(result.look_after)
+            prompt = (LOOK_FOLLOWUP if result.look_after else ACTION_FOLLOWUP).format(
+                reports="\n".join(f"- {report}" for report in result.reports) or "- (nothing else)")
+            followup = await self._turn(prompt, guide=True, screen=bool(result.look_after))
+            turns += 1
+            followups += 1
+            followup.did = result.did + followup.did
+            followup.plan = followup.plan or result.plan
+            followup.steps_total = followup.steps_total or result.steps_total
+            if followup.state != "done":
+                return followup
+            result = followup
         total = result.steps_total
         done_steps = 1
-        turns = 1
         while (self.walkthroughs and self.watcher is not None and result.state == "done" and total
                and not result.finished and done_steps < total + 2 and turns < self.max_guide_turns):
             label = result.targets[-1].label if result.targets else ""
@@ -261,7 +309,65 @@ class Companion:
         result.turns = turns
         return result
 
-    async def _turn(self, transcript: str, *, guide: bool = False) -> TurnResult:
+    async def _answer(self, accept: bool, transcript: str) -> TurnResult | None:
+        outcome = await self.actions.answer(accept)
+        self.emit("confirm", cleared=True)
+        if outcome is None:
+            return None
+        result = TurnResult(transcript=transcript)
+        if outcome.status == "done":
+            text = (outcome.result.say if outcome.result else "") or "Done."
+            result.did.append(outcome.label)
+            self.emit("step", id="action-confirmed", label=outcome.label, status="done",
+                      detail=outcome.result.detail if outcome.result else "")
+            self.emit("action", name=outcome.spec.name, status="done", label=outcome.label,
+                      detail=outcome.result.detail if outcome.result else "",
+                      items=outcome.result.items if outcome.result else [])
+        else:
+            text = outcome.message or "Okay."
+            if outcome.status == "failed":
+                result.state = "error"
+                result.error = text
+                self.emit("step", id="action-confirmed", label=outcome.label, status="failed", detail=text)
+        self.emit("phase", phase="answering")
+        self.speaker.speak(text)
+        self.emit("answer", text=text)
+        result.spoken = text
+        self.conversation.record(transcript or ("yes" if accept else "no"),
+                                 text + (f" (did: {'; '.join(result.did)})" if result.did else ""))
+        self.emit("done", latency_ms=None, spoken=text)
+        await self.speaker.drain()
+        return result
+
+    # -- timers and other late announcements (called from worker threads) ------------------
+    def _schedule(self, delay: float, fn: Callable[[], None]) -> None:
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(loop.call_later, delay, fn)
+
+    def announce(self, text: str) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+
+        def say() -> None:
+            self.emit("notice", text=text)
+            self.speaker.speak(text)
+        loop.call_soon_threadsafe(say)
+
+    def _notes(self) -> str:
+        import datetime as _dt
+
+        now = _dt.datetime.now().strftime("%A, %B %d %Y, %I:%M %p").replace(" 0", " ")
+        extra = ""
+        if self.notes is not None:
+            try:
+                extra = self.notes() or ""
+            except Exception:
+                extra = ""
+        return f"now: {now}" + (f"\n{extra}" if extra else "")
+
+    async def _turn(self, transcript: str, *, guide: bool = False, screen: bool | None = None) -> TurnResult:
         transcript = " ".join(transcript.split())
         result = TurnResult(transcript=transcript)
         started = self.clock()
@@ -279,10 +385,11 @@ class Companion:
         self.emit("phase", phase="thinking", transcript="" if guide else transcript, guide=guide)
         cancelled = False
         try:
-            shots, context, result.route = await self._look(transcript, result)
+            shots, context, result.route = await self._look(transcript, result, screen)
             mark("looked")
+            self._shots, self._context = shots, context
             history = self.conversation.history()
-            text = user_turn_text(transcript, shots, context, vision=self.vision)
+            text = user_turn_text(transcript, shots, context, vision=self.vision, notes=self._notes())
             turn = Turn("user", text, images=tuple(shots) if self.vision else ())
             reply = ReplyStream()
             badge = brain_badge(self.brain)
@@ -304,7 +411,13 @@ class Companion:
             result.spoken = reply.spoken_text
             result.finished = reply.done
             result.steps_total = reply.steps
-            self.conversation.record(transcript, _history_text(reply, result.targets))
+            result.plan = reply.plan or result.plan
+            if result.pending and "?" not in result.spoken:
+                ask = f"{result.pending}. Say yes and I'll do it."
+                self.speaker.speak(ask)
+                self.emit("answer", text=(" " if result.spoken else "") + ask)
+                result.spoken = (result.spoken + " " + ask).strip()
+            self.conversation.record(transcript, _history_text(reply, result.targets, result.did))
             self.emit("done", latency_ms=result.timings.get("first_speech"), spoken=result.spoken)
             await self.speaker.drain()
             mark("spoken")
@@ -327,8 +440,11 @@ class Companion:
                 self.pointer.set_state("idle")
         return result
 
-    async def _look(self, transcript: str, result: TurnResult) -> tuple[list[Screenshot], ScreenContext | None, Route]:
+    async def _look(self, transcript: str, result: TurnResult,
+                    screen: bool | None = None) -> tuple[list[Screenshot], ScreenContext | None, Route]:
         """Route, capture, and read screen context concurrently."""
+        if screen is False:                     # e.g. handing search results back: no need to look
+            return [], None, Route(needs_screen=False, provider="followup")
         started = self.clock()
         prefetched = self._take_prefetch()
         capture = (asyncio.wrap_future(prefetched) if prefetched is not None
@@ -352,6 +468,9 @@ class Companion:
                 context = await asyncio.wait_for(context_task, 0.6)
             except Exception:
                 context = None
+        if screen:
+            route = Route(needs_screen=True, intent=route.intent, detailed=route.detailed, provider=route.provider,
+                          confidence=route.confidence, latency_ms=route.latency_ms)
         if not route.needs_screen:
             shots, context = [], None
         elif route.cursor_screen_only and len(shots) > 1:
@@ -380,6 +499,11 @@ class Companion:
             self.emit("walkthrough", index=0, total=event.total, label="", waiting=False)
         elif isinstance(event, DoneTag):
             result.finished = True
+        elif isinstance(event, PlanTag):
+            result.plan = event.steps
+            self.emit("plan", steps=list(event.steps))
+        elif isinstance(event, ActionTag):
+            await self._act(event, result)
         elif isinstance(event, PointTag):
             target = resolve_target(event, shots)
             if target is None:
@@ -400,14 +524,55 @@ class Companion:
                       label=f"Pointed at {target.label or 'it'}", detail="snapped" if target.source == "snapped" else "")
 
 
-def _history_text(reply: ReplyStream, targets: list[Target]) -> str:
-    """What the assistant 'said' last turn, including where it pointed."""
+    async def _act(self, tag: ActionTag, result: TurnResult) -> None:
+        if self.actions is None:
+            return
+        self.actions.ctx.schedule = self._schedule
+        self.actions.ctx.announce = self.announce
+        self.actions.ctx.screen = (getattr(self, "_shots", []), getattr(self, "_context", None))
+        self._action_seq = getattr(self, "_action_seq", 0) + 1
+        step_id = f"action-{self._action_seq}"
+        spec = self.actions.specs.get(tag.name)
+        label = spec.describe(tag.args) if spec else tag.name.replace("_", " ")
+        self.emit("step", id=step_id, label=label, status="active")
+        outcome = await self.actions.handle(tag.name, tag.args)
+        if outcome.status == "pending":
+            preview = outcome.preview
+            result.pending = preview.title
+            self.emit("step", id=step_id, label=label, status="done", detail="waiting for your OK")
+            self.emit("confirm", title=preview.title, lines=preview.lines, confirm=preview.confirm, name=tag.name)
+            return
+        if outcome.status == "done":
+            action_result = outcome.result
+            result.did.append(label)
+            if action_result.report:
+                result.reports.append(f"{tag.name}: {action_result.report}")
+            if action_result.look_after:
+                result.look_after = max(result.look_after or 0.0, action_result.look_after)
+            self.emit("step", id=step_id, label=label, status="done", detail=action_result.detail)
+            self.emit("action", name=tag.name, status="done", label=label, detail=action_result.detail,
+                      items=action_result.items)
+            if action_result.say:
+                self.speaker.speak(action_result.say)
+                self.emit("answer", text=" " + action_result.say)
+            return
+        # failed, unknown, disabled: say why, and let the model know if it gets another turn
+        self.emit("step", id=step_id, label=label, status="failed", detail=outcome.message)
+        self.emit("action", name=tag.name, status="failed", label=label, detail=outcome.message)
+        self.speaker.speak(outcome.message)
+        self.emit("answer", text=" " + outcome.message)
+
+
+def _history_text(reply: ReplyStream, targets: list[Target], did: list[str] | None = None) -> str:
+    """What the assistant 'said' last turn, including where it pointed and what it did."""
     text = reply.spoken_text
     if reply.steps:
         text = f"[STEPS:{reply.steps}] " + text
     if targets:
         where = "; ".join(f"{t.label or 'here'} on screen{t.screen}" for t in targets)
         text += f" (pointed at: {where})"
+    if did:
+        text += f" (did: {'; '.join(did)})"
     if reply.done:
         text += " [DONE]"
     return text

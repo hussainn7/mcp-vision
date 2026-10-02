@@ -403,10 +403,27 @@ def run_buddy_app() -> None:
     )
 
     def handle_command(command: dict[str, Any]) -> None:
-        if command.get("cmd") == "open-settings":
+        name = command.get("cmd")
+        if name == "open-settings":
             open_settings(str(command.get("tab") or "home"))
-        elif command.get("cmd") not in {"ready", "island-rect"}:
+        elif name == "confirm-action" and controller.companion is not None:
+            future = asyncio.run_coroutine_threadsafe(
+                controller.companion.answer_pending(bool(command.get("accept"))), loop)
+            future.add_done_callback(lambda done: AppHelper.callAfter(record_answer, done))
+        elif name == "stop":
+            if controller.companion is not None:
+                loop.call_soon_threadsafe(controller.companion.interrupt, None)
+            presenter.idle()
+        elif name not in {"ready", "island-rect"}:
             service.handle(command)
+
+    def record_answer(future) -> None:
+        try:
+            result = future.result()
+        except Exception:
+            return
+        if result is not None and result.did:
+            history.add("(confirmed)", result.spoken, engine="Plip")
 
     # -- menu bar --------------------------------------------------------------------------
     def toggle_visible():
