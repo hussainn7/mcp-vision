@@ -33,17 +33,25 @@ def cursor_position() -> tuple[float, float] | None:
 
 
 def _mac_scale_factors() -> dict[tuple[int, int], float]:
-    """Backing scale per display, keyed by its global top-left origin."""
-    try:
-        from AppKit import NSScreen
+    """Backing scale per display, keyed by its global top-left origin.
 
-        screens = NSScreen.screens()
-        primary_height = float(screens[0].frame().size.height)
+    Uses CoreGraphics display modes, which are safe off the main thread
+    (capture runs on worker threads; NSScreen is AppKit and is not).
+    """
+    try:
+        import Quartz
+
+        err, displays, count = Quartz.CGGetActiveDisplayList(16, None, None)
+        if err != 0:
+            return {}
         factors = {}
-        for screen in screens:
-            frame = screen.frame()
-            top = primary_height - float(frame.origin.y) - float(frame.size.height)
-            factors[(int(frame.origin.x), int(top))] = float(screen.backingScaleFactor())
+        for display in displays[:count]:
+            bounds = Quartz.CGDisplayBounds(display)
+            mode = Quartz.CGDisplayCopyDisplayMode(display)
+            points = Quartz.CGDisplayModeGetWidth(mode) if mode else 0
+            pixels = Quartz.CGDisplayModeGetPixelWidth(mode) if mode else 0
+            scale = float(pixels) / float(points) if points else 1.0
+            factors[(int(bounds.origin.x), int(bounds.origin.y))] = scale
         return factors
     except Exception:
         return {}

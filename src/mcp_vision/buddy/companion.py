@@ -126,7 +126,8 @@ class Companion:
     def __init__(self, *, brain: Brain, capturer: Capturer, speaker: Speaker | None = None,
                  pointer: Pointer | None = None, router: Router | None = None,
                  snapper: Snapper | None = None, conversation: Conversation | None = None,
-                 system_prompt: str = SYSTEM_PROMPT, clock: Callable[[], float] = time.perf_counter):
+                 system_prompt: str = SYSTEM_PROMPT, clock: Callable[[], float] = time.perf_counter,
+                 snap_timeout: float = 0.6):
         self.brain = brain
         self.capturer = capturer
         self.speaker = speaker or _NullSpeaker()
@@ -136,7 +137,9 @@ class Companion:
         self.conversation = conversation or Conversation()
         self.system_prompt = system_prompt
         self.clock = clock
+        self.snap_timeout = snap_timeout
         self._task: asyncio.Task | None = None
+        self._token: int | None = None
         self._prefetched: tuple[float, concurrent.futures.Future] | None = None
         self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="buddy-capture")
 
@@ -154,16 +157,27 @@ class Companion:
             return None
         return prefetched[1]
 
-    # The app calls these from its event loop thread.
-    def interrupt(self) -> None:
-        """Push-to-talk pressed again: stop talking and pointing right away."""
+    # The app calls these on the companion's event loop thread.
+    def interrupt(self, token: int | None = None) -> None:
+        """Push-to-talk pressed again: stop talking and pointing right away.
+
+        ``token`` identifies the press. A turn submitted for an older press is
+        dropped even if it had not started yet when this interrupt ran.
+        """
+        if token is not None:
+            self._token = token
+        self._stop_current()
+
+    def _stop_current(self) -> None:
         if self._task and not self._task.done():
             self._task.cancel()
         self.speaker.stop()
         self.pointer.release()
 
-    async def respond(self, transcript: str) -> TurnResult:
-        self.interrupt()
+    async def respond(self, transcript: str, token: int | None = None) -> TurnResult:
+        if token is not None and token != self._token:
+            return TurnResult(transcript=transcript, state="cancelled")
+        self._stop_current()
         self._task = asyncio.ensure_future(self._respond(transcript))
         try:
             return await self._task
@@ -185,6 +199,7 @@ class Companion:
             return result
 
         self.pointer.set_state("thinking")
+        cancelled = False
         try:
             shots, result.route = await self._look(transcript)
             mark("looked")
@@ -207,6 +222,9 @@ class Companion:
             await self.speaker.drain()
             mark("spoken")
         except asyncio.CancelledError:
+            # A new press owns the overlay now (it is already "listening");
+            # don't stomp on it with "idle" from this abandoned turn.
+            cancelled = True
             self.speaker.stop()
             self.pointer.release()
             raise
@@ -217,7 +235,8 @@ class Companion:
             self.speaker.speak(result.error)
             await self.speaker.drain()
         finally:
-            self.pointer.set_state("idle")
+            if not cancelled:
+                self.pointer.set_state("idle")
         return result
 
     async def _look(self, transcript: str) -> tuple[list[Screenshot], Route]:
@@ -251,7 +270,8 @@ class Companion:
                 return
             if self.snapper is not None:
                 try:
-                    target = await self.snapper.snap(target)
+                    # Snapping refines the point; it must not hold up the reply stream.
+                    target = await asyncio.wait_for(self.snapper.snap(target), self.snap_timeout)
                 except Exception:
                     pass
             result.targets.append(target)

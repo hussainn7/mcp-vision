@@ -8,6 +8,7 @@ latency, a missing one makes the buddy blind.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 
@@ -75,10 +76,12 @@ NEEDS_SCREEN = (
 class JevRouter:
     """One Jev request answers every routing question in parallel (~100 ms)."""
 
-    def __init__(self, client, *, screen_threshold: float = 0.35, fallback: RuleRouter | None = None):
+    def __init__(self, client, *, screen_threshold: float = 0.35, fallback: RuleRouter | None = None,
+                 timeout: float = 0.8):
         self.client = client
         self.screen_threshold = screen_threshold
         self.fallback = fallback or RuleRouter()
+        self.timeout = timeout          # routing sits before Claude: never let it stall a turn
 
     def questions(self, multi_screen: bool) -> dict:
         from mcp_vision.buddy.jev import Choice, Noul
@@ -103,7 +106,7 @@ class JevRouter:
         multi = len(screens) > 1
         state = {"user_said": transcript, "monitors": len(screens) or 1}
         try:
-            result = await self.client.ask(state, self.questions(multi))
+            result = await asyncio.wait_for(self.client.ask(state, self.questions(multi)), self.timeout)
             needs = result.noul("needs_screen")
             intent = result.choice("intent", set(INTENTS))
             depth = result.choice("depth", {"quick", "detailed"})

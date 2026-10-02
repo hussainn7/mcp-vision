@@ -100,6 +100,11 @@ def elements_near(x: float, y: float, radius: float, *, time_budget: float = 0.1
     if not AX.AXIsProcessTrusted():
         return []
     system = AX.AXUIElementCreateSystemWide()
+    try:
+        # A hung app would otherwise block each hit-test for the ~6 s default.
+        AX.AXUIElementSetMessagingTimeout(system, 0.05)
+    except Exception:
+        pass
     deadline = time.monotonic() + time_budget
     found: dict[tuple, Element] = {}
     own_pid = os.getpid()

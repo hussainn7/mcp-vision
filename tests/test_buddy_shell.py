@@ -138,7 +138,7 @@ def test_session_waits_for_begin_streams_audio_and_delivers_on_end_of_turn():
     assert socket.sent[0] == b"\x00\x01"
     sent_json = [json.loads(m)["type"] for m in socket.sent if isinstance(m, str)]
     assert sent_json == ["ForceEndpoint", "Terminate"]
-    assert socket.closed
+    assert wait_for(lambda: socket.closed)
 
 
 def test_session_grace_period_delivers_best_text_without_end_of_turn():
@@ -245,14 +245,16 @@ class FakeCompanion:
         self.delay = delay
         self.asked, self.interrupts, self.prefetches = [], 0, 0
 
-    def interrupt(self):
+    def interrupt(self, token=None):
         self.interrupts += 1
+        self.token = token
 
     def prefetch(self):
         self.prefetches += 1
 
-    async def respond(self, text):
+    async def respond(self, text, token=None):
         self.asked.append(text)
+        self.tokens = getattr(self, "tokens", []) + [token]
         await asyncio.sleep(self.delay)
         return TurnResult(transcript=text, spoken="ok", timings={"first_speech": 900.0})
 
@@ -351,3 +353,47 @@ def test_setup_error_speaks_instead_of_listening(loop):
     controller, _, _, statuses, said = make_controller(loop, setup_error="ANTHROPIC_API_KEY is not set.")
     controller.on_press()
     assert controller.listener.calls == [] and said and "Needs setup" in statuses[-1]
+
+
+def test_recognition_error_stops_the_microphone(loop):
+    controller, *_ = make_controller(loop)
+    controller.on_press()
+    controller.on_error("speech recognition failed: socket closed")
+    assert controller.state == "idle" and controller.listener.calls == ["start", "cancel"]
+
+
+def test_backlog_is_flushed_in_order_before_live_audio():
+    socket = FakeSocket()
+    pushed = {}
+
+    class FakeMic:
+        def __init__(self, on_audio):
+            pushed["push"] = on_audio
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    gate = threading.Event()
+
+    class SlowSession(AssemblyAISession):
+        def send_audio(self, chunk):
+            if chunk == b"a1":
+                pushed["push"](b"live")       # audio arrives mid-flush
+            super().send_audio(chunk)
+
+    def factory(url):
+        gate.wait(1)
+        return SlowSession(url, ListenerCallbacks(), connect=lambda u: socket)
+
+    listener = AssemblyAIListener("key", ListenerCallbacks(), token_source=lambda: "tok",
+                                  session_factory=factory, mic_factory=FakeMic)
+    listener.start()
+    pushed["push"](b"a1")
+    pushed["push"](b"a2")
+    socket.server(type="Begin")
+    gate.set()
+    assert wait_for(lambda: len([m for m in socket.sent if isinstance(m, bytes)]) == 3)
+    assert [m for m in socket.sent if isinstance(m, bytes)] == [b"a1", b"a2", b"live"]

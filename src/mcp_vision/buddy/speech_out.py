@@ -230,9 +230,12 @@ class QueueSpeaker:
     def _play_loop(self) -> None:
         while True:
             generation, voice, prepared = self._ready.get()
-            if generation != self._generation:
-                continue
-            self._stop.clear()
+            # Check and re-arm atomically with stop(): otherwise a stop landing
+            # between the two would be wiped out and a stale sentence would play.
+            with self._lock:
+                if generation != self._generation:
+                    continue
+                self._stop.clear()
             try:
                 voice.play(prepared, self._stop)
             except Exception as exc:

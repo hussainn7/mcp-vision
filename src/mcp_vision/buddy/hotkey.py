@@ -105,7 +105,12 @@ class MacHotkeyListener:
     def _start_monitors(self) -> bool:
         try:
             import AppKit
+            import ApplicationServices as AX
         except ImportError:
+            return False
+        if not AX.AXIsProcessTrusted():
+            # Global monitors install fine without Accessibility but never fire;
+            # report failure so the menu tells the user to grant it.
             return False
 
         def handle(event):

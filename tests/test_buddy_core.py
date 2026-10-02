@@ -504,3 +504,29 @@ def test_empty_transcript_does_not_call_the_model():
     brain = FakeBrain(["never"])
     result = asyncio.run(Companion(brain=brain, capturer=capturer()).respond("   "))
     assert result.state == "error" and brain.calls == []
+
+
+def test_stray_bracket_before_a_tag_does_not_swallow_it():
+    events = stream_events("Index it with array[0 like before. Then click here [POINT:10,20:Save button] to save.", 5)
+    assert PointTag(10, 20, "Save button") in events
+    spoken = " ".join(e.text for e in events if isinstance(e, SpeechChunk))
+    assert "POINT" not in spoken and "array[0" in spoken
+
+
+def test_cancelled_turn_does_not_reset_overlay_and_stale_token_is_dropped():
+    async def scenario():
+        pointer = FakePointer()
+        buddy = Companion(brain=FakeBrain(["one. "] * 50, delay=0.01), capturer=capturer(),
+                          speaker=FakeSpeaker(), pointer=pointer)
+        buddy.interrupt(1)
+        first = asyncio.ensure_future(buddy.respond("long answer", token=1))
+        await asyncio.sleep(0.05)
+        buddy.interrupt(2)                       # user presses again
+        result = await first
+        stale = await buddy.respond("queued before the press", token=1)
+        return result, stale, pointer
+
+    result, stale, pointer = asyncio.run(scenario())
+    assert result.state == "cancelled" and stale.state == "cancelled"
+    after_cancel = pointer.events[pointer.events.index(("release",)):]
+    assert ("state", "idle") not in after_cancel   # the new press owns the overlay

@@ -136,6 +136,7 @@ class AssemblyAISession:
         self.ws = self._connect(self.url)
         threading.Thread(target=self._receive_loop, daemon=True, name="buddy-assemblyai").start()
         if not self.ready.wait(timeout):
+            self.cancel()                    # don't leave the socket and reader thread behind
             raise RuntimeError("AssemblyAI did not start the session")
 
     def send_audio(self, chunk: bytes) -> None:
@@ -226,10 +227,17 @@ class AssemblyAISession:
         if self._closed:
             return
         self._closed = True
-        try:
-            self.ws.close()
-        except Exception:
-            pass
+        ws = self.ws
+
+        def close() -> None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+        # The websockets close handshake can wait up to close_timeout; callers
+        # include the main thread (hotkey handlers), which must never stall.
+        threading.Thread(target=close, daemon=True, name="buddy-assemblyai-close").start()
 
 
 def _websocket_connect(url: str):
@@ -320,14 +328,19 @@ class AssemblyAIListener:
             return
         finally:
             self.prewarm()
-        with self._lock:
-            if generation != self._generation:
-                session.cancel()
-                return
-            self._session = session
-            backlog, self._buffer = self._buffer, []
-        for chunk in backlog:
-            session.send_audio(chunk)
+        # Drain the backlog before publishing the session: live chunks keep
+        # landing in the buffer until it is empty, so audio is never reordered.
+        while True:
+            with self._lock:
+                if generation != self._generation:
+                    session.cancel()
+                    return
+                backlog, self._buffer = self._buffer, []
+                if not backlog:
+                    self._session = session
+                    break
+            for chunk in backlog:
+                session.send_audio(chunk)
         if self._released_generation == generation:
             session.request_final()
 
@@ -376,7 +389,7 @@ class AppleListener:
         from mcp_vision.speech import AppleSpeechSession
 
         self.callbacks = callbacks
-        self._generation = 0
+        self._cancelled = False
         self.session = AppleSpeechSession(
             partial=lambda text, generation: self._if_current(generation, callbacks.partial, text),
             final=lambda text, reliable, generation: self._if_current(generation, callbacks.final, text),
@@ -384,24 +397,31 @@ class AppleListener:
             status=lambda message, generation: self._status(generation, message),
         )
 
+    def _current(self, generation: int) -> bool:
+        # The session's own counter is authoritative: it advances inside start()
+        # before any status is reported, so early permission errors still count.
+        return not self._cancelled and generation == self.session.generation
+
     def _if_current(self, generation: int, callback, value) -> None:
-        if generation == self._generation:
+        if self._current(generation):
             callback(value)
+
+    PROBLEM_WORDS = ("denied", "unavailable", "not installed", "required", "could not start", "not authorized")
 
     def _status(self, generation: int, message: str) -> None:
         lowered = str(message).lower()
-        if generation == self._generation and ("denied" in lowered or "unavailable" in lowered
-                                               or "not installed" in lowered):
+        if self._current(generation) and any(word in lowered for word in self.PROBLEM_WORDS):
             self.callbacks.error(str(message))
 
     def start(self) -> None:
-        self._generation = self.session.start()
+        self._cancelled = False
+        self.session.start()
 
     def release(self) -> None:
         self.session.release()
 
     def cancel(self) -> None:
-        self._generation = -1
+        self._cancelled = True
         self.session.cancel()
 
 

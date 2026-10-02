@@ -53,7 +53,7 @@ class BuddyController:
             self.say("I need a little setup first. Open my menu and choose check setup.")
             return
         self.generation += 1
-        self.loop.call_soon_threadsafe(self.companion.interrupt)
+        self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
         self.state = "listening"
         self.overlay.set_state("listening")
         self.status("Listening...")
@@ -97,11 +97,16 @@ class BuddyController:
         self.state = "responding"
         self.status(f"You: {text[:70]}")
         generation = self.generation
-        future = asyncio.run_coroutine_threadsafe(self.companion.respond(text), self.loop)
+        # The token makes the companion drop this turn if a newer press already
+        # interrupted, even when the interrupt ran before the turn started.
+        future = asyncio.run_coroutine_threadsafe(self.companion.respond(text, token=generation), self.loop)
         future.add_done_callback(lambda done: self.on_main(self._finished, done, generation))
 
     def on_error(self, message: str) -> None:
         if self.state in {"listening", "finalizing"}:
+            # Release will no longer reach the listener once we are idle, so
+            # stop the microphone here or it stays live until the next press.
+            self.listener.cancel()
             self._idle(message)
             self.say("Sorry, I couldn't hear you.")
 

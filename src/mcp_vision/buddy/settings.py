@@ -27,7 +27,7 @@ class BuddySettings(BaseSettings):
         "ANTHROPIC_API_KEY", "BUDDY_ANTHROPIC_API_KEY"))
     model: str = "claude-opus-5-5"
     effort: str = "low"                 # low | medium | high | xhigh | max
-    max_tokens: int = 4096
+    max_tokens: int = 16000            # thinking is always on; leave room for it
     history_turns: int = 20             # messages, i.e. the last 10 exchanges (text only)
 
     # eyes

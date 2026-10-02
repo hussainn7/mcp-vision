@@ -28,7 +28,7 @@ class ClaudeBrain:
     name = "claude"
 
     def __init__(self, *, api_key: str | None = None, model: str = DEFAULT_MODEL,
-                 effort: str = DEFAULT_EFFORT, max_tokens: int = 4096, client: Any = None,
+                 effort: str = DEFAULT_EFFORT, max_tokens: int = 16000, client: Any = None,
                  timeout: float = 60.0):
         self.model = model
         self.effort = effort
@@ -62,16 +62,16 @@ class ClaudeBrain:
         }
 
     async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False) -> AsyncIterator[str]:
-        refused = False
         body = self.request(system=system, turns=turns, detailed=detailed)
         async with self.client.beta.messages.stream(**body) as stream:
             async for event in stream:
                 if event.type == "content_block_delta" and getattr(event.delta, "type", "") == "text_delta":
                     yield event.delta.text
             final = await stream.get_final_message()
-            refused = final.stop_reason == "refusal"
-        if refused:
+        if final.stop_reason == "refusal":
             yield " Sorry, I can't help with that one."
+        elif final.stop_reason == "max_tokens":
+            yield " That's as far as I can go in one breath. Ask me to keep going."
 
 
 def _message(turn: Turn) -> dict[str, Any]:

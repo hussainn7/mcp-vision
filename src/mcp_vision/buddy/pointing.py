@@ -110,6 +110,13 @@ class ReplyStream:
             self._text += raw[:start]
             raw = raw[start:]
             end = raw.find("]")
+            inner = raw.find("[", 1)
+            if inner != -1 and (end == -1 or inner < end):
+                # "array[0 ... [POINT:..]": the first bracket never closed, so it
+                # is prose; restart at the next bracket so the tag still parses.
+                self._text += raw[:inner]
+                raw = raw[inner:]
+                continue
             if end == -1:
                 if len(raw) > _MAX_TAG_LEN:          # stray bracket, not a tag
                     self._text += raw[0]
