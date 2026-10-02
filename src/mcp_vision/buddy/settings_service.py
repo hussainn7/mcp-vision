@@ -174,7 +174,8 @@ class SettingsService:
             self.platform.open_url(url)
 
     def _cmd_grant(self, command):
-        if command.get("permission") in {"screen", "accessibility", "microphone", "speech"}:
+        if command.get("permission") in {"screen", "accessibility", "microphone", "speech", "contacts", "automation",
+                                         "fulldisk"}:
             self.platform.request_permission(command["permission"])
             self.push()
 

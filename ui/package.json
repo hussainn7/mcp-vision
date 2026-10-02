@@ -1,13 +1,14 @@
 {
   "name": "plip-ui",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "shots": "node scripts/shots.mjs"
+    "shots": "node scripts/shots.mjs",
+    "e2e": "node scripts/e2e.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

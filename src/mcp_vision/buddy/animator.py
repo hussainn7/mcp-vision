@@ -55,8 +55,12 @@ class _Target:
 
 
 class BuddyAnimator:
-    def __init__(self, screens: Callable[[], list[Rect]] | None = None):
+    """``home`` set: Plip rests there (e.g. under the notch) instead of trailing the cursor."""
+
+    def __init__(self, screens: Callable[[], list[Rect]] | None = None,
+                 home: Callable[[tuple[float, float]], tuple[float, float]] | None = None):
         self.screens = screens or (lambda: [])
+        self.home = home
         self.mode = "follow"
         self.voice = "idle"
         self.level = 0.0
@@ -98,9 +102,19 @@ class BuddyAnimator:
     def busy(self) -> bool:
         return self.mode != "follow" or bool(self._queue)
 
+    @property
+    def docked(self) -> bool:
+        """Resting at a fixed home (the notch) with nothing to point at: nothing to draw."""
+        return self.home is not None and self.mode == "follow" and not self._queue
+
+    def _home(self, mouse: tuple[float, float]) -> tuple[float, float]:
+        if self.home is not None:
+            return self.home(mouse)
+        return mouse[0] + FOLLOW_OFFSET[0], mouse[1] + FOLLOW_OFFSET[1]
+
     # -- per-frame update -------------------------------------------------------
     def tick(self, now: float, mouse: tuple[float, float]) -> RenderState:
-        home = (mouse[0] + FOLLOW_OFFSET[0], mouse[1] + FOLLOW_OFFSET[1])
+        home = self._home(mouse)
         if self.x is None:
             self.x, self.y = home
         if self._release_requested and self.mode in {"fly_out", "pointing"}:
@@ -109,7 +123,7 @@ class BuddyAnimator:
 
         if self.mode == "follow":
             gap = math.hypot(home[0] - self.x, home[1] - self.y)
-            if gap > 600:                      # jumped to another display: don't streak across
+            if gap > 600 or self.home is not None:   # another display, or docked: no streak
                 self.x, self.y = home
             else:
                 self.x += (home[0] - self.x) * FOLLOW_SMOOTHING
@@ -149,7 +163,8 @@ class BuddyAnimator:
                         bubble = ""
 
         if self.mode == "fly_back":
-            if math.hypot(mouse[0] - self._return_anchor[0], mouse[1] - self._return_anchor[1]) > RETURN_CANCEL_DISTANCE:
+            moved = math.hypot(mouse[0] - self._return_anchor[0], mouse[1] - self._return_anchor[1])
+            if self.home is None and moved > RETURN_CANCEL_DISTANCE:
                 self.mode = "follow"
                 self.x, self.y = home
                 self.scale = 1.0
@@ -175,7 +190,7 @@ class BuddyAnimator:
         self.mode = "fly_out"
 
     def _fly_back(self, now: float, mouse: tuple[float, float]) -> None:
-        home = (mouse[0] + FOLLOW_OFFSET[0], mouse[1] + FOLLOW_OFFSET[1])
+        home = self._home(mouse)
         self._plan = FlightPlan.between((self.x, self.y), home)
         self._started = now
         self._return_anchor = mouse

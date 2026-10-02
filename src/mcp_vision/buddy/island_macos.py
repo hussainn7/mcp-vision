@@ -13,7 +13,7 @@ from typing import Any
 
 from mcp_vision.buddy.web_host import WebSurface
 
-WIDTH, HEIGHT = 760.0, 340.0
+WIDTH, HEIGHT = 760.0, 420.0
 HOVER_MARGIN = 6.0
 _CLASSES: dict[str, type] = {}
 

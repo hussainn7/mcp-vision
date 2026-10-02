@@ -379,3 +379,29 @@ def test_settings_skills_companion_and_phone(service):
     assert state["phone"] == {"enabled": True, "handles": ["+15550102000"], "prefix": "/hey", "detected": [],
                               "status": "off"}
     assert calls["reload"] == 3
+
+
+def test_notch_home_droplet_drips_out_points_and_returns():
+    from mcp_vision.buddy.animator import BuddyAnimator
+
+    animator = BuddyAnimator(home=lambda mouse: (756.0, 20.0))
+    render = animator.tick(0.0, (100.0, 100.0))
+    assert (render.x, render.y) == (756.0, 20.0) and animator.docked
+    animator.point(300, 400, "Export")
+    assert not animator.docked
+    modes, now = [], 0.0
+    while now < 15:
+        now += 1 / 60
+        render = animator.tick(now, (100 + now * 80, 100.0))          # the user keeps moving the mouse
+        if not modes or modes[-1] != render.mode:
+            modes.append(render.mode)
+    assert modes == ["fly_out", "pointing", "fly_back", "follow"]
+    assert animator.docked and (round(render.x), round(render.y)) == (756, 20)
+
+
+def test_cursor_style_still_trails_the_cursor():
+    from mcp_vision.buddy.animator import FOLLOW_OFFSET, BuddyAnimator
+
+    animator = BuddyAnimator()
+    render = animator.tick(0.0, (100.0, 100.0))
+    assert (render.x, render.y) == (100 + FOLLOW_OFFSET[0], 100 + FOLLOW_OFFSET[1]) and not animator.docked

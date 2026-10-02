@@ -25,11 +25,11 @@ async function shot(name, hash, { width, height, wait = 1400, setup } = {}) {
   console.log('saved', name)
 }
 
-for (const frame of ['idle', 'listening', 'thinking', 'answering', 'walkthrough', 'peek', 'error']) {
+for (const frame of ['idle', 'listening', 'thinking', 'answering', 'walkthrough', 'plan', 'results', 'confirm', 'mini', 'peek', 'error']) {
   await shot(`desktop-${frame}`, `showcase?frame=${frame}`, { width: 1440, height: 900, wait: 1800 })
 }
-for (const tab of ['home', 'brain', 'voice', 'permissions', 'history', 'about']) {
-  await shot(`settings-${tab}`, `settings?tab=${tab}`, { width: 860, height: 600 })
+for (const tab of ['home', 'skills', 'memory', 'routines', 'phone', 'brain', 'voice', 'permissions', 'history', 'about']) {
+  await shot(`settings-${tab}`, `settings?tab=${tab}`, { width: 980, height: 680 })
 }
 
 const islandStates = {

@@ -5,7 +5,7 @@ import { loadDemoSettings } from './demo'
 import './styles.css'
 import { Island } from './views/Island'
 import { MascotView } from './views/MascotView'
-import { Settings } from './views/Settings'
+import { Settings } from './views/settings'
 import { Showcase } from './views/Showcase'
 
 type Surface = 'island' | 'mascot' | 'settings' | 'showcase'

@@ -21,7 +21,8 @@ from mcp_vision.log import get_logger
 log = get_logger("mcp_vision.buddy")
 _CLASSES: dict[str, type] = {}
 PANES = {"screen": "Privacy_ScreenCapture", "accessibility": "Privacy_Accessibility",
-         "microphone": "Privacy_Microphone", "speech": "Privacy_SpeechRecognition"}
+         "microphone": "Privacy_Microphone", "speech": "Privacy_SpeechRecognition", "contacts": "Privacy_Contacts",
+         "automation": "Privacy_Automation", "fulldisk": "Privacy_AllFiles"}
 
 
 def _menu_target_class():
@@ -185,6 +186,8 @@ def _request_permission(name: str, done) -> None:
             import Speech
 
             Speech.SFSpeechRecognizer.requestAuthorization_(lambda _status: done())
+        else:
+            _open_pane(PANES[name])
     except Exception as exc:
         log.info("permission request for %s fell back to System Settings: %s", name, exc)
         _open_pane(PANES.get(name, "Privacy"))
@@ -267,7 +270,7 @@ def run_buddy_app() -> None:
         from mcp_vision.buddy.mascot_macos import MascotWindow
 
         island = IslandWindow(lambda command: handle_command(command))
-        mascot: Any = MascotWindow(visible=prefs.buddy)
+        mascot: Any = MascotWindow(visible=prefs.buddy, style=prefs.companion)
     else:
         log.warning("WebKit bridge unavailable; using the native cursor overlay (pip install pyobjc-framework-WebKit)")
         mascot = BuddyOverlay(visible=prefs.buddy)
@@ -400,6 +403,8 @@ def run_buddy_app() -> None:
             menu.set_brain("none yet")
         if hasattr(mascot, "set_visible"):
             mascot.set_visible(prefs.buddy)
+        if hasattr(mascot, "set_style"):
+            mascot.set_style(prefs.companion)
         menu.set_visible_checked(prefs.buddy)
         service.push()
 
@@ -496,6 +501,10 @@ def run_buddy_app() -> None:
             future = asyncio.run_coroutine_threadsafe(
                 controller.companion.answer_pending(bool(command.get("accept"))), loop)
             future.add_done_callback(lambda done: AppHelper.callAfter(record_answer, done))
+        elif name == "open-path":
+            path = os.path.realpath(os.path.expanduser(str(command.get("path") or "")))
+            if path.startswith(os.path.realpath(os.path.expanduser("~")) + os.sep) and os.path.exists(path):
+                default_host_cached().open(path)
         elif name == "stop":
             if controller.companion is not None:
                 loop.call_soon_threadsafe(controller.companion.interrupt, None)

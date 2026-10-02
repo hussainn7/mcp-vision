@@ -66,7 +66,7 @@ export function StepChips({ steps, max = 4 }: { steps: Step[]; max?: number }) {
             transition={{ type: 'spring', stiffness: 420, damping: 30 }}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium tracking-tight',
-              step.status === 'error' ? 'bg-red-500/15 text-red-200' : 'bg-white/[0.07] text-white/75',
+              step.status === 'error' ? 'bg-coral/15 text-rose-200' : 'bg-white/[0.07] text-white/75',
             )}
           >
             {step.status === 'active' && <CircleDashed className="size-3 animate-spin-slow text-plip-300" />}
@@ -89,7 +89,7 @@ export function EngineBadge({ engine, latencyMs }: { engine: Badge | null; laten
       <span
         className={cn(
           'size-1.5 rounded-full',
-          engine.kind === 'subscription' ? 'bg-violet-glow' : engine.kind === 'local' ? 'bg-mint' : 'bg-plip-400',
+          engine.kind === 'subscription' ? 'bg-dew' : engine.kind === 'local' ? 'bg-mint' : 'bg-plip-400',
         )}
       />
       {engine.label}

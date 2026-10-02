@@ -7,7 +7,7 @@ from typing import Any
 
 from mcp_vision.buddy.web_host import WebSurface
 
-WIDTH, HEIGHT = 880.0, 620.0
+WIDTH, HEIGHT = 1000.0, 700.0
 
 
 class SettingsWindow:
@@ -25,8 +25,8 @@ class SettingsWindow:
         window.setTitlebarAppearsTransparent_(True)
         window.setTitleVisibility_(AppKit.NSWindowTitleHidden)
         window.setAppearance_(AppKit.NSAppearance.appearanceNamed_(AppKit.NSAppearanceNameDarkAqua))
-        window.setBackgroundColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(0.043, 0.043, 0.063, 1))
-        window.setMinSize_(AppKit.NSMakeSize(760, 520))
+        window.setBackgroundColor_(AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(0.024, 0.027, 0.039, 1))
+        window.setMinSize_(AppKit.NSMakeSize(900, 600))
         window.setReleasedWhenClosed_(False)
         window.center()
         self.surface = WebSurface("settings", window.contentView().bounds(), self._command)

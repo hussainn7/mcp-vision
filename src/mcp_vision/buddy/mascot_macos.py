@@ -45,13 +45,31 @@ def mascot_state(render: RenderState, mood: str, level: float, velocity: tuple[f
     }
 
 
-class MascotWindow:
-    """Implements the companion's Pointer port. Main thread only."""
+def notch_home() -> tuple[float, float]:
+    """Just under the middle of the notch, in global top-left points."""
+    import AppKit
 
-    def __init__(self, *, visible: bool = True):
+    from mcp_vision.buddy.island_macos import _notch_height, notch_screen
+
+    screen = notch_screen()
+    frame = screen.frame()
+    primary_height = float(AppKit.NSScreen.screens()[0].frame().size.height)
+    top = primary_height - float(frame.origin.y + frame.size.height)
+    return float(frame.origin.x + frame.size.width / 2), top + max(_notch_height(screen), 24.0) * 0.6
+
+
+class MascotWindow:
+    """Implements the companion's Pointer port. Main thread only.
+
+    Styles: ``notch`` (default) rests inside the notch and drips out only to
+    point; ``cursor`` trails the cursor like Clicky; ``hidden`` never flies.
+    """
+
+    def __init__(self, *, visible: bool = True, style: str = "notch"):
         import AppKit
 
-        self.animator = BuddyAnimator(screens=screen_rects)
+        self.style = style if style in {"notch", "cursor", "hidden"} else "notch"
+        self.animator = BuddyAnimator(screens=screen_rects, home=self._home_fn())
         self.visible = visible
         self.mood = "idle"
         self.level = 0.0
@@ -88,10 +106,30 @@ class MascotWindow:
             1 / 60, self._ticker, "fire:", None, True)
         AppKit.NSRunLoop.mainRunLoop().addTimer_forMode_(self._timer, AppKit.NSRunLoopCommonModes)
 
+    def _home_fn(self):
+        if self.style != "notch":
+            return None
+        cache: dict[str, Any] = {}
+
+        def home(_mouse):
+            now = time.monotonic()
+            if now - cache.get("at", -10) > 2.0:          # displays rarely move; don't query every frame
+                cache["xy"], cache["at"] = notch_home(), now
+            return cache["xy"]
+        return home
+
+    def set_style(self, style: str) -> None:
+        if style == self.style or style not in {"notch", "cursor", "hidden"}:
+            return
+        self.style = style
+        self.animator.home = self._home_fn()
+        if style == "hidden":
+            self.animator.release()
+
     # -- Pointer port + presenter hooks -------------------------------------------------
     def set_state(self, state: str, detail: str = "") -> None:
         self.animator.set_voice(state)
-        if state != "idle":
+        if state != "idle" and self.style == "cursor":
             self.window.orderFrontRegardless()
 
     def set_mood(self, mood: str, level: float = 0.0) -> None:
@@ -99,6 +137,8 @@ class MascotWindow:
         self.level = level
 
     def point(self, x: float, y: float, label: str) -> None:
+        if self.style == "hidden":
+            return
         self.animator.point(x, y, label)
         self.window.orderFrontRegardless()
 
@@ -121,6 +161,11 @@ class MascotWindow:
         mouse = mouse_global()
         render = self.animator.tick(now, mouse)
         primary_height = float(AppKit.NSScreen.screens()[0].frame().size.height)
+        if self.style != "cursor" and self.animator.docked:
+            if self.window.isVisible():                  # back in the notch: nothing floating around
+                self.window.orderOut_(None)
+            self._last_xy = None
+            return
         idle = render.mode == "follow" and render.voice == "idle" and self.mood in {"idle", "happy"}
         if not self.visible and idle:
             if self.window.isVisible():

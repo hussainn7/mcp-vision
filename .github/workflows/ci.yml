@@ -62,3 +62,26 @@ jobs:
             bench/results/
             .ci-state/
             dist/
+
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
+      - name: Build the single-file bundle and check the committed copy is current
+        run: |
+          npm run build
+          git diff --exit-code -- ../src/mcp_vision/buddy/web/index.html
+      - name: Click through the island and dashboard
+        run: npm run e2e

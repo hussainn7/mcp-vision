@@ -22,7 +22,8 @@ function useTyped(text: string) {
   return shown
 }
 
-export const MASCOT_SIZE = 34
+// Small on purpose: a 22 px droplet is easy to follow and never covers what it points at.
+export const MASCOT_SIZE = 22
 export const MASCOT_ANCHOR = { x: 26, y: 26 }
 
 export function MascotView() {
@@ -31,22 +32,19 @@ export function MascotView() {
 
   return (
     <div className="relative h-full w-full">
-      <div
-        className="absolute"
-        style={{ left: MASCOT_ANCHOR.x - MASCOT_SIZE / 2, top: MASCOT_ANCHOR.y - MASCOT_SIZE / 2 }}
-      >
+      <div className="absolute" style={{ left: MASCOT_ANCHOR.x - MASCOT_SIZE / 2, top: MASCOT_ANCHOR.y - MASCOT_SIZE / 2 }}>
         <Mascot mood={state.mood} level={state.level} look={state.look} lean={state.lean} size={MASCOT_SIZE} />
       </div>
       <AnimatePresence>
         {typed && (
           <motion.div
             key={state.label}
-            initial={{ opacity: 0, scale: 0.6, x: -6 }}
+            initial={{ opacity: 0, scale: 0.6, x: -4 }}
             animate={{ opacity: 1, scale: 1, x: 0 }}
             exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.25 } }}
             transition={{ type: 'spring', stiffness: 500, damping: 26 }}
-            style={{ left: MASCOT_ANCHOR.x + MASCOT_SIZE / 2 + 4, top: MASCOT_ANCHOR.y + 6, transformOrigin: 'left center' }}
-            className="absolute whitespace-nowrap rounded-xl bg-gradient-to-br from-plip-400 to-violet-glow px-2.5 py-1 text-[12px] font-semibold tracking-tight text-white shadow-[0_8px_24px_-6px_rgba(91,140,255,0.8),inset_0_1px_0_rgba(255,255,255,0.35)]"
+            style={{ left: MASCOT_ANCHOR.x + MASCOT_SIZE / 2 + 3, top: MASCOT_ANCHOR.y + 3, transformOrigin: 'left center' }}
+            className="brand-gradient absolute whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-semibold tracking-tight text-slate-950 shadow-[0_6px_18px_-6px_rgba(34,211,238,0.9),inset_0_1px_0_rgba(255,255,255,0.5)]"
           >
             {typed}
           </motion.div>

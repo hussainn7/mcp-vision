@@ -30,6 +30,19 @@ export interface EngineBadge {
   model?: string
 }
 
+export interface ConfirmCard {
+  title: string
+  lines: string[]
+  confirm: string
+  name?: string
+}
+
+export interface ResultItem {
+  title: string
+  detail?: string
+  path?: string
+}
+
 export interface IslandState {
   phase: Phase
   level: number
@@ -44,6 +57,11 @@ export interface IslandState {
   notch: { width: number; height: number; hasNotch: boolean }
   idleVisible: boolean
   hovered: boolean
+  plan: string[]
+  planIndex: number
+  confirm: ConfirmCard | null
+  results: ResultItem[]
+  minimized?: boolean       // demos only; the island minimizes itself from its chevron
 }
 
 export type Mood = 'idle' | 'listening' | 'thinking' | 'speaking' | 'pointing' | 'happy' | 'error'
@@ -79,6 +97,58 @@ export interface HistoryItem {
   engine?: string
 }
 
+export interface FactCard {
+  id: string
+  key: string
+  label: string
+  value: string
+  sensitive: boolean
+  sources: string[]
+}
+
+export interface ImportStatus {
+  count: number
+  added?: number
+  at: number
+  error?: string
+}
+
+export interface MemoryPanel {
+  profile: Record<string, string>
+  facts: FactCard[]
+  imports: Record<string, ImportStatus>
+  contacts: { handle: string; count: number; name?: string }[]
+  handles: string[]
+}
+
+export interface RoutineCard {
+  id: string
+  name: string
+  phrase: string
+  steps: string[]
+  runs: number
+  source: 'taught' | 'suggested'
+}
+
+export interface Suggestion {
+  key: string
+  name: string
+  phrase: string
+  labels: string[]
+  days: number
+  around: string
+}
+
+export interface PhoneState {
+  enabled: boolean
+  handles: string[]
+  prefix: string
+  detected: string[]
+  status: 'off' | 'listening' | 'error'
+  error?: string
+  lastCommand?: string
+}
+
 export interface SettingsState {
   version: string
   engines: Engine[]
@@ -89,6 +159,13 @@ export interface SettingsState {
   keys: Record<string, boolean>
   history: HistoryItem[]
   walkthroughs: boolean
+  memory: MemoryPanel | null
+  skills: Record<string, boolean>
+  companion: 'notch' | 'cursor' | 'hidden'
+  phone: PhoneState
+  routines: RoutineCard[]
+  suggestions: Suggestion[]
+  stats: { actionsWeek: number; answers: number; minutesSaved: number }
 }
 
 export const defaultIsland: IslandState = {
@@ -105,12 +182,16 @@ export const defaultIsland: IslandState = {
   notch: { width: 200, height: 32, hasNotch: true },
   idleVisible: true,
   hovered: false,
+  plan: [],
+  planIndex: 0,
+  confirm: null,
+  results: [],
 }
 
 export const defaultMascot: MascotState = { mood: 'idle', level: 0, lean: 0, look: { x: 0, y: 0 }, label: '' }
 
 export const defaultSettings: SettingsState = {
-  version: '0.5.0',
+  version: '0.6.0',
   engines: [],
   depth: 'balanced',
   permissions: { screen: null, accessibility: null, microphone: null, speech: null },
@@ -119,6 +200,13 @@ export const defaultSettings: SettingsState = {
   keys: {},
   history: [],
   walkthroughs: true,
+  memory: null,
+  skills: {},
+  companion: 'notch',
+  phone: { enabled: false, handles: [], prefix: '/plip', detected: [], status: 'off' },
+  routines: [],
+  suggestions: [],
+  stats: { actionsWeek: 0, answers: 0, minutesSaved: 0 },
 }
 
 // -- tiny external store ------------------------------------------------------

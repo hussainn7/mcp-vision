@@ -60,7 +60,9 @@ export function Showcase() {
     setTargets({ file: point(fileRef.current, 34, 30), export: point(exportRef.current, 170, 26) })
   }, [scale, showMenu])
 
-  const spot = at === 'cursor' ? { x: CURSOR.x + 35, y: CURSOR.y + 25 } : targets[at] ?? { x: CURSOR.x, y: CURSOR.y }
+  // Plip lives in the notch: it only drips out to point, then floats back up.
+  const home = { x: W / 2, y: NOTCH.height - 4 }
+  const spot = at === 'notch' ? home : at === 'cursor' ? { x: CURSOR.x + 35, y: CURSOR.y + 25 } : targets[at] ?? home
 
   return (
     <div className="grid h-full w-full place-items-center overflow-hidden bg-black">
@@ -77,29 +79,29 @@ export function Showcase() {
         </div>
 
         <SystemCursor x={CURSOR.x} y={CURSOR.y} />
-        <FlyingPlip x={spot.x} y={spot.y} />
+        <FlyingPlip x={spot.x} y={spot.y} docked={at === 'notch'} />
       </div>
     </div>
   )
 }
 
-function FlyingPlip({ x, y }: { x: number; y: number }) {
+function FlyingPlip({ x, y, docked }: { x: number; y: number; docked: boolean }) {
   const state = useStore(mascot)
   return (
     <motion.div
       className="absolute z-[60]"
       initial={false}
-      animate={{ left: x - 17, top: y - 17 }}
-      transition={{ type: 'spring', stiffness: 90, damping: 15, mass: 0.9 }}
+      animate={{ left: x - 11, top: y - 11, opacity: docked ? 0 : 1, scale: docked ? 0.3 : 1 }}
+      transition={{ type: 'spring', stiffness: 90, damping: 15, mass: 0.9, opacity: { duration: 0.25 } }}
     >
-      <Mascot mood={state.mood} level={state.level} look={state.look} lean={state.lean} size={34} />
-      {state.mood === 'pointing' && state.label && (
+      <Mascot mood={state.mood} level={state.level} look={state.look} lean={state.lean} size={22} />
+      {state.mood === 'pointing' && state.label && !docked && (
         <motion.div
           key={state.label}
-          initial={{ opacity: 0, scale: 0.6, x: -6 }}
+          initial={{ opacity: 0, scale: 0.6, x: -4 }}
           animate={{ opacity: 1, scale: 1, x: 0 }}
           transition={{ delay: 0.5, type: 'spring', stiffness: 500, damping: 26 }}
-          className="absolute left-[38px] top-[20px] origin-left whitespace-nowrap rounded-xl bg-gradient-to-br from-plip-400 to-violet-glow px-2.5 py-1 text-[12px] font-semibold text-white shadow-[0_8px_24px_-6px_rgba(91,140,255,0.8),inset_0_1px_0_rgba(255,255,255,0.35)]"
+          className="brand-gradient absolute left-[25px] top-[14px] origin-left whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-semibold text-slate-950 shadow-[0_6px_18px_-6px_rgba(34,211,238,0.9),inset_0_1px_0_rgba(255,255,255,0.5)]"
         >
           {state.label}
         </motion.div>
@@ -110,10 +112,10 @@ function FlyingPlip({ x, y }: { x: number; y: number }) {
 
 function Wallpaper() {
   return (
-    <div className="absolute inset-0 overflow-hidden bg-[#0b1030]">
-      <div className="absolute -left-40 -top-40 size-[900px] rounded-full bg-[#3d6bff] opacity-60 blur-[140px]" />
-      <div className="absolute -right-52 top-24 size-[760px] rounded-full bg-[#8b5cf6] opacity-55 blur-[140px]" />
-      <div className="absolute -bottom-72 left-1/3 size-[820px] rounded-full bg-[#f472b6] opacity-35 blur-[160px]" />
+    <div className="absolute inset-0 overflow-hidden bg-[#06131f]">
+      <div className="absolute -left-40 -top-40 size-[900px] rounded-full bg-[#0891b2] opacity-55 blur-[140px]" />
+      <div className="absolute -right-52 top-24 size-[760px] rounded-full bg-[#2563eb] opacity-50 blur-[140px]" />
+      <div className="absolute -bottom-72 left-1/3 size-[820px] rounded-full bg-[#14b8a6] opacity-35 blur-[160px]" />
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.08),transparent_60%)]" />
     </div>
   )
