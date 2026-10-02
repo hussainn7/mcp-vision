@@ -6,10 +6,11 @@ from mcp_vision.buddy.actions.engine import ActionEngine, ActionLog, Outcome, an
 
 
 def all_specs() -> list[ActionSpec]:
+    from mcp_vision.buddy import forms, messages
     from mcp_vision.buddy.actions import core
     from mcp_vision.buddy.memory import skills as memory_skills
 
-    return [*core.SPECS, *memory_skills.SPECS]
+    return [*core.SPECS, *memory_skills.SPECS, *forms.SPECS, *messages.SPECS]
 
 
 SKILLS = {
@@ -20,6 +21,8 @@ SKILLS = {
     "planning": ("Reminders & timers", "Reminders, notes and timers"),
     "travel": ("Travel", "Find flights on Google Flights"),
     "memory": ("Memory", "Remember what you tell it, use your details"),
+    "forms": ("Form filling", "Fill forms on screen from your details (asks first)"),
+    "messages": ("Messages", "Send iMessages for you (asks first)"),
 }
 
 __all__ = ["SKILLS", "ActionContext", "ActionEngine", "ActionError", "ActionLog", "ActionResult", "ActionSpec",
