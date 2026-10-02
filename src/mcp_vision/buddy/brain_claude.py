@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from mcp_vision.buddy.conversation import Turn
+from mcp_vision.buddy.prompt import screen_label
 
 DEFAULT_MODEL = "claude-opus-5-5"
 # Conversational, latency-sensitive turns do well at low effort; raise it in
@@ -73,10 +74,10 @@ def _message(turn: Turn) -> dict[str, Any]:
         return {"role": turn.role, "content": turn.text}
     content: list[dict[str, Any]] = []
     for shot in turn.images:
-        content.append({"type": "text", "text": shot.screen.label})
         content.append({"type": "image", "source": {
             "type": "base64", "media_type": shot.media_type,
             "data": base64.standard_b64encode(shot.data).decode("ascii"),
         }})
+        content.append({"type": "text", "text": screen_label(shot, len(turn.images))})
     content.append({"type": "text", "text": turn.text})
     return {"role": "user", "content": content}

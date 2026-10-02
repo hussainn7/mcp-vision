@@ -119,6 +119,18 @@ class ScreenCapturer:
         image.save(buffer, format="JPEG", quality=self.quality, optimize=True)
         return Screenshot(screen=screen, data=buffer.getvalue(), width=width, height=height)
 
+    @classmethod
+    def from_images(cls, paths: list[str], **options) -> ScreenCapturer:
+        """Treat image files as displays laid out left to right (headless testing)."""
+        images = [Image.open(path).convert("RGB") for path in paths]
+        monitors, left = [], 0
+        for image in images:
+            monitors.append({"left": left, "top": 0, "width": image.width, "height": image.height})
+            left += image.width
+        by_left = {monitor["left"]: image for monitor, image in zip(monitors, images)}
+        return cls(monitors=lambda: monitors, grabber=lambda monitor: by_left[monitor["left"]],
+                   cursor=lambda: (1.0, 1.0), scale_factors=dict, **options)
+
     @staticmethod
     def _monitor_for(screen: ScreenInfo) -> dict[str, Any]:
         frame = screen.frame

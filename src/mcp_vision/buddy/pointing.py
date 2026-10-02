@@ -25,6 +25,7 @@ TAG_RE = re.compile(
     r")\s*\]",
     re.IGNORECASE,
 )
+_MALFORMED_TAG_RE = re.compile(r"\[\s*POINT\b[^\]]*\]", re.IGNORECASE)
 _SCREEN_SUFFIX_RE = re.compile(r"^(?P<label>.*?)(?:\s*:\s*screen\s*(?P<screen>\d+))?\s*$", re.IGNORECASE | re.S)
 _SENTENCE_END_RE = re.compile(r"[.!?…]+[\"'”’)\]]*\s+")
 _MAX_TAG_LEN = 200
@@ -63,7 +64,7 @@ def parse_tag(raw: str) -> PointTag | None:
 def extract_tags(text: str) -> tuple[str, list[PointTag]]:
     """Non-streaming helper: return the speakable text and every point tag."""
     tags = [tag for tag in (parse_tag(m.group(0)) for m in TAG_RE.finditer(text)) if tag]
-    return clean_spoken(TAG_RE.sub(" ", text)), tags
+    return clean_spoken(_MALFORMED_TAG_RE.sub(" ", TAG_RE.sub(" ", text))), tags
 
 
 def clean_spoken(text: str) -> str:
@@ -125,15 +126,17 @@ class ReplyStream:
                 if tag:
                     self.tags.append(tag)
                     self._pending_tags.append(tag)
-            else:
+            elif not _MALFORMED_TAG_RE.fullmatch(candidate):
                 self._text += candidate
+            # A malformed "[POINT ...]" is dropped: it must never be read aloud.
         events.extend(self._release())
         return events
 
     def close(self) -> list[Event]:
         """Flush everything left at the end of the stream."""
         leftover, self._raw = self._raw, ""
-        self._text += leftover
+        if not re.match(r"\[\s*POINT\b", leftover, re.IGNORECASE):   # truncated tag: drop it
+            self._text += leftover
         return self._release(final=True)
 
     def _release(self, *, final: bool = False, merge: bool = True) -> list[Event]:

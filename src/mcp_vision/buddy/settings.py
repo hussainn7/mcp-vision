@@ -22,7 +22,7 @@ class BuddySettings(BaseSettings):
     model: str = "claude-opus-5-5"
     effort: str = "low"                 # low | medium | high | xhigh | max
     max_tokens: int = 4096
-    history_turns: int = 10
+    history_turns: int = 20             # messages, i.e. the last 10 exchanges (text only)
 
     # eyes
     max_image_edge: int = 1280
@@ -43,7 +43,7 @@ class BuddySettings(BaseSettings):
     tts: str = "auto"                   # auto | elevenlabs | say | print | off
     elevenlabs_api_key: str | None = Field(default=None, validation_alias=AliasChoices(
         "ELEVENLABS_API_KEY", "BUDDY_ELEVENLABS_API_KEY"))
-    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"     # premade "Rachel"
+    elevenlabs_voice_id: str = "kPzsL2i3teMYv0FxEYQ6"     # the voice Clicky ships with
     elevenlabs_model: str = "eleven_flash_v2_5"
     say_voice: str | None = None
 

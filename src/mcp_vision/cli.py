@@ -33,6 +33,11 @@ def cli() -> None:
     configure()
 
 
+from mcp_vision.buddy.cli import buddy as _buddy  # noqa: E402
+
+cli.add_command(_buddy)
+
+
 def _contextual_ui_ready(port: int) -> bool:
     """Return True only when the occupied port is our contextual runtime."""
     try:

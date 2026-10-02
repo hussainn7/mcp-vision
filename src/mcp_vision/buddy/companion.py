@@ -7,6 +7,7 @@ tested without a display or network.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -136,6 +137,22 @@ class Companion:
         self.system_prompt = system_prompt
         self.clock = clock
         self._task: asyncio.Task | None = None
+        self._prefetched: tuple[float, concurrent.futures.Future] | None = None
+        self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="buddy-capture")
+
+    def prefetch(self) -> None:
+        """Start the screenshot at key release, while speech is still being finalized.
+
+        Safe to call from any thread. A prefetch older than a few seconds is
+        ignored, so a stale screen never answers a new question.
+        """
+        self._prefetched = (self.clock(), self._pool.submit(self.capturer.capture))
+
+    def _take_prefetch(self, max_age: float = 4.0):
+        prefetched, self._prefetched = self._prefetched, None
+        if prefetched is None or self.clock() - prefetched[0] > max_age:
+            return None
+        return prefetched[1]
 
     # The app calls these from its event loop thread.
     def interrupt(self) -> None:
@@ -205,7 +222,9 @@ class Companion:
 
     async def _look(self, transcript: str) -> tuple[list[Screenshot], Route]:
         """Route and capture concurrently; drop the screenshots if not needed."""
-        capture = asyncio.create_task(asyncio.to_thread(self.capturer.capture))
+        prefetched = self._take_prefetch()
+        capture = (asyncio.wrap_future(prefetched) if prefetched is not None
+                   else asyncio.create_task(asyncio.to_thread(self.capturer.capture)))
         route = Route()
         if self.router is not None:
             try:

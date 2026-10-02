@@ -12,12 +12,13 @@ from mcp_vision.buddy.brain_claude import ClaudeBrain
 from mcp_vision.buddy.capture import ScreenCapturer
 from mcp_vision.buddy.companion import Companion, Route, Target, resolve_target
 from mcp_vision.buddy.conversation import Conversation, Turn
-from mcp_vision.buddy.flight import FlightPlan, ease_in_out_cubic, flight_duration
+from mcp_vision.buddy.animator import BuddyAnimator
+from mcp_vision.buddy.flight import REST_ANGLE, FlightPlan, flight_duration, smoothstep
 from mcp_vision.buddy.geometry import (
     Rect, ScreenInfo, Screenshot, fit_within, from_appkit, order_cursor_first, to_appkit,
 )
 from mcp_vision.buddy.pointing import PointTag, ReplyStream, SpeechChunk, extract_tags, parse_tag
-from mcp_vision.buddy.prompt import SYSTEM_PROMPT, user_turn_text
+from mcp_vision.buddy.prompt import SYSTEM_PROMPT, screen_label, user_turn_text
 
 MONITORS = [
     {"left": 0, "top": 0, "width": 1512, "height": 982},
@@ -131,6 +132,13 @@ def test_reply_stream_tag_at_end_is_flushed():
         SpeechChunk("Right there."), PointTag(1, 2, "Here")]
 
 
+@pytest.mark.parametrize("step", [1, 4, 100])
+def test_malformed_or_truncated_point_tags_are_never_spoken(step):
+    events = stream_events("Click it. [POINT: x=10, y=20] Then save. [POINT:5,", step)
+    assert events == [SpeechChunk("Click it. Then save.")]
+    assert extract_tags("ok [POINT:ten,twenty:x] done") == ("ok done", [])
+
+
 def test_reply_stream_does_not_treat_unterminated_bracket_as_tag_forever():
     events = stream_events("[" + "x" * 300 + ". ok then", 10)
     assert events and events[0].text.startswith("[xxx")
@@ -140,31 +148,128 @@ def test_reply_stream_does_not_treat_unterminated_bracket_as_tag_forever():
 
 def test_flight_starts_and_ends_exactly_and_bows_upward():
     plan = FlightPlan.between((100, 500), (900, 500))
+    assert plan.control == (500, 420)                 # min(800 * 0.2, 80) above the midpoint
+    assert plan.duration == 1.0                       # 800 pt / 800
     first, last = plan.frame_at(0), plan.frame_at(plan.duration)
     assert (first.x, first.y) == (100, 500) and (last.x, last.y) == pytest.approx((900, 500))
+    assert last.done and not first.done
     mid = plan.frame_at(plan.duration / 2)
-    assert mid.y < 500                       # arc rises (y up is negative)
-    assert mid.scale == pytest.approx(1.35, abs=0.01)
+    assert mid.y < 500 and mid.scale == pytest.approx(1.3)
     assert first.scale == pytest.approx(1.0) and last.scale == pytest.approx(1.0)
 
 
-def test_flight_rotation_follows_travel_and_duration_is_bounded():
-    plan = FlightPlan.between((0, 0), (0, 600))      # straight down
-    assert plan.frame_at(plan.duration).angle == pytest.approx(90, abs=30)
-    assert flight_duration(0) == 0.45 and flight_duration(10_000) == 1.15
-    assert ease_in_out_cubic(0) == 0 and ease_in_out_cubic(1) == 1
+def test_flight_rotation_faces_travel_and_duration_is_bounded():
+    right = FlightPlan.between((0, 0), (600, 0))
+    assert right.frame_at(right.duration / 2).angle == pytest.approx(90, abs=1)   # tip points right
+    down = FlightPlan.between((0, 0), (0, 600))
+    assert down.frame_at(down.duration).angle == pytest.approx(180, abs=1)
+    assert flight_duration(0) == 0.6 and flight_duration(10_000) == 1.4
+    assert smoothstep(0) == 0 and smoothstep(1) == 1 and smoothstep(0.5) == 0.5
     zero = FlightPlan.between((5, 5), (5, 5))
-    assert all(math.isfinite(f.x) for f in zero.frames())
+    frame = zero.frame_at(0.3)
+    assert (frame.x, frame.y) == (5, 5) and frame.angle == REST_ANGLE
+
+
+# -- animator ----------------------------------------------------------------------
+
+def run_frames(animator, start, seconds, mouse=(100, 100), fps=60):
+    state = None
+    for i in range(int(seconds * fps)):
+        state = animator.tick(start + i / fps, mouse)
+    return state, start + seconds
+
+
+def test_animator_follows_cursor_with_offset():
+    animator = BuddyAnimator()
+    state, _ = run_frames(animator, 0.0, 0.5, mouse=(400, 300))
+    assert state.mode == "follow"
+    assert (state.x, state.y) == pytest.approx((435, 325), abs=0.5)
+    assert state.angle == pytest.approx(REST_ANGLE, abs=0.5)
+
+
+def test_animator_full_point_cycle_types_label_holds_and_returns():
+    screen = Rect(0, 0, 1512, 982)
+    animator = BuddyAnimator(screens=lambda: [screen])
+    run_frames(animator, 0.0, 0.2, mouse=(100, 100))
+    animator.point(1505, 975, "Save button")         # near the corner: clamped 20 pt inside
+    t = 0.2
+    seen_modes, bubbles = set(), []
+    for i in range(int(8 * 60)):
+        state = animator.tick(t + i / 60, (100, 100))
+        seen_modes.add(state.mode)
+        if state.mode == "pointing":
+            bubbles.append(state.bubble)
+            assert (state.x, state.y) == pytest.approx((1492, 962))
+    assert {"fly_out", "pointing", "fly_back", "follow"} <= seen_modes
+    assert "Save button" in bubbles and bubbles[0] == "S"
+    assert state.mode == "follow" and not animator.busy
+
+
+def test_animator_chains_targets_then_release_flies_home():
+    animator = BuddyAnimator()
+    run_frames(animator, 0.0, 0.1)
+    animator.point(800, 200, "File menu")
+    animator.point(900, 600, "Export")
+    completed = []
+    for i in range(int(6 * 60)):
+        state = animator.tick(0.1 + i / 60, (100, 100))
+        if state.mode == "pointing" and state.bubble in {"File menu", "Export"} and state.bubble not in completed:
+            completed.append(state.bubble)
+    assert completed == ["File menu", "Export"]
+    animator.point(500, 500, "Later")
+    animator.release()
+    state = animator.tick(10.0, (100, 100))
+    assert state.mode in {"fly_back", "follow"} and not animator._queue
+
+
+def test_animator_return_flight_cancels_when_mouse_moves_far():
+    animator = BuddyAnimator()
+    run_frames(animator, 0.0, 0.1)
+    animator.point(900, 900, "x")
+    t = 0.1
+    while animator.mode != "fly_back":
+        animator.tick(t, (100, 100))
+        t += 1 / 60
+    state = animator.tick(t + 0.01, (400, 400))       # user grabbed the mouse
+    assert state.mode == "follow" and (state.x, state.y) == (435, 425)
+
+
+def test_animator_keeps_pointing_while_still_speaking():
+    animator = BuddyAnimator()
+    run_frames(animator, 0.0, 0.1)
+    animator.set_voice("speaking")
+    animator.point(600, 400, "Go")
+    t = 0.1
+    for i in range(int(6 * 60)):
+        state = animator.tick(t + i / 60, (100, 100))
+    assert state.mode == "pointing"                   # 3 s hold extended by speech
+    animator.set_voice("idle")
+    for i in range(int(2 * 60)):
+        state = animator.tick(t + 6 + i / 60, (100, 100))
+    assert state.mode in {"fly_back", "follow"}
+
+
+def test_level_meter_attacks_fast_and_decays():
+    animator = BuddyAnimator()
+    animator.set_level(0.8)
+    animator.set_level(0.0)
+    assert animator.level == pytest.approx(0.8 * 0.72)
 
 
 # -- prompt and brain request ------------------------------------------------------
 
 def test_system_prompt_documents_point_protocol():
     assert "[POINT:x,y:label]" in SYSTEM_PROMPT and ":screen2]" in SYSTEM_PROMPT
-    text = user_turn_text("where is export", [shot(), shot(index=2, cursor=False)])
-    assert "screen1: 1280x831 pixels, the cursor is on this screen" in text
-    assert "screen2" in text and text.endswith("The user said: where is export")
-    assert "No screenshot" in user_turn_text("hi", [])
+    assert "primary focus" in SYSTEM_PROMPT and "image dimensions" not in SYSTEM_PROMPT
+    assert user_turn_text("where is export", [shot()]) == "where is export"
+    assert "no screenshot" in user_turn_text("hi", [])
+
+
+def test_screen_labels_match_prompt_vocabulary():
+    assert screen_label(shot(), 1) == "the user's screen (cursor is here) (image dimensions: 1280x831 pixels)"
+    assert screen_label(shot(), 2) == ("screen1 of 2, cursor is on this screen (primary focus) "
+                                       "(image dimensions: 1280x831 pixels)")
+    assert screen_label(shot(index=2, cursor=False), 2).startswith("screen2 of 2, secondary screen")
 
 
 def test_claude_request_caches_system_and_attaches_labeled_images():
@@ -179,9 +284,11 @@ def test_claude_request_caches_system_and_attaches_labeled_images():
     assert "thinking" not in body and "temperature" not in body
     assert body["messages"][0] == {"role": "user", "content": "old q"}
     current = body["messages"][-1]["content"]
-    assert current[0] == {"type": "text", "text": "screen1"}
-    assert current[1]["source"]["data"] == base64.standard_b64encode(s.data).decode()
+    assert current[0]["source"]["data"] == base64.standard_b64encode(s.data).decode()
+    assert current[1]["text"].startswith("the user's screen (cursor is here)")
     assert current[-1] == {"type": "text", "text": "now"}
+    assert brain.request(system="S", turns=[Turn("user", "q")], detailed=True)["output_config"] == {
+        "effort": "medium"}
 
 
 # -- conversation ------------------------------------------------------------------
@@ -262,7 +369,7 @@ def test_turn_points_on_the_right_screen_and_speaks_clean_text():
     assert ("point", 2792, 520, "File menu") in pointer.events
     assert pointer.events[-1] == ("state", "idle")
     user_turn = brain.calls[0][-1]
-    assert user_turn.text.endswith("The user said: where is export") and len(user_turn.images) == 2
+    assert user_turn.text == "where is export" and len(user_turn.images) == 2
     history = buddy.conversation.history()
     assert history[0].text == "where is export"
     assert "pointed at: File menu on screen2" in history[1].text
@@ -312,6 +419,52 @@ def test_new_question_interrupts_the_current_answer():
     result, speaker, pointer = asyncio.run(scenario())
     assert result.state == "cancelled"
     assert speaker.stopped >= 1 and ("release",) in pointer.events
+
+
+def test_prefetched_screens_are_reused_once_and_expire():
+    calls = []
+    base = capturer()
+
+    class Counting:
+        def screens(self):
+            return base.screens()
+
+        def capture(self, **kwargs):
+            calls.append(1)
+            return base.capture(**kwargs)
+
+    now = [0.0]
+    buddy = Companion(brain=FakeBrain(["ok."]), capturer=Counting(), clock=lambda: now[0])
+    buddy.prefetch()
+    asyncio.run(buddy.respond("what is this"))
+    assert len(calls) == 1                      # the prefetch served the turn
+    buddy.prefetch()
+    now[0] = 10.0                               # stale by the time the transcript lands
+    asyncio.run(buddy.respond("and this"))
+    assert len(calls) == 3
+
+
+def test_cli_ask_with_image_runs_headless(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from mcp_vision.buddy import cli as buddy_cli
+    from mcp_vision.buddy import factory
+
+    image = tmp_path / "screen.png"
+    Image.new("RGB", (2560, 1600), "white").save(image)
+    brain = FakeBrain(["The save button is top left. [POINT:40,20:save button]"])
+    real = factory.make_companion
+    monkeypatch.setattr(factory, "make_companion", lambda settings, **kw: real(settings, brain=brain, **kw))
+    monkeypatch.setenv("BUDDY_ROUTER", "rules")
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    result = CliRunner().invoke(buddy_cli.buddy, ["ask", "--image", str(image), "--json", "where is save"])
+    assert result.exit_code == 0, result.output
+    import json as _json
+
+    payload = _json.loads(result.output)
+    assert payload["spoken"] == "The save button is top left."
+    assert payload["targets"][0]["label"] == "save button"
+    assert payload["targets"][0]["x"] == pytest.approx(40 * 2560 / 1280)
 
 
 def test_empty_transcript_does_not_call_the_model():
