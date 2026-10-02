@@ -12,9 +12,11 @@ async def main() -> None:
         assert navigation.status == "verified", navigation
         snapshot = await runtime.snapshot()
         assert snapshot.url == "https://example.com/"
-        assert "Example Domain" in snapshot.text
+        # IANA dropped the "Example Domain" heading in 2026; it survives only in <title>.
+        assert snapshot.title == "Example Domain", snapshot.title
+        assert "documentation examples" in snapshot.text, snapshot.text[:300]
         assert any(element["role"] == "link" for element in snapshot.elements)
-        evidence = await runtime.verify_text("Example Domain")
+        evidence = await runtime.verify_text("documentation examples")
         assert evidence.status == "verified" and not evidence.task_complete
         assert (await runtime.screenshot()).startswith(b"\x89PNG")
         print("public read-only browser smoke passed")
