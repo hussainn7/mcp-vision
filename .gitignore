@@ -30,8 +30,8 @@ outputs/release_gate/
 # Learned failure memory (per-machine, regenerated at runtime)
 failures.json
 failures.demo.json
-memory/
-memory_demo/
+/memory/
+/memory_demo/
 
 # Run trajectories + bench artifacts (regenerated every run)
 traces/
