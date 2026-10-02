@@ -408,3 +408,33 @@ def test_timer_announces_later_through_the_companion():
         await asyncio.sleep(3.3 if False else 0.2)
     run(scenario())
     assert speaker.said[-1] == "Your tea timer is done." and events.of("notice") == [{"text": "Your tea timer is done."}]
+
+
+def test_a_failed_screen_capture_still_gets_an_answer():
+    class Blind(Capturer):
+        def capture(self, *, only_cursor_screen=False):
+            raise OSError("no display")
+    brain = ScriptedBrain("It's Tuesday.")
+    events = Events()
+    buddy = Companion(brain=brain, capturer=Blind(), speaker=Speaker(), pointer=Pointer(), observer=events)
+    result = run(buddy.respond("what day is it"))
+    assert result.state == "done" and result.spoken == "It's Tuesday."
+    assert brain.calls[0][-1].images == () and "no screenshot" in brain.calls[0][-1].text
+    assert {"id": "look", "label": "Couldn't see your screen", "status": "skipped",
+            "detail": "check Screen Recording"} in events.of("step")
+
+
+def test_cursor_lookup_survives_pyautogui_exiting(monkeypatch):
+    import sys
+    import types
+
+    from mcp_vision.buddy import capture
+
+    broken = types.ModuleType("pyautogui")
+
+    def position():
+        raise SystemExit("NOTE: You must install tkinter on Linux to use MouseInfo.")
+    broken.position = position
+    monkeypatch.setitem(sys.modules, "pyautogui", broken)
+    monkeypatch.setattr(capture.sys, "platform", "linux")
+    assert capture.cursor_position() is None

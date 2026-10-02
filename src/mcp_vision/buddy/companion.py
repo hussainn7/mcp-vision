@@ -490,7 +490,14 @@ class Companion:
             self.emit("step", id="route", status="done", detail=f"{route.latency_ms:.0f}ms",
                       label=f"{'Jev' if route.provider == 'jev' else 'Rules'}: "
                             f"{'needs screen' if route.needs_screen else 'no screen needed'}")
-        shots = await capture
+        try:
+            shots = await capture
+        except Exception:
+            # No display, or Screen Recording not granted yet: answer without the screen.
+            shots = []
+            if route.needs_screen:
+                self.emit("step", id="look", label="Couldn't see your screen", status="skipped",
+                          detail="check Screen Recording")
         context: ScreenContext | None = None
         if context_task is not None:
             try:

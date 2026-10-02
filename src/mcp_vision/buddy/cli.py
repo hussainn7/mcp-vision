@@ -54,8 +54,10 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
     speaker = None if speak else QueueSpeaker(PrintVoice(write=lambda text: None))
     try:
         from mcp_vision.buddy.memory import Memory
+        from mcp_vision.buddy.routines import Routines
 
-        companion = make_companion(settings, capturer=capturer, speaker=speaker, prefs=prefs, memory=Memory())
+        companion = make_companion(settings, capturer=capturer, speaker=speaker, prefs=prefs, memory=Memory(),
+                                   routines=Routines())
     except SetupError as exc:
         raise click.ClickException(str(exc)) from exc
     result = asyncio.run(companion.respond(question))
@@ -63,12 +65,17 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
         click.echo(json.dumps({
             "engine": getattr(companion.brain, "label", None),
             "state": result.state, "error": result.error, "spoken": result.spoken,
+            "did": result.did, "pending": result.pending, "plan": list(result.plan), "turns": result.turns,
             "route": result.route.__dict__, "timings_ms": result.timings,
             "targets": [{**target.__dict__, "element": target.element.__dict__ if target.element else None}
                         for target in result.targets],
         }, indent=2))
     else:
         click.echo(result.spoken or result.error)
+        for done in result.did:
+            click.echo(f"  ✓ {done}")
+        if result.pending:
+            click.echo(f"  ? waiting for your OK: {result.pending}")
         for target in result.targets:
             click.echo(f"  -> {target.label or 'here'}: ({target.x:.0f}, {target.y:.0f}) on screen{target.screen}"
                        f"{' [snapped]' if target.source == 'snapped' else ''}")
@@ -77,6 +84,64 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
                    f"first_speech={result.timings.get('first_speech', '-')}ms "
                    f"total={result.timings.get('spoken', '-')}ms", err=True)
     sys.exit(0 if result.state == "done" else 1)
+
+
+@buddy.group()
+def memory() -> None:
+    """See or import what Plip knows about you."""
+
+
+@memory.command("show")
+def memory_show() -> None:
+    """Print the knowledge panel Plip uses."""
+    from mcp_vision.buddy.memory import Memory
+
+    store = Memory()
+    if not store.facts:
+        click.echo("Plip doesn't know anything about you yet. Try: plip memory import contacts")
+        return
+    for card in store.panel()["facts"]:
+        click.echo(f"  {card['label']:<18} {card['value']}   ({', '.join(card['sources'])})")
+
+
+@memory.command("import")
+@click.argument("source", type=click.Choice(["contacts", "autofill", "mail", "imessage", "chatgpt", "claude", "gemini"]))
+@click.option("--file", "path", type=click.Path(exists=True, dir_okay=False), help="AI memory text to import.")
+def memory_import(source: str, path: str | None) -> None:
+    """Import your details from a source on this Mac, or AI memory from a file/stdin."""
+    import os
+
+    from mcp_vision.buddy.actions.host import default_host
+    from mcp_vision.buddy.memory import Memory, importers
+
+    store = Memory()
+    error = ""
+    if source in {"chatgpt", "claude", "gemini"}:
+        text = open(path, encoding="utf-8").read() if path else click.get_text_stream("stdin").read()
+        facts = importers.parse_ai_memory(text)
+    elif source == "contacts":
+        facts, error = importers.import_contacts(default_host())
+    elif source == "mail":
+        facts, error = importers.import_mail(default_host())
+    elif source == "autofill":
+        facts, error = importers.import_autofill(os.path.expanduser("~"))
+    else:
+        facts, handles, contacts, error = importers.import_imessage(os.path.expanduser("~"))
+        store.handles = handles or store.handles
+        store.contacts = contacts or store.contacts
+    added = store.merge(source, facts, error)
+    store.save()
+    if error and not facts:
+        raise click.ClickException(error)
+    click.echo(f"Imported {len(facts)} from {source} ({added} new).")
+
+
+@memory.command("prompt")
+def memory_prompt() -> None:
+    """Print the prompt to paste into ChatGPT / Claude / Gemini to export their memory."""
+    from mcp_vision.buddy.memory.importers import MEMORY_PROMPT
+
+    click.echo(MEMORY_PROMPT)
 
 
 SETUP_KEYS = (

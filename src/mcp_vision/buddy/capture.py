@@ -28,7 +28,7 @@ def cursor_position() -> tuple[float, float] | None:
 
         x, y = pyautogui.position()
         return float(x), float(y)
-    except Exception:
+    except (Exception, SystemExit):         # pyautogui exits the process when tkinter is missing
         return None
 
 

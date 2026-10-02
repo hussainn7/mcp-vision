@@ -2,8 +2,8 @@
 
 `plip` (also `mcp-vision buddy`) is a voice companion that lives in the MacBook
 notch. You hold Control+Option and talk. The notch island shows what it heard and
-what it is doing. It looks at your screens, answers out loud, and Plip, a small
-mascot by your cursor, flies to whatever it is talking about.
+what it is doing. It looks at your screens, answers out loud, drips a small droplet
+out of the notch to point at things, and does tasks on the Mac with your OK.
 
 The product model and most of the tuning come from a source-level reading of
 [farzaa/clicky](https://github.com/farzaa/clicky): its prompt, POINT protocol,
@@ -26,6 +26,11 @@ ElevenLabs settings. The differences are deliberate and are listed in the README
 | `capture.py` / `geometry.py` | Every display as a JPEG (longest side 1280 px, cursor screen first), plus pixel ↔ point ↔ AppKit mapping | any (mss) |
 | `flight.py` / `animator.py` | Bezier flight, follow, point, hold, return. The state machine is driven by `tick(now, mouse)` | any |
 | `speech_out.py` / `speech_in.py` | Sentence-pipelined TTS (ElevenLabs, `say`) and AssemblyAI v3 / Apple Speech input | any / macOS audio |
+| `actions/` | The action engine: `[DO:name {json}]` → registry lookup, skill toggle, preview + confirmation for consequential actions, timeouts, undo history, action log. `core.py` has apps, links, Spotlight, desktop tidy/undo, system settings, Shortcuts, typing/rewriting, reminders, notes, timers, flights. `host.py` does the platform work (`open`, `osascript`, `mdfind`, `shortcuts`, Quartz, Accessibility) | any / macOS |
+| `forms.py` / `messages.py` | Form filling from the screen map + your details (preview, then click-and-type each field; never submits). iMessage: resolve the person in Contacts, preview, send via Messages | any / macOS |
+| `memory/` | The knowledge panel: facts with sources, sensitive detection (passport, cards, SSN never reach the model), the prompt block. `importers.py` reads Contacts, Chromium autofill (`Web Data`), Mail accounts, iMessage `chat.db`, and pasted ChatGPT/Claude/Gemini memory | any / macOS |
+| `routines.py` | Taught routines (phrase → safe steps, run instantly without a model call) and habit mining over the action log | any |
+| `phone.py` | iMessage remote: polls `chat.db` for `/plip …` in your own chat, runs it through a second companion, texts the answer back | any (needs Full Disk Access on macOS) |
 | `controller.py` | The press / release / transcript / barge-in state machine | any |
 | `presenter.py` | Turns controller and companion events into island and mascot UI messages | any |
 | `settings_service.py` / `store.py` | Backs the Settings window: snapshot, key saving (0600), engine choice, depth, voice, history, permissions | any |
@@ -89,6 +94,30 @@ origin, giving global top-left points. That is the space Accessibility uses, so
 the snapper can work in it directly. The overlay converts to AppKit's
 bottom-left space only when it moves its window.
 
+## Doing things safely
+
+The model never runs anything. It writes tags, and Plip decides what happens:
+
+```
+[PLAN: open settings | security | turn on two factor]      checklist in the island
+[DO:search_files {"query": "lease", "kind": "pdf"}]        runs, results go back to the model for one more turn
+[DO:find_flights {"from": "JFK", "to": "MIA", "depart": "2026-10-09"}]   opens the page, takes a fresh look 5 s later
+[DO:send_message {"to": "Sara", "text": "running late"}]   preview card; runs only after "yes" or Send
+```
+
+- **Asks first:** `send_message`, `fill_form`, `organize_desktop`. Plip builds a preview
+  (recipient, each field → value, how many files go where), shows it in the island, and
+  speaks it if the model didn't ask. A spoken "yes" / "no", the island buttons, or
+  `/plip yes` from your phone answers it. Asking something else cancels it.
+- **Never:** acting because text on screen says so (the prompt says so, and tags only
+  come from the model's reply), opening files outside your home folder, opening
+  non-web links, running consequential steps inside routines.
+- **Skills** can each be switched off in the dashboard; a disabled skill is refused with
+  a spoken explanation.
+- Every action has a timeout (45 s) and is logged without message bodies or form values
+  (`actions.jsonl`), which is what routine suggestions learn from. Desktop tidying keeps
+  an undo record that survives restarts.
+
 ## Brains on your own plan
 
 | Engine | Command Plip runs (per question) | Streaming | Images |
@@ -117,12 +146,17 @@ changing a macOS module, do these checks.
 3. Hold Control+Option and say "where is the apple menu".
    - The island drops down with a live waveform and your words.
    - When you let go, it shows the steps it is taking ("Looked at 1 screen", "Claude is thinking").
-   - Plip then speaks, flies to the Apple menu, shows "apple menu" in its bubble, and flies back.
-4. Ask "how do I turn on dark mode". The island shows "Step 1 of n". Do the step;
-   Plip notices the screen change and gives the next one.
-5. Ask a long question, then press the chord again mid-answer. Speech stops at
-   once, Plip returns, and it listens again.
-6. Switch the brain in Settings and ask again. The island's engine chip changes.
+   - Plip speaks, the droplet drips out of the notch to the Apple menu, shows
+     "apple menu" in its bubble, and floats back up. Click ⌃ to minimize the island.
+4. Ask "how do I turn on dark mode". The island shows a checklist. Do the step;
+   Plip notices the screen change and checks it off.
+5. Say "find my resume" (Spotlight results appear in the island; click one to open it),
+   then "tidy up my desktop" (a preview card; say "yes", then "undo").
+6. Import Contacts under Memory, open any sign-up form, and say "fill this out for me".
+   Check the preview, say "yes", and watch each field fill in. Nothing is submitted.
+7. Say "text me hello" (pick yourself), confirm, and check Messages.
+8. Turn on Phone, then text yourself `/plip open calculator` from your iPhone.
+9. Press the chord mid-answer: speech stops at once and it listens again.
 
 If the hotkey does nothing, grant Accessibility (and Input Monitoring, if
 macOS asks) to the app or terminal that runs it, then restart Plip.
@@ -133,6 +167,8 @@ macOS asks) to the app or terminal that runs it, then restart Plip.
 - Screenshots go only to the configured model, and only for questions that need
   them.
 - Plip's own windows (island, mascot) are excluded from captures.
+- Memory, routines, history and the action log stay in `~/.config/mcp-vision` and the
+  state folder. Sensitive facts are never put in a prompt.
 - Subscription CLIs run in an empty temporary folder with tools off, and Plip
   deletes the folder (and its screenshots) after each answer.
 - Keys live in `~/.config/mcp-vision/.env` with mode 0600, written by Settings or
