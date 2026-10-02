@@ -422,7 +422,9 @@ def _friendly_error(exc: Exception) -> str:
         return "My brain app isn't installed. Open my settings and pick another one."
     if "api key" in lowered or "401" in lowered or "authentication" in lowered:
         return "I can't reach my model. Check the API key in your settings."
-    if "429" in lowered or "rate" in lowered or "usage limit" in lowered:
+    if "waiting for network" in lowered or "connection failed" in lowered or "network" in lowered:
+        return "I can't reach my brain right now. Check your internet connection and try again."
+    if "429" in lowered or "rate" in lowered or "usage limit" in lowered or "quota" in lowered:
         return "I'm being rate limited right now. Give me a moment and try again."
     if "timeout" in lowered or "timed out" in lowered:
         return "That took too long. Try asking again."

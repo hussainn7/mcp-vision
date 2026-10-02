@@ -61,7 +61,7 @@ SPECS: tuple[EngineSpec, ...] = (
                binaries=("codex",), login="codex login", install="npm i -g @openai/codex",
                blurb="Sees your screenshots; answers arrive a sentence at a time."),
     EngineSpec("cursor", "Cursor", "Your Cursor plan via Cursor CLI", "subscription", False,
-               binaries=("cursor-agent", "agent"), login="cursor-agent login",
+               binaries=("cursor-agent", "agent"), login="agent login",
                install="curl https://cursor.com/install -fsS | bash",
                blurb="Text only: Blip reads the screen's controls out to it."),
     EngineSpec("gemini", "Gemini", "Google account via Gemini CLI", "subscription", True,
@@ -85,9 +85,14 @@ def find_binary(names: Iterable[str], path: str | None = None) -> str | None:
     for name in names:
         for directory in dirs:
             candidate = os.path.join(directory, name)
-            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK) and _is_expected(name, candidate):
                 return candidate
     return None
+
+
+def _is_expected(name: str, path: str) -> bool:
+    """``agent`` is a generic name; only accept it when it is Cursor's CLI."""
+    return name != "agent" or "cursor" in os.path.realpath(path).lower()
 
 
 def child_env(binary: str | None = None) -> dict[str, str]:
@@ -100,6 +105,8 @@ def child_env(binary: str | None = None) -> dict[str, str]:
     parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
     env["PATH"] = os.pathsep.join(dict.fromkeys(parts + extra))
     env.setdefault("NO_COLOR", "1")
+    for name in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"):
+        env.pop(name, None)
     return env
 
 
@@ -183,6 +190,10 @@ def probe(spec: EngineSpec, settings: Any, *, runner: Runner = run_quick,
     return status
 
 
+_AUTH_METHODS = {"claude.ai": "Claude plan", "oauth_token": "Claude plan", "api_key": "API key",
+                 "apiKey": "API key", "third_party": "cloud provider"}
+
+
 def _check_claude(status: EngineStatus, runner: Runner, home: Path) -> None:
     result = runner([status.path, "auth", "status", "--json"], 6.0)
     if result.code == 0 and result.out.strip().startswith("{"):
@@ -191,8 +202,8 @@ def _check_claude(status: EngineStatus, runner: Runner, home: Path) -> None:
         except ValueError:
             data = {}
         if data.get("loggedIn") is True:
-            who = data.get("email") or data.get("account", {}).get("email") or ""
-            plan = data.get("subscriptionType") or data.get("authMethod") or ""
+            who = data.get("email") or (data.get("account") or {}).get("email") or ""
+            plan = data.get("subscriptionType") or _AUTH_METHODS.get(str(data.get("authMethod")), "")
             status.status = "ready"
             status.detail = " · ".join(filter(None, [f"Signed in as {who}" if who else "Signed in", plan]))
             return
@@ -224,12 +235,28 @@ def _check_codex(status: EngineStatus, runner: Runner, home: Path) -> None:
 
 
 def _check_cursor(status: EngineStatus, runner: Runner, home: Path) -> None:
-    result = runner([status.path, "status"], 8.0)
+    result = runner([status.path, "status", "--format", "json"], 8.0)
     text = (result.out + result.err).strip()
+    if result.out.strip().startswith("{"):
+        try:
+            data = json.loads(result.out)
+        except ValueError:
+            data = {}
+        signed = next((data[key] for key in ("isAuthenticated", "authenticated", "loggedIn", "isLoggedIn")
+                       if key in data), None)
+        who = data.get("email") or data.get("userEmail") or (data.get("user") or {}).get("email") or ""
+        if signed is True or (signed is None and who):
+            status.status = "ready"
+            status.detail = f"Signed in as {who}" if who else "Signed in"
+            return
+        if signed is False:
+            status.status = "logged-out"
+            status.detail = "Run agent login once to sign in with your Cursor account."
+            return
     lowered = text.lower()
     if "not logged in" in lowered or "not authenticated" in lowered or "login" in lowered and result.code != 0:
         status.status = "logged-out"
-        status.detail = "Run cursor-agent login once to sign in with your Cursor account."
+        status.detail = "Run agent login once to sign in with your Cursor account."
     elif result.code == 0 and ("logged in" in lowered or "@" in text):
         status.status = "ready"
         line = next((ln.strip(" ✓") for ln in text.splitlines() if "logged in" in ln.lower()), "")
@@ -367,6 +394,7 @@ class StreamParser:
         self.produced = False
         self.error = ""
         self.final = ""
+        self.notice = ""            # latest transient problem (e.g. "Reconnecting...")
 
     def feed(self, line: str) -> list[str]:
         line = line.strip()
@@ -400,11 +428,12 @@ class CLIBrain:
     effort_map: dict[str, str] = {}
 
     def __init__(self, binary: str, *, model: str = "", effort: str = "low", timeout: float = 120.0,
-                 spawn: Callable[..., Any] | None = None):
+                 first_output_timeout: float = 45.0, spawn: Callable[..., Any] | None = None):
         self.binary = binary
         self.model = model or None
         self.effort = effort
         self.timeout = timeout
+        self.first_output_timeout = first_output_timeout
         self._spawn = spawn or asyncio.create_subprocess_exec
 
     # subclasses fill these in
@@ -426,6 +455,7 @@ class CLIBrain:
     async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False) -> AsyncIterator[str]:
         workdir = tempfile.mkdtemp(prefix="blip-")
         process = None
+        errors: asyncio.Future | None = None
         try:
             call = self.invocation(system=system, turns=turns, workdir=workdir, detailed=detailed)
             env = child_env(self.binary)
@@ -443,15 +473,19 @@ class CLIBrain:
                 process.stdin.close()
             parser = self.parser()
             errors = asyncio.ensure_future(process.stderr.read())
-            deadline = time.monotonic() + self.timeout
+            started = time.monotonic()
             while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise EngineError(f"{self.label} timed out.")
+                # A voice buddy can't sit silent: give up early if nothing has arrived yet
+                # (CLIs retry forever while the network is down).
+                limit = self.timeout if parser.produced else min(self.timeout, self.first_output_timeout)
+                remaining = started + limit - time.monotonic()
                 try:
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError
                     raw = await asyncio.wait_for(process.stdout.readline(), remaining)
                 except asyncio.TimeoutError as exc:
-                    raise EngineError(f"{self.label} timed out.") from exc
+                    reason = f" ({parser.notice})" if parser.notice and not parser.produced else ""
+                    raise EngineError(f"{self.label} timed out{reason}.") from exc
                 if not raw:
                     break
                 for text in parser.feed(raw.decode("utf-8", "replace")):
@@ -464,12 +498,22 @@ class CLIBrain:
                 raise EngineError(f"{self.label}: {parser.error}")
             if code != 0 and not parser.produced:
                 raise EngineError(f"{self.label} failed: {_tail(parser.error or stderr) or f'exit {code}'}")
+            if not parser.produced:
+                raise EngineError(f"{self.label} returned no answer. {_tail(stderr)}".strip())
         finally:
             if process is not None and process.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     process.kill()
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(process.wait(), 2.0)
+            if errors is not None and not errors.done():
+                errors.cancel()
+                with contextlib.suppress(BaseException):
+                    await errors
+            if process is not None:
+                transport = getattr(process, "_transport", None)
+                if transport is not None:
+                    transport.close()
             shutil.rmtree(workdir, ignore_errors=True)
 
 
@@ -515,14 +559,13 @@ class ClaudeCodeBrain(CLIBrain):
             content.append({"type": "text", "text": screen_label(shot, len(current.images))})
         content.append({"type": "text", "text": transcript_prompt([*history, Turn("user", current.text)])})
         message = {"type": "user", "message": {"role": "user", "content": content}}
+        # No tools, no MCP servers, no hooks/CLAUDE.md/plugins (--safe-mode), nothing saved to disk.
         argv = [self.binary, "-p", "--input-format", "stream-json", "--output-format", "stream-json",
-                "--verbose", "--include-partial-messages", "--system-prompt", system,
-                "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence"]
+                "--verbose", "--include-partial-messages", "--system-prompt", system, "--tools", "",
+                "--strict-mcp-config", "--safe-mode", "--no-session-persistence", "--effort", self._effort(detailed)]
         if self.model:
             argv += ["--model", self.model]
-        # Effort maps onto Claude Code's own setting; Blip keeps it light unless the router asks for depth.
-        env = {"CLAUDE_CODE_EFFORT_LEVEL": self._effort(detailed), "DISABLE_AUTOUPDATER": "1",
-               "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+        env = {"DISABLE_AUTOUPDATER": "1"}
         return Invocation(argv, stdin=(json.dumps(message) + "\n").encode(), env=env)
 
     def parser(self):
@@ -547,7 +590,9 @@ class CodexParser(StreamParser):
                 if text.startswith(previous) and len(text) > len(previous):
                     self._sent[key] = text
                     return [text[len(previous):]]
-        elif kind in {"turn.failed", "error"}:
+        elif kind == "error" and str(event.get("message", "")).startswith("Reconnecting"):
+            self.notice = str(event["message"])            # Codex retries on its own; not fatal yet
+        elif kind in {"turn.failed", "thread.failed", "error"}:
             error = event.get("error") or {}
             self.error = str(error.get("message") if isinstance(error, dict) else error or event.get("message")
                              or "failed")
@@ -563,13 +608,13 @@ class CodexBrain(CLIBrain):
     def invocation(self, *, system, turns, workdir, detailed):
         images = write_images(turns[-1], workdir)
         prompt = transcript_prompt(turns, images, system=system)
-        argv = [self.binary, "exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only",
+        argv = [self.binary, "exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral",
                 "--color", "never", "-c", f"model_reasoning_effort={json.dumps(self._effort(detailed))}"]
         if self.model:
             argv += ["--model", self.model]
         for path in images:
             argv += ["--image", path]
-        argv.append("-")          # prompt on stdin: no argv length limits
+        argv += ["--", "-"]       # `--image` takes several values; `-` reads the prompt from stdin
         return Invocation(argv, stdin=prompt.encode())
 
     def parser(self):
@@ -579,27 +624,18 @@ class CodexBrain(CLIBrain):
 # Cursor -----------------------------------------------------------------------------------
 
 class CursorParser(StreamParser):
-    def __init__(self):
-        super().__init__()
-        self._seen = ""
+    """``--stream-partial-output`` sends three kinds of assistant events; only deltas
+    (``timestamp_ms`` present, ``model_call_id`` absent) carry new text. The others are
+    duplicate flushes before tool calls and at the end of the turn."""
 
     def handle(self, event):
         kind = event.get("type")
         if kind == "assistant":
+            if "timestamp_ms" not in event or "model_call_id" in event:
+                return []
             message = event.get("message") or {}
-            text = "".join(block.get("text", "") for block in message.get("content", [])
-                           if block.get("type") == "text")
-            if not text:
-                return []
-            # --stream-partial-output sends deltas; a final full copy may follow, so skip repeats.
-            if self._seen and text == self._seen:
-                return []
-            if self._seen and text.startswith(self._seen):
-                delta = text[len(self._seen):]
-                self._seen = text
-                return [delta]
-            self._seen += text
-            return [text]
+            return ["".join(block.get("text", "") for block in message.get("content", [])
+                            if block.get("type") == "text")]
         if kind == "result":
             if event.get("is_error") or event.get("subtype", "success") != "success":
                 self.error = str(event.get("result") or event.get("error") or "error")
@@ -616,7 +652,7 @@ class CursorBrain(CLIBrain):
     def invocation(self, *, system, turns, workdir, detailed):
         prompt = transcript_prompt(turns, system=system)
         argv = [self.binary, "-p", "--output-format", "stream-json", "--stream-partial-output",
-                "--mode", "ask", "--trust"]
+                "--mode", "ask", "--trust", "--workspace", workdir]
         if self.model:
             argv += ["--model", self.model]
         argv.append(prompt)
@@ -633,7 +669,7 @@ class GeminiParser(StreamParser):
         kind = event.get("type")
         if kind == "message" and event.get("role") == "assistant":
             return [str(event.get("content") or "")]
-        if kind == "error":
+        if kind == "error" and event.get("severity", "error") == "error":
             self.error = str(event.get("message") or event.get("error") or "error")
         if kind == "result" and event.get("status") not in {None, "success"}:
             error = event.get("error") or {}
@@ -648,13 +684,16 @@ class GeminiBrain(CLIBrain):
 
     def invocation(self, *, system, turns, workdir, detailed):
         images = write_images(turns[-1], workdir)
-        prompt = transcript_prompt(turns, system=system)
+        system_file = os.path.join(workdir, "blip-system.md")
+        with open(system_file, "w", encoding="utf-8") as handle:
+            handle.write(system)
+        prompt = transcript_prompt(turns)
         refs = " ".join(f"@{os.path.basename(path)}" for path in images)
-        argv = [self.binary, "--output-format", "stream-json", "--approval-mode", "default"]
+        argv = [self.binary, "--output-format", "stream-json", "--skip-trust", "--approval-mode", "default"]
         if self.model:
             argv += ["--model", self.model]
         argv += ["--prompt", (refs + "\n\n" + prompt) if refs else prompt]
-        return Invocation(argv)
+        return Invocation(argv, env={"GEMINI_SYSTEM_MD": system_file})
 
     def parser(self):
         return GeminiParser()
