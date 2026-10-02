@@ -151,9 +151,9 @@ def doctor(ping: bool) -> None:
     active = choose_engine(settings, statuses)
     ok &= active is not None
     for status in statuses:
-        good = True if status.status == "ready" else None if status.status == "unknown" else False
-        if status.status in {"not-installed", "missing-key"}:
-            good = None
+        # Only the brain you picked can fail; the others are just options.
+        picked = status.spec.id == getattr(settings, "engine", "")
+        good = True if status.status == "ready" else False if picked and status.status != "unknown" else None
         chosen = " <- Blip thinks with this" if active is not None and status.spec.id == active.spec.id else ""
         line(good, f"brain {status.spec.id}", f"{status.status}: {status.detail or status.spec.via}{chosen}")
     if active is None:
@@ -184,5 +184,5 @@ def doctor(ping: bool) -> None:
                 ok &= value is True
             line(value, name, {True: "granted", False: "denied", None: "not asked yet"}[value])
     else:
-        line(None, "overlay", "macOS only; `buddy ask --image` works everywhere")
+        line(None, "notch app", "macOS only; `blip ask --image` works everywhere")
     sys.exit(0 if ok else 1)

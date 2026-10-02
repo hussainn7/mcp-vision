@@ -52,6 +52,7 @@ jobs:
           "$RUNNER_TEMP/wheel-env/bin/mcp-vision" --help
           "$RUNNER_TEMP/wheel-env/bin/mcp-vision" serve --help
           "$RUNNER_TEMP/wheel-env/bin/mcp-vision" buddy --help
+          "$RUNNER_TEMP/wheel-env/bin/blip" --help
           "$RUNNER_TEMP/wheel-env/bin/python" "$GITHUB_WORKSPACE/tests/wheel_smoke.py"
       - uses: actions/upload-artifact@v7
         if: always()

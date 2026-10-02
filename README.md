@@ -1,88 +1,119 @@
-# MCP-Vision
+# Blip
 
-An AI buddy that lives next to your cursor. Hold **Control+Option**, ask out loud,
-and it looks at your screen, answers in a natural voice, and **flies a little blue
-pointer to the exact button, menu, or field** you need.
+**An AI buddy that lives in your MacBook's notch.** Hold **Control+Option** and ask
+out loud. Blip looks at your screen, answers in a natural voice, and **flies over
+to the exact button, menu, or field** you need. It thinks with the **Claude,
+ChatGPT, Cursor or Gemini plan you already pay for**, so there's no extra bill.
 
-> "where do I change the export resolution?"
-> *"open the file menu up top"* → the pointer arcs over to **File** →
-> *"then pick export, and the resolution is in the dialog that opens."*
+![Blip pointing at the File menu while the notch island shows step 1 of 2](docs/img/blip-pointing.jpg)
 
-It is a Python take on [Clicky](https://github.com/farzaa/clicky). It follows
-Clicky's prompt, pointing protocol, motion design and push-to-talk feel, and adds
-a few things on top:
+> "how do I export this as a PDF?"
+> *"Easy. Open the File menu up top."* → Blip arcs over to **File** →
+> *(you open it; Blip sees the menu appear)* → *"Now pick Export To, then PDF."*
 
-| | Clicky (open source) | MCP-Vision buddy |
+Blip started as a Python take on [Clicky](https://github.com/farzaa/clicky). It
+keeps Clicky's push-to-talk feel, pointing protocol and motion design, and goes
+further:
+
+| | Clicky (open source) | Blip |
 |---|---|---|
-| Speech starts | after the whole reply is generated and synthesized | per sentence, while Claude is still streaming |
-| Pointing | one point, at the end | one point per step of a walkthrough, synced to the sentence |
+| Lives | a triangle by the cursor | a Dynamic-Island-style **notch island** + Blip, a little mascot by your cursor |
+| Brain | Claude, via a server you deploy | **your own plan**: Claude Code (Pro/Max), Codex (ChatGPT Plus/Pro), Cursor CLI, Gemini CLI, or an API key |
+| Multi-step help | one answer | **guided walkthroughs**: Blip watches the screen and gives the next step when you've done the last one |
+| Sees | screenshots only | screenshots + a **screen map** of real controls (Accessibility), so even text-only brains can point |
+| Speech starts | after the whole reply is generated and synthesized | per sentence, while the model is still streaming |
 | Pointer lands on | the model's estimate | the real control, snapped via Accessibility (Jev picks the element) |
 | Screenshots | always, every screen | Jev decides in ~100 ms: none for general questions, cursor screen only when that's all that matters |
-| Effort | fixed | Jev spots walkthroughs and raises Claude's effort for that turn |
-| Bad tags | read aloud | never spoken |
 
-Needs **Python 3.12+** and macOS for the buddy overlay. The headless `buddy ask`
-and the MCP server run anywhere.
+Needs **macOS** and **Python 3.12+**. The headless `blip ask` and the MCP server run anywhere.
 
 ## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hussainn7/mcp-vision/main/scripts/install.sh | bash
-mcp-vision buddy setup        # paste your Anthropic key; Jev, ElevenLabs, AssemblyAI are optional
-mcp-vision buddy doctor       # add --ping to verify the Jev key
-mcp-vision buddy
+blip                 # Blip moves into your notch; Settings opens on first run
 ```
 
-The first run asks macOS for **Screen Recording**, **Accessibility** (for the
-hotkey and pointer snapping) and **Microphone**. For permissions that stick across
-updates, build the signed app once: `python scripts/build_macos_app.py`, then open
-`/Applications/MCP-Vision.app`.
+Pick a brain in Settings → **Brain**. If you're already signed in to one of these,
+Blip finds it and it just works:
+
+| Your plan | One-time sign-in | Sees screenshots |
+|---|---|---|
+| Claude Pro / Max | `claude auth login` ([Claude Code](https://claude.com/claude-code)) | yes |
+| ChatGPT Plus / Pro | `codex login` → *Sign in with ChatGPT* ([Codex CLI](https://github.com/openai/codex)) | yes |
+| Cursor | `agent login` ([Cursor CLI](https://cursor.com/cli)) | text only (Blip reads it the screen map) |
+| Google account | run `gemini` once → *Login with Google* ([Gemini CLI](https://github.com/google-gemini/gemini-cli)) | yes |
+| none of these | paste an `ANTHROPIC_API_KEY` | yes, fastest first word |
+
+Blip runs the CLI once per question in an empty scratch folder with its tools
+switched off (no shell, no file edits, no MCP servers), so it only ever gets words
+and `[POINT]` tags back.
+
+![Blip's settings: pick the AI you already pay for](docs/img/settings-brain.jpg)
+
+The first run asks macOS for **Screen Recording**, **Accessibility** (hotkey,
+pointer snapping, screen map) and **Microphone**. The Settings → Permissions tab
+has a button for each. For permissions that stick across updates, build the signed
+app once: `python scripts/build_macos_app.py`, then open `/Applications/MCP-Vision.app`.
 
 Then hold **Control+Option**, talk, and let go.
 
-- Press the shortcut again while it is talking to interrupt (barge-in).
-- Press any other key during the chord and it treats it as some other shortcut.
-- The menu-bar triangle has *Forget this conversation*, *Check setup*, and
-  *Always show buddy*.
+- The island drops out of the notch: live waveform, your words, what Blip is
+  doing (looked at 2 screens, asked Claude, snapped to "Export"), then the answer.
+- Press the shortcut again while Blip is talking to interrupt it.
+- Hover the notch to peek at the last answer; click the gear for Settings.
+- Menu bar: *Open Blip*, *Brain*, *Show Blip by my cursor*, *Forget this conversation*.
 
-### What each key buys you
+### Optional extras
 
 | Key | Without it | With it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | required | Claude (`claude-opus-5-5`, low effort by default) sees your screens and writes the reply |
 | `TYPESAFE_API_KEY` | rule-based routing, heuristic snapping | [Jev](https://console.typesafe.ai) System-1 routing and element choice in ~100 ms |
 | `ELEVENLABS_API_KEY` | macOS `say` | Clicky's ElevenLabs voice (`eleven_flash_v2_5`) |
 | `ASSEMBLYAI_API_KEY` | on-device Apple Speech | AssemblyAI streaming (`u3-rt-pro`), as in Clicky |
 
-Every knob is in [.env.example](.env.example).
+Paste them in Settings, or see [.env.example](.env.example) for every knob.
+`blip doctor` checks engines, keys and permissions from the terminal.
 
 ### Try it without a Mac
 
 ```bash
-mcp-vision buddy ask --image screenshot.png "where's the export button?"
-mcp-vision buddy ask --json "what's on my screen?"      # captures the real screen if there is one
+blip ask --image screenshot.png "where's the export button?"
+blip ask --engine codex --json "what's on my screen?"     # captures the real screen if there is one
 ```
 
-This prints what the buddy would say, where it would point (global screen points),
-the route Jev or the rules chose, and the latency of each stage.
+This prints what Blip would say, where it would point (global screen points), the
+route Jev or the rules chose, and the latency of each stage.
 
-## How it works
+## How it thinks
 
 ```
-Control+Option ──▶ mic ──▶ AssemblyAI / Apple Speech ──▶ transcript
+Control+Option ──▶ mic ──▶ AssemblyAI / Apple Speech ──▶ transcript ──▶ notch island (live)
                                                              │
    release: screenshots prefetched ──┐                       ▼
-                                     ├──▶ Jev router (needs screen? which monitor? walkthrough?)
+   Accessibility screen map ─────────┼──▶ Jev router (needs screen? which monitor? walkthrough?)
                                      ▼
-          Claude (streamed) ──▶ sentence splitter ──▶ TTS queue (speaks sentence 1 while 2 is synthesized)
-                                     │
-                                     └──▶ [POINT:x,y:label:screenN] ──▶ map px → screen points
-                                                                      ──▶ snap to AX element (Jev picks)
-                                                                      ──▶ buddy flies there, types the label
+     your brain (Claude Code / Codex / Cursor / Gemini / API), streamed
+          │
+          ├──▶ sentence splitter ──▶ TTS queue (speaks sentence 1 while 2 is synthesized)
+          ├──▶ [POINT:x,y:label:screenN] ──▶ px → points ──▶ snap to the AX element ──▶ Blip flies there
+          └──▶ [STEPS:n] … [DONE] ──▶ walkthrough: watch the screen, continue when it changes
 ```
 
-Everything above the overlay is platform-neutral and unit-tested. The macOS layer
-is a 60 Hz renderer, an event tap and audio glue. See [docs/BUDDY.md](docs/BUDDY.md).
+- **Screen map.** Blip lists the frontmost app's real controls (label, role and
+  center in screenshot pixels), so the model points at things that exist and
+  text-only brains can still point.
+- **Walkthroughs.** For "how do I…" questions the model announces `[STEPS:n]` and
+  gives one step. Blip watches the screen (a 64×40 fingerprint diff every 0.7 s)
+  and, once you've acted and it settles, takes a fresh look and gives the next step,
+  until `[DONE]`.
+- **Depth.** Fast / Balanced / Deep in Settings maps to low / medium / high effort;
+  walkthroughs go one step higher for that turn.
+
+Everything above the windows is platform-neutral and unit-tested, including the CLI
+engines, which the tests drive through real subprocesses. The macOS layer is three
+WKWebViews (island, Blip, Settings) rendering one React bundle, an event tap and audio
+glue. See [docs/BUDDY.md](docs/BUDDY.md).
 
 ## MCP server (for Cursor, Claude Desktop, Claude Code)
 
@@ -111,6 +142,9 @@ available as `mcp-vision ui`, or as an app with `scripts/build_macos_app.py --en
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 PYTHONPATH=src:. python -m pytest
+
+cd ui && npm install && npm run build      # React 19 + Tailwind 4 + Motion → src/mcp_vision/buddy/web/index.html
+npm run dev                                # open #showcase for the fake-desktop demo, #settings, #island
 ```
 
 The CI sequence, including real Chromium contracts, is in

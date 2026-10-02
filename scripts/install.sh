@@ -48,9 +48,10 @@ if ! command -v mcp-vision >/dev/null 2>&1; then
   echo "Add to your shell config, then reopen the terminal:"
   echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
-echo "Your cursor buddy:"
-echo "  mcp-vision buddy setup     # paste your Anthropic key (Jev / ElevenLabs / AssemblyAI optional)"
-echo "  mcp-vision buddy           # then hold Control+Option and talk"
+echo "Meet Blip, your AI buddy in the notch:"
+echo "  blip                       # opens Settings on first run; pick the Claude / ChatGPT / Cursor / Gemini plan you have"
+echo "  blip doctor                # checks brains, keys and permissions"
+echo "Then hold Control+Option and talk."
 echo
 echo "MCP server for Cursor / Claude: restart them so MCP picks it up, then try"
 echo "  mcp-vision connect"
