@@ -294,6 +294,9 @@ const ENGINE_GLYPH: Record<string, { bg: string; text: string; glyph: string }> 
   anthropic: { bg: 'bg-[#e8dccf]', text: 'text-[#1f1b16]', glyph: 'A' },
 }
 
+const TONE_TEXT = { good: 'text-emerald-300', warn: 'text-amber-300', muted: 'text-white/45' } as const
+const TONE_DOT = { good: 'bg-emerald-400 shadow-[0_0_8px] shadow-emerald-400/60', warn: 'bg-amber-400', muted: 'bg-white/40' } as const
+
 function EngineCard({ engine }: { engine: Engine }) {
   const glyph = ENGINE_GLYPH[engine.id] ?? { bg: 'bg-white/10', text: 'text-white', glyph: '•' }
   const tone = engine.status === 'ready' ? 'good' : engine.status === 'unknown' ? 'muted' : 'warn'
@@ -302,23 +305,28 @@ function EngineCard({ engine }: { engine: Engine }) {
 
   return (
     <Card active={engine.selected} className="flex flex-col gap-3">
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <span className={cn('grid size-10 shrink-0 place-items-center rounded-xl text-[18px] font-bold shadow-lg', glyph.bg, glyph.text)}>{glyph.glyph}</span>
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="truncate text-[14px] font-semibold tracking-tight">{engine.label}</span>
-          {engine.kind === 'subscription' && <span className="shrink-0 rounded-md bg-violet-glow/15 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-violet-300">Plan</span>}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[14px] font-semibold tracking-tight">{engine.label}</span>
+            {engine.kind === 'subscription' && <span className="shrink-0 rounded-md bg-violet-glow/15 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-violet-300">Plan</span>}
+          </div>
+          <div className={cn('mt-1 flex items-center gap-1.5 text-[11.5px] font-semibold', TONE_TEXT[tone])}>
+            <span className={cn('size-1.5 rounded-full', TONE_DOT[tone], engine.status === 'unknown' && 'animate-pulse')} />
+            {statusLabel}
+          </div>
         </div>
-        <span className="shrink-0"><Pill tone={tone}>{statusLabel}</Pill></span>
       </div>
-      <div className="-mt-1 text-[12px] font-medium text-white/50">{engine.via}</div>
-      {engine.detail && <div className="text-[12px] leading-relaxed text-white/45">{engine.detail}</div>}
+      <div className="text-[12px] font-medium text-white/55">{engine.via}</div>
+      {engine.detail && <div className="-mt-1.5 text-[12px] leading-relaxed text-white/40">{engine.detail}</div>}
       <div className="mt-auto flex items-center gap-2">
-        {engine.status === 'ready' && !engine.selected && (
+        {(engine.status === 'ready' || engine.status === 'unknown') && !engine.selected && (
           <Button onClick={() => send('select-engine', { id: engine.id })}>
             Use {engine.label} <ArrowRight className="size-3.5" />
           </Button>
         )}
-        {engine.selected && engine.status === 'ready' && (
+        {engine.selected && (engine.status === 'ready' || engine.status === 'unknown') && (
           <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-emerald-300">
             <Check className="size-4" strokeWidth={3} /> In use
           </span>
@@ -351,7 +359,7 @@ function BrainTab({ state }: { state: SettingsState }) {
   const keys = state.engines.filter((engine) => engine.kind !== 'subscription')
   return (
     <div>
-      <Header eyebrow="Brain" title="Use the AI you already pay for" subtitle="Blip can think with your existing Claude, ChatGPT or Cursor subscription through their official apps, or with an API key. Pick one; switch anytime." />
+      <Header eyebrow="Brain" title="Use the AI you already pay for" subtitle="Blip thinks with the Claude, ChatGPT, Cursor or Gemini plan you already have, through their official command-line apps. No extra bill. Or paste an API key. Switch anytime." />
       <div className="mb-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-white/35">Your subscriptions</div>
       <div className="mb-7 grid grid-cols-2 gap-3">
         {plans.map((engine) => <EngineCard key={engine.id} engine={engine} />)}
