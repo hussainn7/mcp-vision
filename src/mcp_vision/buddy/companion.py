@@ -25,7 +25,7 @@ class Brain(Protocol):
 
     name: str
 
-    def stream(self, *, system: str, turns: list[Turn]) -> AsyncIterator[str]: ...
+    def stream(self, *, system: str, turns: list[Turn], detailed: bool = False) -> AsyncIterator[str]: ...
 
 
 class Speaker(Protocol):
@@ -51,6 +51,8 @@ class Route:
 
     needs_screen: bool = True
     intent: str = "explain"          # point | explain | answer | chat
+    cursor_screen_only: bool = False # multi-display: send just the screen under the cursor
+    detailed: bool = False           # walkthrough / deeper explanation wanted
     provider: str = "default"
     confidence: float = 0.0
     latency_ms: float = 0.0
@@ -173,7 +175,8 @@ class Companion:
             turn = Turn("user", user_turn_text(transcript, shots), images=tuple(shots))
             reply = ReplyStream()
             first = True
-            async for delta in self.brain.stream(system=self.system_prompt, turns=[*history, turn]):
+            async for delta in self.brain.stream(system=self.system_prompt, turns=[*history, turn],
+                                                 detailed=result.route.detailed):
                 if first:
                     mark("first_token")
                     first = False
@@ -211,7 +214,11 @@ class Companion:
             except Exception:
                 route = Route(provider="fallback")
         shots = await capture
-        return (shots if route.needs_screen else []), route
+        if not route.needs_screen:
+            return [], route
+        if route.cursor_screen_only and len(shots) > 1:
+            shots = [shot for shot in shots if shot.screen.is_cursor_screen] or shots[:1]
+        return shots, route
 
     async def _handle(self, event, shots, result: TurnResult, mark) -> None:
         if isinstance(event, SpeechChunk):

@@ -205,8 +205,9 @@ class FakeBrain:
         self.delay = delay
         self.calls = []
 
-    async def stream(self, *, system, turns):
+    async def stream(self, *, system, turns, detailed=False):
         self.calls.append(turns)
+        self.detailed = detailed
         for chunk in self.chunks:
             if self.delay:
                 await asyncio.sleep(self.delay)
@@ -288,7 +289,7 @@ def test_brain_failure_is_spoken_not_silent():
     class Broken:
         name = "broken"
 
-        async def stream(self, *, system, turns):
+        async def stream(self, *, system, turns, detailed=False):
             raise RuntimeError("HTTP 401 invalid x-api-key")
             yield  # pragma: no cover
 

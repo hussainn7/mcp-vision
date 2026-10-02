@@ -12,6 +12,7 @@ DEFAULT_MODEL = "claude-opus-5-5"
 # settings for harder walkthroughs.
 DEFAULT_EFFORT = "low"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+_EFFORT_STEP = {"low": "medium", "medium": "high", "high": "xhigh", "xhigh": "max", "max": "max"}
 
 
 class ClaudeBrain:
@@ -37,21 +38,27 @@ class ClaudeBrain:
             client = anthropic.AsyncAnthropic(api_key=api_key, timeout=timeout, max_retries=2)
         self.client = client
 
-    def request(self, *, system: str, turns: list[Turn]) -> dict[str, Any]:
-        """The exact request body (minus transport options); handy for tests."""
+    def request(self, *, system: str, turns: list[Turn], detailed: bool = False) -> dict[str, Any]:
+        """The exact request body (minus transport options); handy for tests.
+
+        ``detailed`` (a walkthrough or deeper explanation, as judged by the
+        router) raises effort one step for that turn only.
+        """
+        effort = _EFFORT_STEP.get(self.effort, self.effort) if detailed else self.effort
         return {
             "model": self.model,
             "max_tokens": self.max_tokens,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             "messages": [_message(turn) for turn in turns],
-            "output_config": {"effort": self.effort},
+            "output_config": {"effort": effort},
             "betas": [FALLBACK_BETA],
             "fallbacks": "default",
         }
 
-    async def stream(self, *, system: str, turns: list[Turn]) -> AsyncIterator[str]:
+    async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False) -> AsyncIterator[str]:
         refused = False
-        async with self.client.beta.messages.stream(**self.request(system=system, turns=turns)) as stream:
+        body = self.request(system=system, turns=turns, detailed=detailed)
+        async with self.client.beta.messages.stream(**body) as stream:
             async for event in stream:
                 if event.type == "content_block_delta" and getattr(event.delta, "type", "") == "text_delta":
                     yield event.delta.text
