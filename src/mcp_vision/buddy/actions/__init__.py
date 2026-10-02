@@ -7,8 +7,9 @@ from mcp_vision.buddy.actions.engine import ActionEngine, ActionLog, Outcome, an
 
 def all_specs() -> list[ActionSpec]:
     from mcp_vision.buddy.actions import core
+    from mcp_vision.buddy.memory import skills as memory_skills
 
-    return list(core.SPECS)
+    return [*core.SPECS, *memory_skills.SPECS]
 
 
 SKILLS = {
@@ -18,6 +19,7 @@ SKILLS = {
     "writing": ("Writing", "Type for you, rewrite the selected text"),
     "planning": ("Reminders & timers", "Reminders, notes and timers"),
     "travel": ("Travel", "Find flights on Google Flights"),
+    "memory": ("Memory", "Remember what you tell it, use your details"),
 }
 
 __all__ = ["SKILLS", "ActionContext", "ActionEngine", "ActionError", "ActionLog", "ActionResult", "ActionSpec",

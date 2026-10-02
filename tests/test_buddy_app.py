@@ -190,6 +190,8 @@ ENGINES = [{"id": "claude-code", "label": "Claude", "login": "claude auth login"
 
 @pytest.fixture
 def service(tmp_path, monkeypatch):
+    from mcp_vision.buddy.memory import Memory
+
     for name in ("ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY", "TYPESAFE_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     calls = {"reload": 0, "posted": [], "platform": [], "refresh": 0}
@@ -207,7 +209,8 @@ def service(tmp_path, monkeypatch):
         reload=lambda: calls.__setitem__("reload", calls["reload"] + 1), post=calls["posted"].extend,
         platform=platform, prefs_path=tmp_path / "prefs.json", env_path=tmp_path / ".env",
         history=History(path=tmp_path / "history.jsonl"),
-        on_refresh=lambda: calls.__setitem__("refresh", calls["refresh"] + 1))
+        on_refresh=lambda: calls.__setitem__("refresh", calls["refresh"] + 1),
+        memory=Memory(tmp_path / "memory.json"), run_import=lambda source: calls.setdefault("imports", []).append(source))
     return svc, calls, tmp_path
 
 
@@ -340,3 +343,38 @@ def test_mascot_state_looks_leans_and_labels():
 
 def test_applescript_strings_are_escaped():
     assert applescript_string('say "hi" \\ there') == '"say \\"hi\\" \\\\ there"'
+
+
+def test_settings_memory_commands(service):
+    svc, calls, tmp_path = service
+    svc.handle({"cmd": "memory-paste", "source": "chatgpt", "text": "Name: Hussain Syed\nDiet: vegetarian"})
+    panel = calls["posted"][-1]["state"]["memory"]
+    assert panel["profile"]["name.full"] == "Hussain Syed" and panel["imports"]["chatgpt"]["count"] == 2
+    assert {fact["value"] for fact in panel["facts"]} >= {"Hussain Syed", "Diet: vegetarian"}
+    svc.handle({"cmd": "memory-add", "key": "email", "value": "h@example.com"})
+    fact_id = next(fact["id"] for fact in calls["posted"][-1]["state"]["memory"]["facts"] if fact["key"] == "email")
+    svc.handle({"cmd": "memory-delete", "id": fact_id})
+    assert all(fact["key"] != "email" for fact in calls["posted"][-1]["state"]["memory"]["facts"])
+    svc.handle({"cmd": "memory-forget-source", "source": "chatgpt"})
+    assert calls["posted"][-1]["state"]["memory"]["facts"] == []
+    svc.handle({"cmd": "memory-import", "source": "contacts"})
+    svc.handle({"cmd": "memory-import", "source": "keychain"})            # not a source
+    assert calls["imports"] == ["contacts"]
+    svc.handle({"cmd": "memory-copy-prompt"})
+    assert calls["platform"][-1][0] == "copy" and "key: value" in calls["platform"][-1][1]
+    svc.handle({"cmd": "memory-paste", "text": "x" * 70_000})               # too big: ignored
+    assert oct((tmp_path / "memory.json").stat().st_mode & 0o777) == "0o600"
+
+
+def test_settings_skills_companion_and_phone(service):
+    svc, calls, tmp_path = service
+    svc.handle({"cmd": "set-skill", "skill": "messages", "enabled": False})
+    svc.handle({"cmd": "set-skill", "skill": "rockets", "enabled": False})
+    svc.handle({"cmd": "set-companion", "style": "cursor"})
+    svc.handle({"cmd": "set-companion", "style": "giant"})
+    svc.handle({"cmd": "set-phone", "enabled": True, "handles": ["+15550102000", " "], "prefix": "/hey plip"})
+    state = calls["posted"][-1]["state"]
+    assert state["skills"]["messages"] is False and state["skills"]["apps"] is True
+    assert state["companion"] == "cursor"
+    assert state["phone"] == {"enabled": True, "handles": ["+15550102000"], "prefix": "/hey"}
+    assert calls["reload"] == 3

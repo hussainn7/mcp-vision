@@ -10,6 +10,7 @@ Everything that touches AppKit hops onto the main thread with ``callAfter``.
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import threading
 from typing import Any
@@ -247,6 +248,9 @@ def run_buddy_app() -> None:
     threading.Thread(target=loop.run_forever, daemon=True, name="plip-loop").start()
     history = History()
     registry = EngineRegistry(lambda: state["settings"])
+    from mcp_vision.buddy.memory import Memory
+
+    memory = Memory()
 
     def main(fn):
         return lambda *args: AppHelper.callAfter(fn, *args)
@@ -319,7 +323,7 @@ def run_buddy_app() -> None:
         companion, error = None, ""
         try:
             companion = make_companion(settings, pointer=MainThreadPointer(mascot), observer=presenter, prefs=prefs,
-                                       engines=statuses, watch=True)
+                                       engines=statuses, watch=True, memory=memory)
         except SetupError as exc:
             error = str(exc)
         except Exception as exc:          # a broken optional piece must not kill the app
@@ -381,6 +385,30 @@ def run_buddy_app() -> None:
             AppHelper.callAfter(service.push)
         threading.Thread(target=work, daemon=True, name="plip-probe").start()
 
+    def run_import(source: str) -> None:
+        """Worker thread: read one source, merge it, refresh Settings."""
+        from mcp_vision.buddy.actions.host import default_host
+        from mcp_vision.buddy.memory import importers
+
+        def work():
+            host, home = default_host(), os.path.expanduser("~")
+            if source == "contacts":
+                facts, error = importers.import_contacts(host)
+            elif source == "mail":
+                facts, error = importers.import_mail(host)
+            elif source == "autofill":
+                facts, error = importers.import_autofill(home)
+            else:
+                facts, handles, contacts, error = importers.import_imessage(home)
+                if handles:
+                    memory.handles = handles
+                if contacts:
+                    memory.contacts = contacts
+            memory.merge(source, facts, error)
+            memory.save()
+            AppHelper.callAfter(service.push)
+        threading.Thread(target=work, daemon=True, name=f"plip-import-{source}").start()
+
     def test_voice(text: str) -> None:
         speaker = getattr(controller.companion, "speaker", None)
         if speaker is not None and hasattr(speaker, "speak") and type(speaker).__name__ != "_NullSpeaker":
@@ -400,6 +428,8 @@ def run_buddy_app() -> None:
             quit=lambda: AppKit.NSApp.terminate_(None), open_settings=open_settings),
         history=history,
         on_refresh=refresh_engines,
+        memory=memory,
+        run_import=run_import,
     )
 
     def handle_command(command: dict[str, Any]) -> None:

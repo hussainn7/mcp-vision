@@ -83,7 +83,8 @@ yours, great for "rewrite this", "fix my grammar", "translate this".
 set_timer {"minutes", "label"?}
 - find_flights {"from", "to", "depart": "YYYY-MM-DD", "return"?, "adults"?}: opens google flights; you \
 get a fresh look a few seconds later to tell them the best options. use airport codes or cities.
-- remember {"fact"}: save something about them for later, when they tell you to remember it.
+- remember {"fact"}: save something about them for later, when they tell you to remember it. \
+forget {"about"} deletes it.
 - fill_form {"fields": [{"x", "y", "label", "value"}]}: fill the form on screen from what you know about \
 them. x,y are each field's coordinates from the controls list. only fill fields you have real values for \
 (asks first).

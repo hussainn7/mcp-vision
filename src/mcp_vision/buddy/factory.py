@@ -106,7 +106,7 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
                    speaker: Speaker | None = None, capturer: ScreenCapturer | None = None,
                    brain: Any = None, observer: Observer | None = None, prefs: Prefs | None = None,
                    engines: list | None = None, watch: bool = False, actions=None,
-                   notes=None) -> Companion:
+                   notes=None, memory=None, routines=None) -> Companion:
     settings = apply_prefs(settings, prefs)
     jev = make_jev(settings)
     capturer = capturer or ScreenCapturer(max_edge=settings.max_image_edge, quality=settings.jpeg_quality)
@@ -127,10 +127,26 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
         observer=observer,
         watcher=watcher,
         walkthroughs=prefs.walkthroughs if prefs is not None else True,
-        actions=actions if actions is not None else make_actions(settings, prefs),
-        notes=notes,
+        actions=actions if actions is not None else make_actions(settings, prefs, memory=memory, routines=routines),
+        notes=notes if notes is not None else make_notes(memory, routines),
     )
 
 
-__all__ = ["SetupError", "apply_prefs", "make_actions", "make_brain", "make_companion", "make_jev", "make_router",
+def make_notes(memory=None, routines=None):
+    """What Plip knows about the user and their routines, added to every turn."""
+    if memory is None and routines is None:
+        return None
+
+    def notes() -> str:
+        parts = []
+        if memory is not None:
+            parts.append(memory.summary())
+        if routines is not None:
+            parts.append(routines.summary())
+        return "\n".join(part for part in parts if part)
+    return notes
+
+
+__all__ = ["SetupError", "apply_prefs", "make_actions", "make_brain", "make_companion", "make_jev", "make_notes",
+           "make_router",
            "make_speaker"]
