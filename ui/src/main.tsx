@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { isNative, onMockCommand, settings } from './bridge'
+import { isNative, onMockCommand, send, settings } from './bridge'
 import { loadDemoSettings } from './demo'
 import './styles.css'
 import { Island } from './views/Island'
@@ -39,3 +39,6 @@ const views: Record<Surface, React.ReactNode> = {
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode>{views[surface] ?? <Showcase />}</StrictMode>)
+
+// The native host queues messages until the page says it can receive them.
+requestAnimationFrame(() => send('ready', { surface }))

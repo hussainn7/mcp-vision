@@ -1,26 +1,45 @@
-"""Assemble a buddy from settings. Platform pieces are chosen at runtime."""
+"""Assemble Blip from settings + preferences. Platform pieces are chosen at runtime."""
 from __future__ import annotations
 
 import sys
 from typing import Any
 
 from mcp_vision.buddy.capture import ScreenCapturer
-from mcp_vision.buddy.companion import Companion, Pointer, Router, Snapper, Speaker
+from mcp_vision.buddy.companion import Companion, Observer, Pointer, Router, Snapper, Speaker
 from mcp_vision.buddy.conversation import Conversation
 from mcp_vision.buddy.settings import BuddySettings
+from mcp_vision.buddy.store import Prefs
+
+DEPTH_EFFORT = {"fast": "low", "balanced": "medium", "deep": "high"}
 
 
 class SetupError(RuntimeError):
     """A missing key or permission the user has to fix."""
 
 
-def make_brain(settings: BuddySettings) -> Any:
-    if not settings.anthropic_api_key:
-        raise SetupError("ANTHROPIC_API_KEY is not set. Add it to your .env (see .env.example).")
-    from mcp_vision.buddy.brain_claude import ClaudeBrain
+def apply_prefs(settings: BuddySettings, prefs: Prefs | None) -> BuddySettings:
+    """User choices from the Settings window win over environment defaults."""
+    if prefs is None:
+        return settings
+    changes: dict[str, Any] = {}
+    if prefs.depth in DEPTH_EFFORT and "effort" not in settings.model_fields_set:
+        changes["effort"] = DEPTH_EFFORT[prefs.depth]
+    if prefs.tts in {"elevenlabs", "say", "off"}:
+        changes["tts"] = prefs.tts
+    if prefs.stt in {"assemblyai", "apple"}:
+        changes["stt"] = prefs.stt
+    if prefs.engine:
+        changes["engine"] = prefs.engine
+    return settings.model_copy(update=changes) if changes else settings
 
-    return ClaudeBrain(api_key=settings.anthropic_api_key, model=settings.model,
-                       effort=settings.effort, max_tokens=settings.max_tokens)
+
+def make_brain(settings: BuddySettings, engines: list | None = None) -> Any:
+    from mcp_vision.buddy.engines import choose_engine, make_engine_brain
+
+    engine = choose_engine(settings, engines)
+    if engine is None:
+        raise SetupError("Pick a brain: sign in to Claude Code, Codex, or Cursor, or add an API key in Blip's settings.")
+    return make_engine_brain(engine, settings)
 
 
 def make_jev(settings: BuddySettings):
@@ -54,6 +73,14 @@ def make_snapper(settings: BuddySettings, jev=None) -> Snapper | None:
     return ElementSnapper(elements_near, JevChooser(jev) if jev is not None else None)
 
 
+def make_context(settings: BuddySettings):
+    if sys.platform != "darwin":
+        return None
+    from mcp_vision.buddy.ax_context import MacAXContext
+
+    return MacAXContext()
+
+
 def make_speaker(settings: BuddySettings) -> Speaker | None:
     if settings.tts.lower() == "off":
         return None
@@ -65,14 +92,30 @@ def make_speaker(settings: BuddySettings) -> Speaker | None:
 
 def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
                    speaker: Speaker | None = None, capturer: ScreenCapturer | None = None,
-                   brain: Any = None) -> Companion:
+                   brain: Any = None, observer: Observer | None = None, prefs: Prefs | None = None,
+                   engines: list | None = None, watch: bool = False) -> Companion:
+    settings = apply_prefs(settings, prefs)
     jev = make_jev(settings)
+    capturer = capturer or ScreenCapturer(max_edge=settings.max_image_edge, quality=settings.jpeg_quality)
+    watcher = None
+    if watch and hasattr(capturer, "fingerprint"):
+        from mcp_vision.buddy.watch import ScreenWatcher
+
+        watcher = ScreenWatcher(capturer.fingerprint)
     return Companion(
-        brain=brain or make_brain(settings),
-        capturer=capturer or ScreenCapturer(max_edge=settings.max_image_edge, quality=settings.jpeg_quality),
+        brain=brain or make_brain(settings, engines),
+        capturer=capturer,
         speaker=speaker if speaker is not None else make_speaker(settings),
         pointer=pointer,
         router=make_router(settings, jev),
         snapper=make_snapper(settings, jev),
         conversation=Conversation(max_turns=settings.history_turns),
+        context=make_context(settings),
+        observer=observer,
+        watcher=watcher,
+        walkthroughs=prefs.walkthroughs if prefs is not None else True,
     )
+
+
+__all__ = ["SetupError", "apply_prefs", "make_brain", "make_companion", "make_jev", "make_router",
+           "make_speaker"]

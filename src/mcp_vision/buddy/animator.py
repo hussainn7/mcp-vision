@@ -90,6 +90,11 @@ class BuddyAnimator:
         self.level = max(min(max(level, 0.0), 1.0), self.level * 0.72)
 
     @property
+    def label(self) -> str:
+        """Label of the target Blip is flying to or pointing at."""
+        return self._label if self.mode in {"fly_out", "pointing"} else ""
+
+    @property
     def busy(self) -> bool:
         return self.mode != "follow" or bool(self._queue)
 

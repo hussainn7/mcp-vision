@@ -43,6 +43,7 @@ export interface IslandState {
   latencyMs: number | null
   notch: { width: number; height: number; hasNotch: boolean }
   idleVisible: boolean
+  hovered: boolean
 }
 
 export type Mood = 'idle' | 'listening' | 'thinking' | 'speaking' | 'pointing' | 'happy' | 'error'
@@ -103,6 +104,7 @@ export const defaultIsland: IslandState = {
   latencyMs: null,
   notch: { width: 200, height: 32, hasNotch: true },
   idleVisible: true,
+  hovered: false,
 }
 
 export const defaultMascot: MascotState = { mood: 'idle', level: 0, lean: 0, look: { x: 0, y: 0 }, label: '' }
@@ -187,7 +189,7 @@ export function receive(message: Inbound) {
       })
       break
     case 'reset':
-      island.set({ ...defaultIsland, notch: island.get().notch, idleVisible: island.get().idleVisible })
+      island.set({ ...defaultIsland, notch: island.get().notch, idleVisible: island.get().idleVisible, hovered: island.get().hovered })
       break
   }
 }

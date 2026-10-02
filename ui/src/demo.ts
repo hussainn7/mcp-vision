@@ -93,7 +93,6 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
     { id: 'cursor', label: 'Cursor', via: 'Cursor plan via cursor-agent', kind: 'subscription', status: 'not-installed', install: 'curl https://cursor.com/install -fsS | bash', detail: 'Text answers; Blip describes the screen for it.' },
     { id: 'gemini', label: 'Gemini', via: 'Google account via Gemini CLI', kind: 'subscription', status: 'not-installed', install: 'npm i -g @google/gemini-cli' },
     { id: 'anthropic', label: 'Claude API', via: 'Anthropic API key', kind: 'api', status: 'missing-key', keyName: 'ANTHROPIC_API_KEY', vision: true },
-    { id: 'openrouter', label: 'OpenRouter', via: 'Any model, one key', kind: 'api', status: 'missing-key', keyName: 'OPENROUTER_API_KEY', vision: true },
   ],
   permissions: { screen: true, accessibility: true, microphone: true, speech: null },
   voice: { tts: 'elevenlabs', stt: 'assemblyai', elevenlabs: true, assemblyai: false },

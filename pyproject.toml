@@ -1,7 +1,7 @@
 [project]
 name = "mcp-vision-runtime"
-version = "0.4.0"
-description = "AI buddy next to your cursor: talk, it sees your screen, answers aloud and points. Plus an MCP computer-use runtime."
+version = "0.5.0"
+description = "Blip: an AI buddy in your MacBook's notch. Talk, it sees your screen, answers aloud and points, on your Claude, ChatGPT, Cursor or Gemini plan. Plus an MCP computer-use runtime."
 authors = [{name = "Hussain"}]
 license = "MIT"
 readme = "README.md"
@@ -29,6 +29,7 @@ dependencies = [
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Speech>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-WebKit>=10.0; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +38,7 @@ ocr = ["pytesseract>=0.3.10"]
 dev = ["pytest>=8.0.0", "ruff>=0.14,<1"]
 
 [project.scripts]
+blip = "mcp_vision.buddy.cli:buddy"
 mcp-vision = "mcp_vision.cli:cli"
 mac-agent = "mcp_vision.cli:agent_cli"
 screen-agent = "simple_agent:main"

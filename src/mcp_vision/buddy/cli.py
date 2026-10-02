@@ -1,4 +1,4 @@
-"""`mcp-vision buddy`: run the on-screen buddy, or ask it one question headlessly."""
+"""`blip` / `mcp-vision buddy`: run Blip, or ask it one question headlessly."""
 from __future__ import annotations
 
 import asyncio
@@ -11,14 +11,14 @@ import click
 @click.group(invoke_without_command=True)
 @click.pass_context
 def buddy(ctx: click.Context) -> None:
-    """Your AI buddy next to the cursor: hold Control+Option, talk, and it points at things."""
+    """Blip, your AI buddy in the notch: hold Control+Option, talk, and it points at things."""
     if ctx.invoked_subcommand is None:
         ctx.invoke(run)
 
 
 @buddy.command()
 def run() -> None:
-    """Start the macOS buddy (menu bar + cursor overlay + push-to-talk)."""
+    """Start Blip on macOS (notch island + Blip by your cursor + push-to-talk)."""
     from mcp_vision.buddy.factory import SetupError
 
     if sys.platform != "darwin":
@@ -36,24 +36,30 @@ def run() -> None:
               help="Use these images as the screens instead of capturing (repeatable).")
 @click.option("--speak/--no-speak", default=False, help="Also say the answer out loud.")
 @click.option("--json", "as_json", is_flag=True, help="Print the full turn result as JSON.")
-def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool) -> None:
-    """Ask one question about the screen and print what the buddy says and points at."""
+@click.option("--engine", default=None, help="Brain to use: claude-code, codex, cursor, gemini, or anthropic.")
+def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engine: str | None) -> None:
+    """Ask one question about the screen and print what Blip says and points at."""
     from mcp_vision.buddy.capture import ScreenCapturer
     from mcp_vision.buddy.factory import SetupError, make_companion
     from mcp_vision.buddy.settings import load_settings
     from mcp_vision.buddy.speech_out import PrintVoice, QueueSpeaker
+    from mcp_vision.buddy.store import Prefs
 
+    prefs = Prefs.load()
+    if engine:
+        prefs.engine = engine
     settings = load_settings()
     capturer = (ScreenCapturer.from_images(list(images), max_edge=settings.max_image_edge,
                                            quality=settings.jpeg_quality) if images else None)
     speaker = None if speak else QueueSpeaker(PrintVoice(write=lambda text: None))
     try:
-        companion = make_companion(settings, capturer=capturer, speaker=speaker)
+        companion = make_companion(settings, capturer=capturer, speaker=speaker, prefs=prefs)
     except SetupError as exc:
         raise click.ClickException(str(exc)) from exc
     result = asyncio.run(companion.respond(question))
     if as_json:
         click.echo(json.dumps({
+            "engine": getattr(companion.brain, "label", None),
             "state": result.state, "error": result.error, "spoken": result.spoken,
             "route": result.route.__dict__, "timings_ms": result.timings,
             "targets": [{**target.__dict__, "element": target.element.__dict__ if target.element else None}
@@ -72,7 +78,7 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool) -> N
 
 
 SETUP_KEYS = (
-    ("ANTHROPIC_API_KEY", "Anthropic API key (required; console.anthropic.com)"),
+    ("ANTHROPIC_API_KEY", "Anthropic API key (skip it if you use Claude Code, Codex, Cursor, or Gemini)"),
     ("TYPESAFE_API_KEY", "TypeSafe Jev key for fast routing (optional; console.typesafe.ai)"),
     ("ELEVENLABS_API_KEY", "ElevenLabs key for a natural voice (optional)"),
     ("ASSEMBLYAI_API_KEY", "AssemblyAI key for streaming speech recognition (optional)"),
@@ -136,10 +142,22 @@ def doctor(ping: bool) -> None:
         mark = {True: "ok", False: "FAIL", None: "--"}[good]
         click.echo(f"  [{mark:>4}] {name}: {detail}")
 
-    has_claude = bool(settings.anthropic_api_key)
-    ok &= has_claude
-    line(has_claude, "brain", f"{settings.model} effort={settings.effort}" if has_claude
-         else "ANTHROPIC_API_KEY missing")
+    from mcp_vision.buddy.engines import SPECS, choose_engine, probe
+    from mcp_vision.buddy.factory import apply_prefs
+    from mcp_vision.buddy.store import Prefs
+
+    settings = apply_prefs(settings, Prefs.load())
+    statuses = [probe(spec, settings) for spec in SPECS]
+    active = choose_engine(settings, statuses)
+    ok &= active is not None
+    for status in statuses:
+        good = True if status.status == "ready" else None if status.status == "unknown" else False
+        if status.status in {"not-installed", "missing-key"}:
+            good = None
+        chosen = " <- Blip thinks with this" if active is not None and status.spec.id == active.spec.id else ""
+        line(good, f"brain {status.spec.id}", f"{status.status}: {status.detail or status.spec.via}{chosen}")
+    if active is None:
+        line(False, "brain", "nothing ready: sign in to Claude Code / Codex / Cursor / Gemini, or add an API key")
     jev = make_jev(settings)
     if jev is None:
         line(None, "jev router", "TYPESAFE_API_KEY not set; using rule routing")

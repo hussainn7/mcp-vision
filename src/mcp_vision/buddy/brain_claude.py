@@ -26,6 +26,9 @@ class ClaudeBrain:
     """
 
     name = "claude"
+    label = "Claude API"
+    kind = "api"
+    vision = True
 
     def __init__(self, *, api_key: str | None = None, model: str = DEFAULT_MODEL,
                  effort: str = DEFAULT_EFFORT, max_tokens: int = 16000, client: Any = None,

@@ -38,7 +38,9 @@ function Shoulder({ side, size }: { side: 'left' | 'right'; size: number }) {
 
 export function Island() {
   const state = useStore(island)
-  const [hover, setHover] = useState(false)
+  const [pointerHover, setHover] = useState(false)
+  // The native host tracks hover itself (WebKit tracking areas are flaky in a never-key panel).
+  const hover = pointerHover || state.hovered
   const [lingerOver, setLingerOver] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const [bodyHeight, setBodyHeight] = useState(0)

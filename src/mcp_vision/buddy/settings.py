@@ -9,8 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 def _env_files() -> tuple[Path, ...]:
     """Existing dotenv files, lowest priority first: checkout, user config, current directory."""
-    candidates = (Path(__file__).resolve().parents[3] / ".env",
-                  Path.home() / ".config" / "mcp-vision" / ".env", Path.cwd() / ".env")
+    from mcp_vision.buddy.store import config_dir
+
+    candidates = (Path(__file__).resolve().parents[3] / ".env", config_dir() / ".env", Path.cwd() / ".env")
     seen, found = set(), []
     for path in candidates:
         if path.is_file() and path.resolve() not in seen:
@@ -22,7 +23,9 @@ def _env_files() -> tuple[Path, ...]:
 class BuddySettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BUDDY_", extra="ignore", populate_by_name=True)
 
-    # brain
+    # brain: "" picks the best ready engine (subscription CLIs first, then API keys)
+    engine: str = ""                    # claude-code | codex | cursor | gemini | anthropic
+    cli_model: str = ""                 # optional --model for the subscription CLI (e.g. sonnet, gpt-5-codex)
     anthropic_api_key: str | None = Field(default=None, validation_alias=AliasChoices(
         "ANTHROPIC_API_KEY", "BUDDY_ANTHROPIC_API_KEY"))
     model: str = "claude-opus-5-5"

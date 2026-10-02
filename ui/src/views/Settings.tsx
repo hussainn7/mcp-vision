@@ -292,7 +292,6 @@ const ENGINE_GLYPH: Record<string, { bg: string; text: string; glyph: string }> 
   cursor: { bg: 'bg-[#0f0f12] hairline', text: 'text-white', glyph: '▲' },
   gemini: { bg: 'bg-gradient-to-br from-[#4f7cff] to-[#b46bff]', text: 'text-white', glyph: '✦' },
   anthropic: { bg: 'bg-[#e8dccf]', text: 'text-[#1f1b16]', glyph: 'A' },
-  openrouter: { bg: 'bg-gradient-to-br from-[#6467f2] to-[#3b3fd1]', text: 'text-white', glyph: '⇄' },
 }
 
 function EngineCard({ engine }: { engine: Engine }) {
