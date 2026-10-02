@@ -441,7 +441,9 @@ def jev() -> None:
     if not s["configured"]:
         click.echo("")
         click.echo("  Add TYPESAFE_API_KEY=<key> to your .env to enable Jev.")
-        click.echo("  Keys at https://jevapi.dev — $0.042/1M tokens, output free.")
+        click.echo("  Keys at https://console.typesafe.ai — $0.042/1M input tokens, output free.")
+    else:
+        click.echo("  The buddy uses this key too; verify it with: mcp-vision buddy doctor --ping")
     sys.exit(0 if s["configured"] else 1)
 
 

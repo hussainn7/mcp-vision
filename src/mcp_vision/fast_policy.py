@@ -15,47 +15,62 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mcp_vision.core.models import Policy
 from mcp_vision.state import ActionCandidate, Operation, UIState
 
 
+class JevHTTPError(http.client.HTTPException):
+    """An HTTP or connection failure talking to Jev; ``status`` is None for connection errors."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 class _JevHTTPPool:
-    """Reuse HTTPS connections to the Jev endpoint instead of reconnecting every call."""
+    """Reuse HTTPS connections to the Jev endpoint instead of reconnecting every call.
+
+    One keep-alive connection per host; requests on it are serialized because
+    ``http.client`` connections are not thread-safe. A connection the server
+    dropped while idle (``RemoteDisconnected``, ``BadStatusLine``, resets) is
+    replaced and the request retried once.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._conns: dict[str, http.client.HTTPSConnection] = {}
+        self._host_locks: dict[str, threading.Lock] = {}
 
-    def post(self, url: str, body: bytes, auth: str, timeout: int = 25) -> bytes:
+    def post(self, url: str, body: bytes, auth: str, timeout: float = 5) -> bytes:
         parsed = urllib.parse.urlparse(url)
         host = parsed.netloc
         path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
         headers = {"Authorization": auth, "Content-Type": "application/json",
                    "Connection": "keep-alive"}
+        with self._lock:
+            host_lock = self._host_locks.setdefault(host, threading.Lock())
         for attempt in range(2):
-            try:
-                conn = self._get(host, timeout)
-                conn.request("POST", path, body=body, headers=headers)
-                resp = conn.getresponse()
-                data = resp.read()
-                if resp.status >= 400:
-                    raise http.client.HTTPException(
-                        f"HTTP {resp.status} from Jev: {data[:256].decode(errors='replace')}")
-                return data
-            except http.client.HTTPException:
-                raise
-            except Exception:
-                with self._lock:
-                    self._conns.pop(host, None)
-                if attempt == 1:
-                    raise
+            with host_lock:
+                try:
+                    conn = self._get(host, timeout)
+                    conn.request("POST", path, body=body, headers=headers)
+                    resp = conn.getresponse()
+                    status, data = resp.status, resp.read()
+                except (OSError, http.client.HTTPException) as exc:
+                    with self._lock:
+                        self._conns.pop(host, None)
+                    if attempt == 1:
+                        raise JevHTTPError(f"connection to Jev failed: {type(exc).__name__}") from exc
+                    continue
+            if status >= 400:
+                raise JevHTTPError(f"HTTP {status} from Jev: {data[:256].decode(errors='replace')}", status)
+            return data
+        raise JevHTTPError("connection to Jev failed")
 
-        raise RuntimeError("unreachable")
-
-    def _get(self, host: str, timeout: int) -> http.client.HTTPSConnection:
+    def _get(self, host: str, timeout: float) -> http.client.HTTPSConnection:
         with self._lock:
             conn = self._conns.get(host)
             if conn is None:
@@ -90,10 +105,17 @@ class PolicyDecision(BaseModel):
 class _JevSettings(BaseSettings):
     """Small, provider-local config. Pydantic reads .env without exporting secrets."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
     typesafe_api_key: str | None = None
-    typesafe_endpoint: str = "https://api.typesafe.ai/v1/systemone"
-    typesafe_model: str = "jev-latest"
+    # TypeSafe's SDK reads TYPESAFE_BASE_URL / TYPESAFE_DEFAULT_MODEL; honor the same names.
+    typesafe_base_url: str = "https://api.typesafe.ai"
+    typesafe_endpoint: str | None = None
+    typesafe_model: str = Field(default="jev-latest", validation_alias=AliasChoices(
+        "TYPESAFE_DEFAULT_MODEL", "TYPESAFE_MODEL"))
+
+    @property
+    def endpoint(self) -> str:
+        return self.typesafe_endpoint or self.typesafe_base_url.rstrip("/") + "/v1/systemone"
 
 
 def _jev_settings(load_env: bool = True) -> _JevSettings:
@@ -197,7 +219,7 @@ class JevPolicy:
                  model: str | None = None, load_env: bool = True):
         settings = _jev_settings(load_env)
         self.api_key = api_key or settings.typesafe_api_key
-        self.endpoint = endpoint or settings.typesafe_endpoint
+        self.endpoint = endpoint or settings.endpoint
         self.model = model or settings.typesafe_model
 
     async def choose(self, goal: str, state: UIState,
@@ -277,8 +299,8 @@ class JevPolicy:
             )
             return validate_decision(decision, state, safe)
         except Exception as exc:
-            failure = (f"HTTP {exc.status}" if isinstance(exc, http.client.HTTPException)
-                       else type(exc).__name__)
+            status = getattr(exc, "status", None)
+            failure = f"HTTP {status}" if isinstance(status, int) else type(exc).__name__
             return PolicyDecision(state_id=state.state_id, disposition="replan", needs_system2=True,
                                   reason=f"Jev unavailable or invalid: {failure}", provider="jev",
                                   latency_ms=(time.perf_counter() - started) * 1000,

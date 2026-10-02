@@ -35,8 +35,9 @@ PROVIDERS = {
     "openai": Provider("openai", ProviderCapabilities(vision=True), "OPENAI_API_KEY"),
     "gemini": Provider("gemini", ProviderCapabilities(vision=True), "GEMINI_API_KEY"),
     "nvidia": Provider("nvidia", ProviderCapabilities(vision=True), "NVIDIA_API_KEY"),
-    # Optional bounded selector. It is never a required default.
-    "jev": Provider("jev", ProviderCapabilities(tools=False, vision=False), "JEV_API_KEY"),
+    # Optional bounded selector (TypeSafe Jev): typed choices only, no text output,
+    # no images, no continuation state. It is never a required default.
+    "jev": Provider("jev", ProviderCapabilities(tools=False, continuation=False, vision=False), "TYPESAFE_API_KEY"),
 }
 
 

@@ -117,6 +117,54 @@ def test_pool_thread_safe():
     assert len(results) == 8
 
 
+def test_pool_http_error_carries_status():
+    from mcp_vision.fast_policy import JevHTTPError
+
+    pool = _pool_with_conn(_FakeConn(429, b'{"detail": "slow down"}'))
+    with pytest.raises(JevHTTPError) as caught:
+        pool.post("https://api.typesafe.ai/v1/systemone", b"{}", auth="Bearer k")
+    assert caught.value.status == 429
+
+
+def test_pool_retries_a_dropped_keep_alive_connection():
+    """RemoteDisconnected is an HTTPException subclass; it must reconnect, not propagate."""
+
+    class Dropped(_FakeConn):
+        def getresponse(self):
+            raise http.client.RemoteDisconnected("server closed idle connection")
+
+    fresh = _FakeConn(200, b'{"answers": {}}')
+    pool = _pool_with_conn(Dropped())
+    with patch.object(_JevHTTPPool, "_get", side_effect=[Dropped(), fresh]):
+        assert pool.post("https://api.typesafe.ai/v1/systemone", b"{}", auth="Bearer k") == b'{"answers": {}}'
+
+
+def test_jev_policy_survives_http_errors_through_the_real_pool(monkeypatch):
+    """Regression: an HTTP error used to raise AttributeError (exc.status) out of choose()."""
+    import asyncio
+
+    from mcp_vision import fast_policy
+    from mcp_vision.state import compile_state
+    from tests.test_state_runtime import snapshot
+
+    for failing in (_FakeConn(429, b"rate limited"), _FakeConn(500, b"boom")):
+        monkeypatch.setattr(fast_policy, "_jev_pool", _pool_with_conn(failing))
+        state = compile_state(snapshot("s1"), epoch=1)
+        decision = asyncio.run(fast_policy.JevPolicy(api_key="k", load_env=False).choose("press Continue", state))
+        assert decision.candidate_id is None and decision.needs_system2
+        assert decision.provider_call == "failed" and decision.reason.endswith(f"HTTP {failing.status}")
+
+
+def test_jev_settings_honor_typesafe_sdk_variables(monkeypatch):
+    from mcp_vision.fast_policy import _jev_settings
+
+    monkeypatch.setenv("TYPESAFE_BASE_URL", "https://proxy.example/")
+    monkeypatch.setenv("TYPESAFE_DEFAULT_MODEL", "jev-1.13.0")
+    settings = _jev_settings(load_env=False)
+    assert settings.endpoint == "https://proxy.example/v1/systemone"
+    assert settings.typesafe_model == "jev-1.13.0"
+
+
 # ---------------------------------------------------------------------------
 # jev_status tests
 # ---------------------------------------------------------------------------
