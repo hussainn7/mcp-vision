@@ -48,9 +48,9 @@ if ! command -v mcp-vision >/dev/null 2>&1; then
   echo "Add to your shell config, then reopen the terminal:"
   echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
-echo "Meet Blip, your AI buddy in the notch:"
-echo "  blip                       # opens Settings on first run; pick the Claude / ChatGPT / Cursor / Gemini plan you have"
-echo "  blip doctor                # checks brains, keys and permissions"
+echo "Meet Plip, your AI buddy in the notch:"
+echo "  plip                       # opens Settings on first run; pick the Claude / ChatGPT / Cursor / Gemini plan you have"
+echo "  plip doctor                # checks brains, keys and permissions"
 echo "Then hold Control+Option and talk."
 echo
 echo "MCP server for Cursor / Claude: restart them so MCP picks it up, then try"

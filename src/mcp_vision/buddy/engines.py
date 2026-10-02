@@ -1,4 +1,4 @@
-"""Brains Blip can think with.
+"""Brains Plip can think with.
 
 Subscription engines drive a CLI the user is already signed in to (Claude
 Code with a Claude Pro/Max plan, Codex with ChatGPT Plus/Pro, Cursor's
@@ -6,7 +6,7 @@ agent, Gemini CLI with a Google account), so their plan pays for the
 reasoning and no API key is needed. API engines use a key instead.
 
 Each CLI runs once per turn in an empty temporary directory with its tools
-turned off: Blip only wants words and ``[POINT]`` tags back, never edits.
+turned off: Plip only wants words and ``[POINT]`` tags back, never edits.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class EngineError(RuntimeError):
 class EngineSpec:
     id: str
     label: str                      # what the user calls it: "Claude", "ChatGPT"
-    via: str                        # how Blip reaches it
+    via: str                        # how Plip reaches it
     kind: str                       # "subscription" | "api"
     vision: bool                    # accepts screenshots
     binaries: tuple[str, ...] = ()
@@ -63,7 +63,7 @@ SPECS: tuple[EngineSpec, ...] = (
     EngineSpec("cursor", "Cursor", "Your Cursor plan via Cursor CLI", "subscription", False,
                binaries=("cursor-agent", "agent"), login="agent login",
                install="curl https://cursor.com/install -fsS | bash",
-               blurb="Text only: Blip reads the screen's controls out to it."),
+               blurb="Text only: Plip reads the screen's controls out to it."),
     EngineSpec("gemini", "Gemini", "Google account via Gemini CLI", "subscription", True,
                binaries=("gemini",), login="gemini", install="npm i -g @google/gemini-cli",
                blurb="Sees your screenshots on your Google account's free or paid tier."),
@@ -357,7 +357,7 @@ def transcript_prompt(turns: list[Turn], image_paths: list[str] | None = None,
     if system:
         parts.append(f"<instructions>\n{system}\n</instructions>")
     if history:
-        lines = [f"{'user' if turn.role == 'user' else 'you (blip)'}: {turn.text}" for turn in history]
+        lines = [f"{'user' if turn.role == 'user' else 'you (plip)'}: {turn.text}" for turn in history]
         parts.append("<earlier_conversation>\n" + "\n".join(lines) + "\n</earlier_conversation>")
     if current.images and image_paths:
         labels = [f"{path}: {screen_label(shot, len(current.images))}"
@@ -453,7 +453,7 @@ class CLIBrain:
         return self.label
 
     async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False) -> AsyncIterator[str]:
-        workdir = tempfile.mkdtemp(prefix="blip-")
+        workdir = tempfile.mkdtemp(prefix="plip-")
         process = None
         errors: asyncio.Future | None = None
         try:
@@ -684,7 +684,7 @@ class GeminiBrain(CLIBrain):
 
     def invocation(self, *, system, turns, workdir, detailed):
         images = write_images(turns[-1], workdir)
-        system_file = os.path.join(workdir, "blip-system.md")
+        system_file = os.path.join(workdir, "plip-system.md")
         with open(system_file, "w", encoding="utf-8") as handle:
             handle.write(system)
         prompt = transcript_prompt(turns)

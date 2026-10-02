@@ -1,8 +1,8 @@
 /**
  * Two-way bridge between the UI and the Python engine.
  *
- * Native (macOS WKWebView): Python calls `window.__blip(message)`; the UI
- * calls `window.webkit.messageHandlers.blip.postMessage(command)`.
+ * Native (macOS WKWebView): Python calls `window.__plip(message)`; the UI
+ * calls `window.webkit.messageHandlers.plip.postMessage(command)`.
  * Browser preview: commands go to an in-page mock so every surface can be
  * developed, screenshotted, and demoed without a Mac.
  */
@@ -196,17 +196,17 @@ export function receive(message: Inbound) {
 
 declare global {
   interface Window {
-    __blip?: (message: Inbound | Inbound[]) => void
-    __BLIP_SURFACE__?: string
-    webkit?: { messageHandlers?: { blip?: { postMessage: (body: unknown) => void } } }
+    __plip?: (message: Inbound | Inbound[]) => void
+    __PLIP_SURFACE__?: string
+    webkit?: { messageHandlers?: { plip?: { postMessage: (body: unknown) => void } } }
   }
 }
 
-window.__blip = (message) => {
+window.__plip = (message) => {
   for (const item of Array.isArray(message) ? message : [message]) receive(item)
 }
 
-export const isNative = () => Boolean(window.webkit?.messageHandlers?.blip)
+export const isNative = () => Boolean(window.webkit?.messageHandlers?.plip)
 
 type Command = { cmd: string; [key: string]: unknown }
 const mockHandlers: Array<(command: Command) => void> = []
@@ -217,7 +217,7 @@ export function onMockCommand(handler: (command: Command) => void) {
 
 export function send(cmd: string, payload: Record<string, unknown> = {}) {
   const body = { cmd, ...payload }
-  const handler = window.webkit?.messageHandlers?.blip
+  const handler = window.webkit?.messageHandlers?.plip
   // A JSON string crosses the WebKit bridge as a plain NSString: no dictionary conversion surprises.
   if (handler) handler.postMessage(JSON.stringify(body))
   else mockHandlers.forEach((mock) => mock(body))

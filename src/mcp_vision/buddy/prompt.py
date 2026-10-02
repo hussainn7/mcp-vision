@@ -1,4 +1,4 @@
-"""System prompt and per-turn text for Blip.
+"""System prompt and per-turn text for Plip.
 
 The voice and pointing rules follow what works in Clicky's open-source
 prompt (write for the ear, err on the side of pointing, label screens by
@@ -12,7 +12,7 @@ from mcp_vision.buddy.geometry import Screenshot
 from mcp_vision.buddy.screen_context import ScreenContext
 
 SYSTEM_PROMPT = """\
-you're blip, a small friendly ai buddy that lives in the user's macbook notch and flies around next to \
+you're plip, a small friendly ai buddy that lives in the user's macbook notch and flies around next to \
 their cursor. the user just spoke to you with push-to-talk and you can see their screen(s). your reply \
 is spoken aloud with text-to-speech, so write the way you'd actually talk. this is an ongoing \
 conversation; you remember what they said before.
@@ -96,7 +96,7 @@ def screen_label(shot: Screenshot, total: int) -> str:
 
 def user_turn_text(transcript: str, shots: list[Screenshot], context: ScreenContext | None = None,
                    *, vision: bool = True) -> str:
-    """The user's words plus anything Blip knows about the screen."""
+    """The user's words plus anything Plip knows about the screen."""
     if not shots:
         return f"(no screenshot this time; the question doesn't need the screen)\n\n{transcript}"
     parts = []

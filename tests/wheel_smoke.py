@@ -17,7 +17,7 @@ async def main():
     assert files("mcp_vision").joinpath("browser.py").is_file()
     from mcp_vision.buddy.engines import SPECS
     from mcp_vision.buddy.web_host import bundle_html
-    assert "__blip" in bundle_html() and len(bundle_html()) > 100_000      # Blip's UI ships in the wheel
+    assert "__plip" in bundle_html() and len(bundle_html()) > 100_000      # Plip's UI ships in the wheel
     assert {spec.id for spec in SPECS} >= {"claude-code", "codex", "cursor", "gemini", "anthropic"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "mcp_vision.cli", "serve"])
     async with stdio_client(params) as streams:

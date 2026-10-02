@@ -35,14 +35,14 @@ export function Settings() {
 
   return (
     <div className="relative flex h-full overflow-hidden bg-panel text-white noise">
-      <div className="pointer-events-none absolute -left-40 -top-56 size-[520px] rounded-full bg-blip-500/20 blur-[120px] animate-aurora" />
+      <div className="pointer-events-none absolute -left-40 -top-56 size-[520px] rounded-full bg-plip-500/20 blur-[120px] animate-aurora" />
       <div className="pointer-events-none absolute -right-40 top-40 size-[420px] rounded-full bg-violet-glow/15 blur-[120px] animate-aurora [animation-delay:-6s]" />
 
       <aside className="relative z-10 flex w-[208px] shrink-0 flex-col border-r border-white/[0.06] bg-black/20 px-3 py-4 backdrop-blur-xl">
         <div className="mb-5 flex items-center gap-2.5 px-2">
           <Mascot size={30} mood="happy" glow={false} />
           <div>
-            <div className="text-[15px] font-semibold tracking-tight">Blip</div>
+            <div className="text-[15px] font-semibold tracking-tight">Plip</div>
             <div className="font-mono text-[10.5px] text-white/35">v{state.version}</div>
           </div>
         </div>
@@ -65,7 +65,7 @@ export function Settings() {
           ))}
         </nav>
         <div className="mt-auto rounded-xl bg-white/[0.03] p-3 hairline">
-          <div className="mb-2 text-[11px] font-medium text-white/45">Talk to Blip</div>
+          <div className="mb-2 text-[11px] font-medium text-white/45">Talk to Plip</div>
           <div className="flex items-center gap-1.5">
             <Keycap>⌃</Keycap>
             <span className="text-white/30">+</span>
@@ -102,7 +102,7 @@ export function Settings() {
 function Header({ title, subtitle, eyebrow }: { title: string; subtitle: string; eyebrow?: string }) {
   return (
     <div className="mb-7">
-      {eyebrow && <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-blip-300">{eyebrow}</div>}
+      {eyebrow && <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-plip-300">{eyebrow}</div>}
       <h1 className="text-[26px] font-semibold tracking-[-0.03em]">{title}</h1>
       <p className="mt-1.5 max-w-[520px] text-[14px] leading-relaxed text-white/50">{subtitle}</p>
     </div>
@@ -128,7 +128,7 @@ function Button({ children, onClick, variant = 'primary', className, disabled }:
       className={cn(
         'inline-flex items-center justify-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold tracking-tight transition active:scale-[0.97] disabled:opacity-40',
         variant === 'primary' &&
-          'bg-gradient-to-b from-blip-400 to-blip-600 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.3),0_8px_20px_-8px_rgba(61,107,255,0.9)] hover:brightness-110',
+          'bg-gradient-to-b from-plip-400 to-plip-600 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.3),0_8px_20px_-8px_rgba(61,107,255,0.9)] hover:brightness-110',
         variant === 'ghost' && 'bg-white/[0.07] text-white/85 hairline hover:bg-white/[0.11]',
         variant === 'quiet' && 'text-white/55 hover:text-white',
         className,
@@ -219,7 +219,7 @@ function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) => void }
   const engine = state.engines.find((item) => item.selected)
   const brainReady = engine?.status === 'ready'
   const steps = [
-    { label: 'Let Blip see and hear', done: permsReady, tab: 'permissions' as Tab, detail: 'Screen, Accessibility, Mic' },
+    { label: 'Let Plip see and hear', done: permsReady, tab: 'permissions' as Tab, detail: 'Screen, Accessibility, Mic' },
     { label: 'Pick a brain', done: brainReady, tab: 'brain' as Tab, detail: engine ? `${engine.label} · ${engine.via}` : 'Use your Claude, ChatGPT or Cursor plan' },
     { label: 'Give it a voice', done: state.voice.tts !== 'off', tab: 'voice' as Tab, detail: state.voice.elevenlabs ? 'ElevenLabs' : 'macOS voice' },
   ]
@@ -229,16 +229,16 @@ function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) => void }
     <div>
       <div className="relative mb-8 flex items-center gap-7">
         <div className="relative">
-          <div className="absolute inset-0 -z-10 scale-150 rounded-full bg-blip-500/30 blur-3xl" />
+          <div className="absolute inset-0 -z-10 scale-150 rounded-full bg-plip-500/30 blur-3xl" />
           <Mascot size={118} mood={progress === 1 ? 'happy' : 'idle'} />
         </div>
         <div>
-          <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-blip-300 hairline">
+          <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-plip-300 hairline">
             <Sparkles className="size-3" /> Lives in your notch
           </div>
-          <h1 className="text-gradient text-[38px] font-semibold leading-[1.05] tracking-[-0.04em]">Meet Blip.</h1>
+          <h1 className="text-gradient text-[38px] font-semibold leading-[1.05] tracking-[-0.04em]">Meet Plip.</h1>
           <p className="mt-2 max-w-[400px] text-[14.5px] leading-relaxed text-white/55">
-            Your AI buddy for the Mac. Hold <span className="text-white/80">Control + Option</span>, ask anything out loud, and Blip
+            Your AI buddy for the Mac. Hold <span className="text-white/80">Control + Option</span>, ask anything out loud, and Plip
             looks at your screen, talks you through it, and flies over to exactly where you need to click.
           </p>
         </div>
@@ -250,7 +250,7 @@ function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) => void }
           <div className="font-mono text-[11px] text-white/40">{Math.round(progress * 100)}%</div>
         </div>
         <div className="mb-4 h-1 overflow-hidden rounded-full bg-white/[0.06]">
-          <motion.div className="h-full rounded-full bg-gradient-to-r from-blip-400 via-violet-glow to-rose-glow" animate={{ width: `${progress * 100}%` }} transition={{ type: 'spring', stiffness: 120, damping: 20 }} />
+          <motion.div className="h-full rounded-full bg-gradient-to-r from-plip-400 via-violet-glow to-rose-glow" animate={{ width: `${progress * 100}%` }} transition={{ type: 'spring', stiffness: 120, damping: 20 }} />
         </div>
         <div className="space-y-1">
           {steps.map((step, index) => (
@@ -276,7 +276,7 @@ function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) => void }
           { icon: Zap, title: 'Uses your plan', text: 'Runs on your Claude, ChatGPT or Cursor subscription. No new bill.' },
         ].map(({ icon: Icon, title, text }) => (
           <Card key={title} className="p-4">
-            <Icon className="mb-3 size-4.5 text-blip-300" />
+            <Icon className="mb-3 size-4.5 text-plip-300" />
             <div className="text-[13.5px] font-semibold tracking-tight">{title}</div>
             <div className="mt-1 text-[12.5px] leading-relaxed text-white/45">{text}</div>
           </Card>
@@ -359,7 +359,7 @@ function BrainTab({ state }: { state: SettingsState }) {
   const keys = state.engines.filter((engine) => engine.kind !== 'subscription')
   return (
     <div>
-      <Header eyebrow="Brain" title="Use the AI you already pay for" subtitle="Blip thinks with the Claude, ChatGPT, Cursor or Gemini plan you already have, through their official command-line apps. No extra bill. Or paste an API key. Switch anytime." />
+      <Header eyebrow="Brain" title="Use the AI you already pay for" subtitle="Plip thinks with the Claude, ChatGPT, Cursor or Gemini plan you already have, through their official command-line apps. No extra bill. Or paste an API key. Switch anytime." />
       <div className="mb-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-white/35">Your subscriptions</div>
       <div className="mb-7 grid grid-cols-2 gap-3">
         {plans.map((engine) => <EngineCard key={engine.id} engine={engine} />)}
@@ -371,7 +371,7 @@ function BrainTab({ state }: { state: SettingsState }) {
 
       <div className="grid grid-cols-2 gap-3">
         <Card>
-          <div className="mb-1 flex items-center gap-2 text-[13.5px] font-semibold"><Gauge className="size-4 text-blip-300" /> Reasoning depth</div>
+          <div className="mb-1 flex items-center gap-2 text-[13.5px] font-semibold"><Gauge className="size-4 text-plip-300" /> Reasoning depth</div>
           <div className="mb-3 text-[12px] text-white/40">Fast answers, or deeper thinking for hard questions.</div>
           <Segmented
             value={state.depth}
@@ -391,7 +391,7 @@ function BrainTab({ state }: { state: SettingsState }) {
             <div className="flex items-center gap-2 text-[13.5px] font-semibold"><Zap className="size-4 text-amber-300" /> Jev fast router</div>
             {state.jev.configured ? <Pill tone="good">{state.jev.latencyMs ? `${state.jev.latencyMs} ms` : 'On'}</Pill> : <Pill tone="muted">Optional</Pill>}
           </div>
-          <div className="mb-3 text-[12px] leading-relaxed text-white/40">A ~100 ms System-1 model decides if Blip needs your screen, which monitor, and which control to snap to.</div>
+          <div className="mb-3 text-[12px] leading-relaxed text-white/40">A ~100 ms System-1 model decides if Plip needs your screen, which monitor, and which control to snap to.</div>
           <KeyField name="TYPESAFE_API_KEY" placeholder="TypeSafe key (console.typesafe.ai)" saved={state.jev.configured} />
         </Card>
       </div>
@@ -405,7 +405,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boo
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={cn('relative h-6 w-10 shrink-0 rounded-full transition', checked ? 'bg-blip-500' : 'bg-white/[0.12]')}
+      className={cn('relative h-6 w-10 shrink-0 rounded-full transition', checked ? 'bg-plip-500' : 'bg-white/[0.12]')}
     >
       <motion.span layout transition={{ type: 'spring', stiffness: 600, damping: 32 }} className={cn('absolute top-0.5 size-5 rounded-full bg-white shadow', checked ? 'right-0.5' : 'left-0.5')} />
     </button>
@@ -415,7 +415,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boo
 function VoiceTab({ state }: { state: SettingsState }) {
   return (
     <div>
-      <Header eyebrow="Voice" title="How Blip sounds and listens" subtitle="Works out of the box with macOS voices and on-device recognition. Add keys for a more natural voice and faster streaming transcription." />
+      <Header eyebrow="Voice" title="How Plip sounds and listens" subtitle="Works out of the box with macOS voices and on-device recognition. Add keys for a more natural voice and faster streaming transcription." />
       <div className="space-y-3">
         <Card>
           <div className="mb-3 flex items-center justify-between">
@@ -455,14 +455,14 @@ function VoiceTab({ state }: { state: SettingsState }) {
 
 function PermissionsTab({ state }: { state: SettingsState }) {
   const rows = [
-    { key: 'screen', icon: MonitorUp, title: 'Screen Recording', why: 'So Blip can see what you are asking about.' },
+    { key: 'screen', icon: MonitorUp, title: 'Screen Recording', why: 'So Plip can see what you are asking about.' },
     { key: 'accessibility', icon: Hand, title: 'Accessibility', why: 'For the Control + Option shortcut and pixel-perfect pointing.' },
     { key: 'microphone', icon: Mic, title: 'Microphone', why: 'Only while you hold the shortcut. Audio is never saved.' },
     { key: 'speech', icon: MessageSquareText, title: 'Speech Recognition', why: 'On-device transcription when AssemblyAI is off.' },
   ] as const
   return (
     <div>
-      <Header eyebrow="Privacy first" title="Permissions" subtitle="macOS asks once for each. Blip only looks when you ask, and never sends anything you did not trigger." />
+      <Header eyebrow="Privacy first" title="Permissions" subtitle="macOS asks once for each. Plip only looks when you ask, and never sends anything you did not trigger." />
       <Card className="divide-y divide-white/[0.05] p-0">
         {rows.map(({ key, icon: Icon, title, why }) => {
           const value = state.permissions[key]
@@ -496,7 +496,7 @@ function HistoryTab({ state }: { state: SettingsState }) {
         <div>
           <Mascot size={84} mood="idle" className="mx-auto mb-4" />
           <div className="text-[15px] font-semibold">Nothing yet</div>
-          <div className="mt-1 text-[13px] text-white/40">Hold Control + Option and ask Blip something.</div>
+          <div className="mt-1 text-[13px] text-white/40">Hold Control + Option and ask Plip something.</div>
         </div>
       </div>
     )
@@ -526,14 +526,14 @@ function AboutTab({ state }: { state: SettingsState }) {
     <div className="grid h-[460px] place-items-center text-center">
       <div>
         <Mascot size={96} mood="happy" className="mx-auto mb-5" />
-        <div className="text-gradient text-[28px] font-semibold tracking-[-0.03em]">Blip</div>
+        <div className="text-gradient text-[28px] font-semibold tracking-[-0.03em]">Plip</div>
         <div className="mt-1 font-mono text-[12px] text-white/35">version {state.version}</div>
         <p className="mx-auto mt-4 max-w-[360px] text-[13px] leading-relaxed text-white/45">
           An open-source AI buddy for the Mac. Built on MCP-Vision, Claude, and TypeSafe Jev.
         </p>
         <div className="mt-5 flex justify-center gap-2">
           <Button variant="ghost" onClick={() => send('open-url', { url: 'https://github.com/hussainn7/mcp-vision' })}>GitHub</Button>
-          <Button variant="ghost" onClick={() => send('quit')}>Quit Blip</Button>
+          <Button variant="ghost" onClick={() => send('quit')}>Quit Plip</Button>
         </div>
       </div>
     </div>

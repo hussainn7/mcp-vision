@@ -23,7 +23,7 @@ export interface MascotProps {
 }
 
 /**
- * Blip: a soft electric-blue blob with an antenna. Everything is vector so it
+ * Plip: a soft electric-blue blob with an antenna. Everything is vector so it
  * stays crisp from the 18 px notch glyph to the 160 px onboarding hero.
  */
 export function Mascot({ mood = 'idle', level = 0, look = { x: 0, y: 0 }, lean = 0, size = 64, className, glow = true }: MascotProps) {
@@ -63,7 +63,7 @@ export function Mascot({ mood = 'idle', level = 0, look = { x: 0, y: 0 }, lean =
           overflow: 'visible',
           filter: glow ? `drop-shadow(0 ${size * 0.06}px ${size * 0.16}px rgba(91,140,255,0.55))` : undefined,
         }}
-        aria-label={`Blip is ${mood}`}
+        aria-label={`Plip is ${mood}`}
         role="img"
       >
         <defs>

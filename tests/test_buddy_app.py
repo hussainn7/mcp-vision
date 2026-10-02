@@ -1,4 +1,4 @@
-"""Blip's app layer without AppKit: presenter, settings backend, prefs, web bridge, island/mascot math."""
+"""Plip's app layer without AppKit: presenter, settings backend, prefs, web bridge, island/mascot math."""
 from __future__ import annotations
 
 import json
@@ -283,8 +283,8 @@ def test_bridge_parses_commands_and_escapes_scripts():
     assert parse_command("[1, 2]") is None and parse_command("nope") is None
     assert parse_command('{"cmd": 3}') is None
     script = script_for([{"type": "append", "field": "answer", "text": "</script> \"quoted\" ✓"}])
-    assert script.startswith("window.__blip && window.__blip([")
-    assert json.loads(script.split("window.__blip(", 1)[1][:-1])[0]["text"] == "</script> \"quoted\" ✓"
+    assert script.startswith("window.__plip && window.__plip([")
+    assert json.loads(script.split("window.__plip(", 1)[1][:-1])[0]["text"] == "</script> \"quoted\" ✓"
 
 
 class FakeScreen:

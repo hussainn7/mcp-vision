@@ -43,7 +43,7 @@ class MacAXContext:
         try:
             err, pid = AX.AXUIElementGetPid(app, None)
             if err == 0 and int(pid) == os.getpid():
-                return ScreenContext()        # never describe Blip's own windows
+                return ScreenContext()        # never describe Plip's own windows
         except Exception:
             pass
         context = ScreenContext(app=str(_copy(AX, app, "AXTitle") or ""))

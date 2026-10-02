@@ -1,7 +1,7 @@
 [project]
 name = "mcp-vision-runtime"
 version = "0.5.0"
-description = "Blip: an AI buddy in your MacBook's notch. Talk, it sees your screen, answers aloud and points, on your Claude, ChatGPT, Cursor or Gemini plan. Plus an MCP computer-use runtime."
+description = "Plip: an AI buddy in your MacBook's notch. Talk, it sees your screen, answers aloud and points, on your Claude, ChatGPT, Cursor or Gemini plan. Plus an MCP computer-use runtime."
 authors = [{name = "Hussain"}]
 license = "MIT"
 readme = "README.md"
@@ -38,7 +38,7 @@ ocr = ["pytesseract>=0.3.10"]
 dev = ["pytest>=8.0.0", "ruff>=0.14,<1"]
 
 [project.scripts]
-blip = "mcp_vision.buddy.cli:buddy"
+plip = "mcp_vision.buddy.cli:buddy"
 mcp-vision = "mcp_vision.cli:cli"
 mac-agent = "mcp_vision.cli:agent_cli"
 screen-agent = "simple_agent:main"

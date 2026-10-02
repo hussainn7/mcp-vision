@@ -91,7 +91,7 @@ class BuddyAnimator:
 
     @property
     def label(self) -> str:
-        """Label of the target Blip is flying to or pointing at."""
+        """Label of the target Plip is flying to or pointing at."""
         return self._label if self.mode in {"fly_out", "pointing"} else ""
 
     @property

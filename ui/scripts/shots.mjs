@@ -43,12 +43,12 @@ const islandStates = {
 for (const [name, state] of Object.entries(islandStates)) {
   await shot(`island-${name}`, 'island', {
     width: 720, height: 300,
-    setup: `document.body.style.background='#1b2140'; window.__blip({type:'island', state:${JSON.stringify({ ...state, notch: { width: 196, height: 34, hasNotch: true } })}})`,
+    setup: `document.body.style.background='#1b2140'; window.__plip({type:'island', state:${JSON.stringify({ ...state, notch: { width: 196, height: 34, hasNotch: true } })}})`,
   })
 }
 await shot('mascot-pointing', 'mascot', {
   width: 220, height: 80,
-  setup: `document.body.style.background='#1b2140'; window.__blip({type:'mascot', state:{mood:'pointing', label:'Export button', look:{x:1,y:0.2}, lean:8}})`,
+  setup: `document.body.style.background='#1b2140'; window.__plip({type:'mascot', state:{mood:'pointing', label:'Export button', look:{x:1,y:0.2}, lean:8}})`,
 })
 
 await browser.close()

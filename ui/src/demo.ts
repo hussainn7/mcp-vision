@@ -90,7 +90,7 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
   engines: [
     { id: 'claude-code', label: 'Claude', via: 'Claude Pro / Max via Claude Code', kind: 'subscription', status: 'ready', selected: true, vision: true, detail: 'Signed in as you. Sees screenshots; streams answers.' },
     { id: 'codex', label: 'ChatGPT', via: 'ChatGPT Plus / Pro via Codex CLI', kind: 'subscription', status: 'logged-out', vision: true, detail: 'Run codex login once and choose Sign in with ChatGPT.', login: 'codex login' },
-    { id: 'cursor', label: 'Cursor', via: 'Your Cursor plan via Cursor CLI', kind: 'subscription', status: 'not-installed', install: 'curl https://cursor.com/install -fsS | bash', detail: 'Text answers; Blip describes the screen for it.' },
+    { id: 'cursor', label: 'Cursor', via: 'Your Cursor plan via Cursor CLI', kind: 'subscription', status: 'not-installed', install: 'curl https://cursor.com/install -fsS | bash', detail: 'Text answers; Plip describes the screen for it.' },
     { id: 'gemini', label: 'Gemini', via: 'Google account via Gemini CLI', kind: 'subscription', status: 'not-installed', install: 'npm i -g @google/gemini-cli' },
     { id: 'anthropic', label: 'Claude API', via: 'Anthropic API key', kind: 'api', status: 'missing-key', keyName: 'ANTHROPIC_API_KEY', vision: true },
   ],

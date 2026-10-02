@@ -1,4 +1,4 @@
-"""Assemble Blip from settings + preferences. Platform pieces are chosen at runtime."""
+"""Assemble Plip from settings + preferences. Platform pieces are chosen at runtime."""
 from __future__ import annotations
 
 import sys
@@ -38,7 +38,7 @@ def make_brain(settings: BuddySettings, engines: list | None = None) -> Any:
 
     engine = choose_engine(settings, engines)
     if engine is None:
-        raise SetupError("Pick a brain: sign in to Claude Code, Codex, or Cursor, or add an API key in Blip's settings.")
+        raise SetupError("Pick a brain: sign in to Claude Code, Codex, or Cursor, or add an API key in Plip's settings.")
     return make_engine_brain(engine, settings)
 
 

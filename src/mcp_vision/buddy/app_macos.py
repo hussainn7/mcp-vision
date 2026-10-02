@@ -1,4 +1,4 @@
-"""Blip on macOS: the notch island, Blip by your cursor, settings, and hold-to-talk.
+"""Plip on macOS: the notch island, Plip by your cursor, settings, and hold-to-talk.
 
 Threads:
 * main thread  - AppKit: island, mascot, settings window, hotkeys, menu bar.
@@ -28,9 +28,9 @@ def _menu_target_class():
         import Foundation
         import objc
 
-        class BlipMenuTarget(Foundation.NSObject):
+        class PlipMenuTarget(Foundation.NSObject):
             def initWithActions_(self, actions):
-                self = objc.super(BlipMenuTarget, self).init()
+                self = objc.super(PlipMenuTarget, self).init()
                 if self is None:
                     return None
                 self.actions = actions
@@ -41,12 +41,12 @@ def _menu_target_class():
                 if action:
                     action()
 
-        _CLASSES["target"] = BlipMenuTarget
+        _CLASSES["target"] = PlipMenuTarget
     return _CLASSES["target"]
 
 
-def _blip_icon():
-    """Menu bar glyph: Blip's round face with two eyes (template image)."""
+def _plip_icon():
+    """Menu bar glyph: Plip's round face with two eyes (template image)."""
     import AppKit
 
     size = 18.0
@@ -75,20 +75,20 @@ class StatusMenu:
         self.item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(AppKit.NSVariableStatusItemLength)
         button = self.item.button()
         if button is not None:
-            button.setImage_(_blip_icon())
-            button.setToolTip_("Blip - hold Control+Option and ask")
+            button.setImage_(_plip_icon())
+            button.setToolTip_("Plip - hold Control+Option and ask")
         menu = AppKit.NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
         self.status = self._add(menu, "Starting...", None)
         self.status.setEnabled_(False)
         self._add(menu, "Hold ⌃⌥ and ask anything", None).setEnabled_(False)
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
-        self._add(menu, "Open Blip...", "settings", ",")
+        self._add(menu, "Open Plip...", "settings", ",")
         self.brain_item = self._add(menu, "Brain: choosing...", "brain")
-        self.visible_item = self._add(menu, "Show Blip by my cursor", "toggle_visible")
+        self.visible_item = self._add(menu, "Show Plip by my cursor", "toggle_visible")
         self._add(menu, "Forget this conversation", "clear")
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
-        self._add(menu, "Quit Blip", "quit", "q")
+        self._add(menu, "Quit Plip", "quit", "q")
         self.item.setMenu_(menu)
 
     def _add(self, menu, title: str, key: str | None, shortcut: str = ""):
@@ -120,9 +120,9 @@ def _install_main_menu() -> None:
 
     main = AppKit.NSMenu.alloc().init()
     app_item = AppKit.NSMenuItem.alloc().init()
-    app_menu = AppKit.NSMenu.alloc().initWithTitle_("Blip")
+    app_menu = AppKit.NSMenu.alloc().initWithTitle_("Plip")
     app_menu.addItemWithTitle_action_keyEquivalent_("Close Window", "performClose:", "w")
-    app_menu.addItemWithTitle_action_keyEquivalent_("Quit Blip", "terminate:", "q")
+    app_menu.addItemWithTitle_action_keyEquivalent_("Quit Plip", "terminate:", "q")
     app_item.setSubmenu_(app_menu)
     main.addItem_(app_item)
     edit_item = AppKit.NSMenuItem.alloc().init()
@@ -244,7 +244,7 @@ def run_buddy_app() -> None:
     state: dict[str, Any] = {"settings": apply_prefs(load_settings(), prefs), "brain_error": "",
                              "listener_error": "", "settings_window": None, "building": False}
     loop = asyncio.new_event_loop()
-    threading.Thread(target=loop.run_forever, daemon=True, name="blip-loop").start()
+    threading.Thread(target=loop.run_forever, daemon=True, name="plip-loop").start()
     history = History()
     registry = EngineRegistry(lambda: state["settings"])
 
@@ -293,7 +293,7 @@ def run_buddy_app() -> None:
         on_main=lambda fn, *args: AppHelper.callAfter(fn, *args),
         on_result=lambda transcript, result: record(transcript, result),
         on_setup_needed=lambda _message: None if state["building"] else open_settings("brain"),
-        setup_error="Blip is still waking up. Try again in a second.",
+        setup_error="Plip is still waking up. Try again in a second.",
     )
 
     def record(transcript: str, result) -> None:
@@ -323,7 +323,7 @@ def run_buddy_app() -> None:
         except SetupError as exc:
             error = str(exc)
         except Exception as exc:          # a broken optional piece must not kill the app
-            log.exception("could not build Blip's brain")
+            log.exception("could not build Plip's brain")
             error = f"Couldn't start the brain: {exc}"
         AppHelper.callAfter(install, settings, prefs, companion, error)
 
@@ -365,21 +365,21 @@ def run_buddy_app() -> None:
 
         def warmed(future):
             try:
-                log.info("blip brain ready: %s", future.result())
+                log.info("plip brain ready: %s", future.result())
             except Exception as exc:
-                log.warning("blip brain warm-up failed: %s", exc)
-                AppHelper.callAfter(menu.set_status, "Brain problem: check its key or sign-in in Blip's settings")
+                log.warning("plip brain warm-up failed: %s", exc)
+                AppHelper.callAfter(menu.set_status, "Brain problem: check its key or sign-in in Plip's settings")
         asyncio.run_coroutine_threadsafe(companion.brain.warm(), loop).add_done_callback(warmed)
 
     def rebuild(probe: bool = False) -> None:
         state["building"] = True
-        threading.Thread(target=build, args=(probe,), daemon=True, name="blip-build").start()
+        threading.Thread(target=build, args=(probe,), daemon=True, name="plip-build").start()
 
     def refresh_engines() -> None:
         def work():
             registry.statuses(refresh=True)
             AppHelper.callAfter(service.push)
-        threading.Thread(target=work, daemon=True, name="blip-probe").start()
+        threading.Thread(target=work, daemon=True, name="plip-probe").start()
 
     def test_voice(text: str) -> None:
         speaker = getattr(controller.companion, "speaker", None)
@@ -441,6 +441,6 @@ def run_buddy_app() -> None:
         prefs.save()
         AppHelper.callLater(0.8, lambda: open_settings("home"))
 
-    log.info("blip running (hotkey=%s, web=%s)", controller.hotkey_mode, web)
-    print("Blip is in your menu bar and notch. Hold Control+Option and ask.", flush=True)
+    log.info("plip running (hotkey=%s, web=%s)", controller.hotkey_mode, web)
+    print("Plip is in your menu bar and notch. Hold Control+Option and ask.", flush=True)
     AppHelper.runEventLoop(installInterrupt=True)

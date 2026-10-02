@@ -1,4 +1,4 @@
-"""The Island: Blip's Dynamic-Island-style home in the MacBook notch.
+"""The Island: Plip's Dynamic-Island-style home in the MacBook notch.
 
 A borderless, non-activating panel spans the top-center of the notched
 display (or the main display on Macs without a notch, where it draws its own

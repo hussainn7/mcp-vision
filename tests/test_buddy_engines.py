@@ -1,6 +1,6 @@
 """Subscription engines: discovery, sign-in probes, choosing a brain, and streaming through real subprocesses.
 
-Each CLI is replaced by a tiny fake executable that checks the flags Blip
+Each CLI is replaced by a tiny fake executable that checks the flags Plip
 passes and prints the JSON lines the real tool prints, so the asyncio
 subprocess path, parsing, cancellation, and error mapping all run for real.
 """
@@ -191,9 +191,9 @@ def test_make_engine_brain_builds_the_right_class():
 # -- prompts -------------------------------------------------------------------------------
 
 def test_transcript_prompt_carries_history_screens_and_system():
-    text = transcript_prompt(TURNS, ["/tmp/screen1.jpg"], system="BE BLIP")
-    assert text.index("BE BLIP") < text.index("<earlier_conversation>") < text.index("<screenshots>")
-    assert "user: where is wifi" in text and "you (blip): Top right." in text
+    text = transcript_prompt(TURNS, ["/tmp/screen1.jpg"], system="BE PLIP")
+    assert text.index("BE PLIP") < text.index("<earlier_conversation>") < text.index("<screenshots>")
+    assert "user: where is wifi" in text and "you (plip): Top right." in text
     assert "/tmp/screen1.jpg: the user's screen (cursor is here) (image dimensions: 1280x800 pixels)" in text
     assert text.endswith("the user said: and bluetooth?")
     assert transcript_prompt([Turn("user", "hi")]) == "hi"

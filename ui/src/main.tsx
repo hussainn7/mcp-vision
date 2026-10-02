@@ -10,14 +10,14 @@ import { Showcase } from './views/Showcase'
 
 type Surface = 'island' | 'mascot' | 'settings' | 'showcase'
 
-const surface = (window.__BLIP_SURFACE__ || location.hash.slice(1).split('?')[0] || (isNative() ? 'island' : 'showcase')) as Surface
+const surface = (window.__PLIP_SURFACE__ || location.hash.slice(1).split('?')[0] || (isNative() ? 'island' : 'showcase')) as Surface
 document.body.dataset.surface = surface
 
 if (!isNative()) {
   // Browser preview: show realistic data and log commands the app would send.
   loadDemoSettings()
   onMockCommand((command) => {
-    console.debug('[blip] command', command)
+    console.debug('[plip] command', command)
     if (command.cmd === 'select-engine') {
       settings.set((current) => ({
         engines: current.engines.map((engine) => ({ ...engine, selected: engine.id === command.id })),

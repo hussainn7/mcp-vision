@@ -1,4 +1,4 @@
-"""`blip` / `mcp-vision buddy`: run Blip, or ask it one question headlessly."""
+"""`plip` / `mcp-vision buddy`: run Plip, or ask it one question headlessly."""
 from __future__ import annotations
 
 import asyncio
@@ -11,14 +11,14 @@ import click
 @click.group(invoke_without_command=True)
 @click.pass_context
 def buddy(ctx: click.Context) -> None:
-    """Blip, your AI buddy in the notch: hold Control+Option, talk, and it points at things."""
+    """Plip, your AI buddy in the notch: hold Control+Option, talk, and it points at things."""
     if ctx.invoked_subcommand is None:
         ctx.invoke(run)
 
 
 @buddy.command()
 def run() -> None:
-    """Start Blip on macOS (notch island + Blip by your cursor + push-to-talk)."""
+    """Start Plip on macOS (notch island + Plip by your cursor + push-to-talk)."""
     from mcp_vision.buddy.factory import SetupError
 
     if sys.platform != "darwin":
@@ -38,7 +38,7 @@ def run() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Print the full turn result as JSON.")
 @click.option("--engine", default=None, help="Brain to use: claude-code, codex, cursor, gemini, or anthropic.")
 def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engine: str | None) -> None:
-    """Ask one question about the screen and print what Blip says and points at."""
+    """Ask one question about the screen and print what Plip says and points at."""
     from mcp_vision.buddy.capture import ScreenCapturer
     from mcp_vision.buddy.factory import SetupError, make_companion
     from mcp_vision.buddy.settings import load_settings
@@ -154,7 +154,7 @@ def doctor(ping: bool) -> None:
         # Only the brain you picked can fail; the others are just options.
         picked = status.spec.id == getattr(settings, "engine", "")
         good = True if status.status == "ready" else False if picked and status.status != "unknown" else None
-        chosen = " <- Blip thinks with this" if active is not None and status.spec.id == active.spec.id else ""
+        chosen = " <- Plip thinks with this" if active is not None and status.spec.id == active.spec.id else ""
         line(good, f"brain {status.spec.id}", f"{status.status}: {status.detail or status.spec.via}{chosen}")
     if active is None:
         line(False, "brain", "nothing ready: sign in to Claude Code / Codex / Cursor / Gemini, or add an API key")
@@ -184,5 +184,5 @@ def doctor(ping: bool) -> None:
                 ok &= value is True
             line(value, name, {True: "granted", False: "denied", None: "not asked yet"}[value])
     else:
-        line(None, "notch app", "macOS only; `blip ask --image` works everywhere")
+        line(None, "notch app", "macOS only; `plip ask --image` works everywhere")
     sys.exit(0 if ok else 1)

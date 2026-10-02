@@ -1,4 +1,4 @@
-"""Blip's settings / onboarding window (macOS)."""
+"""Plip's settings / onboarding window (macOS)."""
 from __future__ import annotations
 
 import json
@@ -21,7 +21,7 @@ class SettingsWindow:
         rect = AppKit.NSMakeRect(0, 0, WIDTH, HEIGHT)
         window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, style, AppKit.NSBackingStoreBuffered, False)
-        window.setTitle_("Blip")
+        window.setTitle_("Plip")
         window.setTitlebarAppearsTransparent_(True)
         window.setTitleVisibility_(AppKit.NSWindowTitleHidden)
         window.setAppearance_(AppKit.NSAppearance.appearanceNamed_(AppKit.NSAppearanceNameDarkAqua))

@@ -1,4 +1,4 @@
-"""Blip's turn loop: hear -> look -> think -> talk and point -> (guide).
+"""Plip's turn loop: hear -> look -> think -> talk and point -> (guide).
 
 Everything platform-specific (overlay windows, microphones, speakers, the
 model provider) is injected through small ports, so this module runs and is
@@ -6,7 +6,7 @@ tested without a display or network.
 
 A turn: route (Jev/rules), screenshots, and screen context run in parallel;
 the brain streams a reply that becomes speech per sentence and pointer
-flights per tag. If the reply opens a walkthrough (``[STEPS:n]``), Blip
+flights per tag. If the reply opens a walkthrough (``[STEPS:n]``), Plip
 waits for the screen to change after each step, looks again, and continues
 until ``[DONE]``, a timeout, or the user presses the shortcut.
 
@@ -85,7 +85,7 @@ class Router(Protocol):
 
 @dataclass(frozen=True)
 class Target:
-    """Where Blip should land, in global top-left points."""
+    """Where Plip should land, in global top-left points."""
 
     x: float
     y: float

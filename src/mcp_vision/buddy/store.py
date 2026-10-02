@@ -19,7 +19,7 @@ class Prefs:
     engine: str = ""                 # engine id; "" = best available
     depth: str = "balanced"          # fast | balanced | deep
     walkthroughs: bool = True
-    buddy: bool = True               # show Blip by the cursor while idle
+    buddy: bool = True               # show Plip by the cursor while idle
     tts: str = ""                    # "" = follow settings/env
     stt: str = ""
     onboarded: bool = False

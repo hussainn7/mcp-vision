@@ -119,7 +119,7 @@ export function Island() {
                     exit={{ opacity: 0 }}
                     className="text-[12px] font-semibold tracking-tight text-white/80"
                   >
-                    {mode === 'listening' ? 'Listening' : mode === 'thinking' ? 'Thinking' : mode === 'error' ? 'Hmm' : 'Blip'}
+                    {mode === 'listening' ? 'Listening' : mode === 'thinking' ? 'Thinking' : mode === 'error' ? 'Hmm' : 'Plip'}
                   </motion.span>
                 )}
               </AnimatePresence>
@@ -156,7 +156,7 @@ export function Island() {
 
 function RightEar({ mode, level, done }: { mode: Mode; level: number; done: boolean }) {
   if (mode === 'listening') return <Waveform level={level} bars={9} color="bg-emerald-300" />
-  // TTS reports no level; keep the bars alive while Blip is still talking.
+  // TTS reports no level; keep the bars alive while Plip is still talking.
   if (mode === 'answering') return <Waveform level={done ? 0.04 : Math.max(level, 0.42)} bars={7} color="bg-white/85" />
   if (mode === 'thinking')
     return (
@@ -172,7 +172,7 @@ function RightEar({ mode, level, done }: { mode: Mode; level: number; done: bool
       </span>
     )
   if (mode === 'error') return <AlertTriangle className="size-3.5 text-red-300" />
-  if (mode === 'peek') return <Sparkles className="size-3.5 text-blip-300" />
+  if (mode === 'peek') return <Sparkles className="size-3.5 text-plip-300" />
   return <span className="size-1.5 rounded-full bg-white/25 shadow-[0_0_8px_rgba(143,180,255,0.6)]" />
 }
 
@@ -250,12 +250,12 @@ function Body({ mode }: { mode: Mode }) {
                 key={index}
                 className={cn(
                   'h-1 rounded-full transition-all duration-500',
-                  index < state.walkthrough!.index ? 'w-4 bg-mint' : index === state.walkthrough!.index ? 'w-6 bg-blip-400' : 'w-2.5 bg-white/15',
+                  index < state.walkthrough!.index ? 'w-4 bg-mint' : index === state.walkthrough!.index ? 'w-6 bg-plip-400' : 'w-2.5 bg-white/15',
                 )}
               />
             ))}
           </div>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-blip-300">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-plip-300">
             Step {state.walkthrough.index + 1} of {state.walkthrough.total}
           </span>
           <span className="truncate text-[11px] text-white/45">{state.walkthrough.label}</span>

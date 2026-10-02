@@ -1,7 +1,7 @@
-"""Turn engine and push-to-talk events into Island / Blip UI messages.
+"""Turn engine and push-to-talk events into Island / Plip UI messages.
 
 Platform-neutral: ``post_island`` receives lists of bridge messages (see
-``ui/src/bridge.ts``) and ``set_mood`` receives Blip's mood and level. The
+``ui/src/bridge.ts``) and ``set_mood`` receives Plip's mood and level. The
 macOS host hops both onto the main thread and into the web views.
 """
 from __future__ import annotations

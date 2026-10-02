@@ -1,4 +1,4 @@
-"""Backs Blip's Settings window: builds its snapshot and handles its commands.
+"""Backs Plip's Settings window: builds its snapshot and handles its commands.
 
 Platform-neutral. Everything that touches macOS (clipboard, Terminal,
 permission prompts, quitting) arrives through ``Platform`` so the logic is
@@ -146,7 +146,7 @@ class SettingsService:
             self.push()
 
     def _cmd_test_voice(self, _command):
-        self.platform.say("Hey, I'm Blip. Hold control and option, and ask me anything.")
+        self.platform.say("Hey, I'm Plip. Hold control and option, and ask me anything.")
 
     def _cmd_clear_history(self, _command):
         self.history.clear()

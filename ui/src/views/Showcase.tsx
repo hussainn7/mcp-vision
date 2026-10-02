@@ -12,7 +12,7 @@ const NOTCH = { width: 196, height: 34 }
 const CURSOR = { x: 930, y: 560 }
 
 /**
- * A pretend MacBook desktop that plays Blip's whole flow. Used for the
+ * A pretend MacBook desktop that plays Plip's whole flow. Used for the
  * browser preview, the README screenshots, and demos.
  * `#showcase?frame=listening` freezes on one frame.
  */
@@ -70,20 +70,20 @@ export function Showcase() {
         <AppWindow />
         {showMenu && <FileMenu exportRef={exportRef} />}
 
-        {/* the physical notch, then Blip's island fused onto it */}
+        {/* the physical notch, then Plip's island fused onto it */}
         <div className="absolute left-1/2 top-0 z-40 -translate-x-1/2 rounded-b-[12px] bg-black" style={{ width: NOTCH.width, height: NOTCH.height }} />
         <div className="absolute inset-x-0 top-0 z-50">
           <Island />
         </div>
 
         <SystemCursor x={CURSOR.x} y={CURSOR.y} />
-        <FlyingBlip x={spot.x} y={spot.y} />
+        <FlyingPlip x={spot.x} y={spot.y} />
       </div>
     </div>
   )
 }
 
-function FlyingBlip({ x, y }: { x: number; y: number }) {
+function FlyingPlip({ x, y }: { x: number; y: number }) {
   const state = useStore(mascot)
   return (
     <motion.div
@@ -99,7 +99,7 @@ function FlyingBlip({ x, y }: { x: number; y: number }) {
           initial={{ opacity: 0, scale: 0.6, x: -6 }}
           animate={{ opacity: 1, scale: 1, x: 0 }}
           transition={{ delay: 0.5, type: 'spring', stiffness: 500, damping: 26 }}
-          className="absolute left-[38px] top-[20px] origin-left whitespace-nowrap rounded-xl bg-gradient-to-br from-blip-400 to-violet-glow px-2.5 py-1 text-[12px] font-semibold text-white shadow-[0_8px_24px_-6px_rgba(91,140,255,0.8),inset_0_1px_0_rgba(255,255,255,0.35)]"
+          className="absolute left-[38px] top-[20px] origin-left whitespace-nowrap rounded-xl bg-gradient-to-br from-plip-400 to-violet-glow px-2.5 py-1 text-[12px] font-semibold text-white shadow-[0_8px_24px_-6px_rgba(91,140,255,0.8),inset_0_1px_0_rgba(255,255,255,0.35)]"
         >
           {state.label}
         </motion.div>
