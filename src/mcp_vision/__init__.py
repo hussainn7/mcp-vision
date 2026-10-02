@@ -1,6 +1,6 @@
-"""mcp-vision: screen perception + actuation over the Model Context Protocol."""
+"""mcp-vision: a voice buddy that points at your screen, plus an MCP computer-use runtime."""
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
 from mcp_vision.log import get_logger
 

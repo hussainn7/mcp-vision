@@ -32,6 +32,16 @@ Desktop tests use synthetic images and a recording actuator. They do not prove r
 
 For a new bug, prefer a small regression test: replacement DOM nodes, duplicate labels, late overlays, navigation during approval, timeouts after dispatch, wrong form values, or missing postconditions. A skipped browser test is not evidence of browser correctness.
 
+### The cursor buddy
+
+`tests/test_buddy_*.py` cover the buddy's platform-neutral logic, with no network, model, or display needed:
+
+- the streaming POINT parser, coordinate mapping, and flight/animator state machine
+- Jev routing and snapping against the published TypeSafe contract
+- the AssemblyAI protocol and the push-to-talk controller
+
+Changes to the macOS layer (`*_macos.py`, `hotkey.py`, `ax_locator.py`) also need the manual checklist in [docs/BUDDY.md](docs/BUDDY.md#manual-check-on-a-mac) on a real Mac. Write the result in the pull request.
+
 ## Scope and release gate
 
 The current focus is a model-neutral runtime with explicit evidence. The native Chrome relay and bundled provider-backed agents are experimental. Do not add another agent framework before strengthening runtime contracts.

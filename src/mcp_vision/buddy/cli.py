@@ -71,6 +71,56 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool) -> N
     sys.exit(0 if result.state == "done" else 1)
 
 
+SETUP_KEYS = (
+    ("ANTHROPIC_API_KEY", "Anthropic API key (required; console.anthropic.com)"),
+    ("TYPESAFE_API_KEY", "TypeSafe Jev key for fast routing (optional; console.typesafe.ai)"),
+    ("ELEVENLABS_API_KEY", "ElevenLabs key for a natural voice (optional)"),
+    ("ASSEMBLYAI_API_KEY", "AssemblyAI key for streaming speech recognition (optional)"),
+)
+
+
+def write_env(path, values: dict[str, str]) -> None:
+    """Merge keys into a dotenv file, keeping unrelated lines; the file is private (0600)."""
+    import os
+    from pathlib import Path
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text().splitlines() if path.exists() else []
+    remaining = dict(values)
+    merged = []
+    for line in lines:
+        name = line.split("=", 1)[0].strip()
+        if name in remaining:
+            merged.append(f"{name}={remaining.pop(name)}")
+        else:
+            merged.append(line)
+    merged.extend(f"{name}={value}" for name, value in remaining.items())
+    path.write_text("\n".join(merged) + "\n")
+    os.chmod(path, 0o600)
+
+
+@buddy.command()
+@click.option("--path", "env_path", type=click.Path(dir_okay=False), default=None,
+              help="Where to write keys (default ~/.config/mcp-vision/.env).")
+def setup(env_path: str | None) -> None:
+    """Ask for API keys and save them where the buddy finds them."""
+    from pathlib import Path
+
+    target = Path(env_path) if env_path else Path.home() / ".config" / "mcp-vision" / ".env"
+    click.echo(f"Keys are stored in {target} (readable only by you). Press Enter to skip one.")
+    values = {}
+    for name, prompt in SETUP_KEYS:
+        value = click.prompt(f"  {prompt}", default="", show_default=False, hide_input=True).strip()
+        if value:
+            values[name] = value
+    if not values:
+        click.echo("Nothing saved.")
+        return
+    write_env(target, values)
+    click.echo(f"Saved {', '.join(values)}. Next: mcp-vision buddy doctor, then mcp-vision buddy")
+
+
 @buddy.command()
 @click.option("--ping", is_flag=True, help="Make one tiny Jev request to verify the TypeSafe key.")
 def doctor(ping: bool) -> None:

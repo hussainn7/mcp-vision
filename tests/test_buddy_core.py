@@ -469,6 +469,37 @@ def test_cli_ask_with_image_runs_headless(tmp_path, monkeypatch):
     assert payload["targets"][0]["x"] == pytest.approx(40 * 2560 / 1280)
 
 
+def test_buddy_setup_merges_keys_privately(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    from click.testing import CliRunner
+
+    from mcp_vision.buddy import cli as buddy_cli
+    from mcp_vision.buddy.settings import load_settings
+
+    env = tmp_path / "cfg" / ".env"
+    env.parent.mkdir()
+    env.write_text("# mine\nANTHROPIC_API_KEY=old\nOTHER=keep\n")
+    result = CliRunner().invoke(buddy_cli.buddy, ["setup", "--path", str(env)], input="new-key\n\nxi-key\n\n")
+    assert result.exit_code == 0, result.output
+    assert env.read_text() == "# mine\nANTHROPIC_API_KEY=new-key\nOTHER=keep\nELEVENLABS_API_KEY=xi-key\n"
+    assert stat.S_IMODE(os.stat(env).st_mode) == 0o600
+
+    home = tmp_path / "home"
+    (home / ".config" / "mcp-vision").mkdir(parents=True)
+    (home / ".config" / "mcp-vision" / ".env").write_text("ANTHROPIC_API_KEY=from-config\nBUDDY_EFFORT=high\n")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    (workdir / ".env").write_text("BUDDY_EFFORT=medium\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(workdir)
+    for name in ("ANTHROPIC_API_KEY", "BUDDY_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
+    settings = load_settings()
+    assert settings.anthropic_api_key == "from-config" and settings.effort == "medium"
+
+
 def test_empty_transcript_does_not_call_the_model():
     brain = FakeBrain(["never"])
     result = asyncio.run(Companion(brain=brain, capturer=capturer()).respond("   "))

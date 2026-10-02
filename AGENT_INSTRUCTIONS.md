@@ -21,9 +21,23 @@ Your mission is to maintain and extend a **reliable, local-first macOS assistant
 
 ## 🗺️ Workspace Map
 
+**The product is the cursor buddy** (`mcp-vision buddy`, `src/mcp_vision/buddy/`). It is a
+Clicky-style voice companion that sees the screen, answers aloud, and points. Read
+[docs/BUDDY.md](docs/BUDDY.md) first.
+
+- **Keep platform logic out of the core.** `companion`, `pointing`, `router`, `snap`,
+  `animator` and `controller` run and are tested on Linux. The macOS files
+  (`*_macos.py`, `hotkey.py`, `ax_locator.py`) only draw, listen and wire things together.
+- **Jev questions must stand alone.** TypeSafe Jev questions are answered in parallel
+  and cannot see each other, so each needs its own `instructions`. Every Jev call
+  needs a rules or heuristic fallback.
+- **Run the buddy tests:** `PYTHONPATH=src:. python -m pytest tests/test_buddy_*.py`
+
+The MCP runtime and the legacy agent below are still supported.
+
 Here is where core systems live:
 
-- **`agent.py`**: The primary orchestrator. Handles the main **Plan → Act → Reflect** loop. Runs specialists based on [specialists.toml](file:///Users/h/OllamaTest/specialists.toml).
+- **`agent.py`**: The primary orchestrator. Handles the main **Plan → Act → Reflect** loop. Runs specialists based on [specialists.toml](specialists.toml).
 - **`mac_agent.py`**: The minimal standalone core. Contains default tool calling configurations and AppleScript automation.
 - **`tools.py`**: The registry of all tools. Tools are simple Python functions registered with standard docstrings (which act as descriptions for the LLM).
 - **`backends.py`**: Normalizes communication across LLM providers (Ollama, Anthropic, OpenAI, Gemini, Nvidia). Corrects API wire format differences.
@@ -45,10 +59,10 @@ python scripts/check_setup.py
 
 ### 2. Standard Coding Workflows
 - **To Add a Tool**:
-  1. Write the tool function in [tools.py](file:///Users/h/OllamaTest/tools.py) with descriptive docstrings.
+  1. Write the tool function in [tools.py](tools.py) with descriptive docstrings.
   2. Implement an evaluation verify gate (`verify_...` function) that queries the OS state (e.g. using AppleScript or file checks) to confirm the tool's success.
   3. Register the tool in `TOOLS` in `tools.py`.
-  4. (Optional) Add the tool to a specialist allowlist in [specialists.toml](file:///Users/h/OllamaTest/specialists.toml).
+  4. (Optional) Add the tool to a specialist allowlist in [specialists.toml](specialists.toml).
 - **To Debug Trajectories**:
   Check if a task run created a trajectory in `traces/run_<timestamp>.jsonl`. Rerun the trace viewer to produce an HTML timeline and inspect errors:
   ```bash

@@ -48,6 +48,9 @@ if ! command -v mcp-vision >/dev/null 2>&1; then
   echo "Add to your shell config, then reopen the terminal:"
   echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
+echo "Your cursor buddy:"
+echo "  mcp-vision buddy setup     # paste your Anthropic key (Jev / ElevenLabs / AssemblyAI optional)"
+echo "  mcp-vision buddy           # then hold Control+Option and talk"
+echo
+echo "MCP server for Cursor / Claude: restart them so MCP picks it up, then try"
 echo "  mcp-vision connect"
-echo "  mcp-vision ask \"flights to SFO next weekend\""
-echo "  (restart Cursor / Claude so MCP picks it up)"

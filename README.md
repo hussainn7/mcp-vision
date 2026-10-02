@@ -1,199 +1,120 @@
 # MCP-Vision
 
-An open-source contextual action layer for your computer. Point at what you're
-working on, invoke MCP-Vision, and let your preferred model Ask, Guide, or Act—with
-verification and evidence for meaningful actions.
+An AI buddy that lives next to your cursor. Hold **Control+Option**, ask out loud,
+and it looks at your screen, answers in a natural voice, and **flies a little blue
+pointer to the exact button, menu, or field** you need.
 
-**Your model. Your computer. Evidence for every action.**
+> "where do I change the export resolution?"
+> *"open the file menu up top"* → the pointer arcs over to **File** →
+> *"then pick export, and the resolution is in the dialog that opens."*
 
-Needs **Python 3.12+** (macOS `/usr/bin/python3` is often 3.9 and will fail).
+It is a Python take on [Clicky](https://github.com/farzaa/clicky). It follows
+Clicky's prompt, pointing protocol, motion design and push-to-talk feel, and adds
+a few things on top:
 
-## Install (one liner)
+| | Clicky (open source) | MCP-Vision buddy |
+|---|---|---|
+| Speech starts | after the whole reply is generated and synthesized | per sentence, while Claude is still streaming |
+| Pointing | one point, at the end | one point per step of a walkthrough, synced to the sentence |
+| Pointer lands on | the model's estimate | the real control, snapped via Accessibility (Jev picks the element) |
+| Screenshots | always, every screen | Jev decides in ~100 ms: none for general questions, cursor screen only when that's all that matters |
+| Effort | fixed | Jev spots walkthroughs and raises Claude's effort for that turn |
+| Bad tags | read aloud | never spoken |
+
+Needs **Python 3.12+** and macOS for the buddy overlay. The headless `buddy ask`
+and the MCP server run anywhere.
+
+## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hussainn7/mcp-vision/main/scripts/install.sh | bash
+mcp-vision buddy setup        # paste your Anthropic key; Jev, ElevenLabs, AssemblyAI are optional
+mcp-vision buddy doctor       # add --ping to verify the Jev key
+mcp-vision buddy
 ```
 
-That script installs [`uv`](https://github.com/astral-sh/uv) if needed, fetches Python 3.12,
-and puts `mcp-vision` on `~/.local/bin`.
+The first run asks macOS for **Screen Recording**, **Accessibility** (for the
+hotkey and pointer snapping) and **Microphone**. For permissions that stick across
+updates, build the signed app once: `python scripts/build_macos_app.py`, then open
+`/Applications/MCP-Vision.app`.
 
-### Manual
+Then hold **Control+Option**, talk, and let go.
+
+- Press the shortcut again while it is talking to interrupt (barge-in).
+- Press any other key during the chord and it treats it as some other shortcut.
+- The menu-bar triangle has *Forget this conversation*, *Check setup*, and
+  *Always show buddy*.
+
+### What each key buys you
+
+| Key | Without it | With it |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | required | Claude (`claude-opus-5-5`, low effort by default) sees your screens and writes the reply |
+| `TYPESAFE_API_KEY` | rule-based routing, heuristic snapping | [Jev](https://console.typesafe.ai) System-1 routing and element choice in ~100 ms |
+| `ELEVENLABS_API_KEY` | macOS `say` | Clicky's ElevenLabs voice (`eleven_flash_v2_5`) |
+| `ASSEMBLYAI_API_KEY` | on-device Apple Speech | AssemblyAI streaming (`u3-rt-pro`), as in Clicky |
+
+Every knob is in [.env.example](.env.example).
+
+### Try it without a Mac
 
 ```bash
-# if you don't have 3.12 yet:
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv python install 3.12
-
-uv tool install "git+https://github.com/hussainn7/mcp-vision.git" --python 3.12
-export PATH="$HOME/.local/bin:$PATH"
-mcp-vision setup
+mcp-vision buddy ask --image screenshot.png "where's the export button?"
+mcp-vision buddy ask --json "what's on my screen?"      # captures the real screen if there is one
 ```
 
-Do **not** use stock `pip3` on macOS if it reports 3.9.
+This prints what the buddy would say, where it would point (global screen points),
+the route Jev or the rules chose, and the latency of each stage.
 
-### Devs (clone)
+## How it works
 
-```bash
-cd mcp-vision
-python3.12 -m venv .venv   # or: uv venv --python 3.12
-source .venv/bin/activate
-pip install -e .
-mcp-vision setup
+```
+Control+Option ──▶ mic ──▶ AssemblyAI / Apple Speech ──▶ transcript
+                                                             │
+   release: screenshots prefetched ──┐                       ▼
+                                     ├──▶ Jev router (needs screen? which monitor? walkthrough?)
+                                     ▼
+          Claude (streamed) ──▶ sentence splitter ──▶ TTS queue (speaks sentence 1 while 2 is synthesized)
+                                     │
+                                     └──▶ [POINT:x,y:label:screenN] ──▶ map px → screen points
+                                                                      ──▶ snap to AX element (Jev picks)
+                                                                      ──▶ buddy flies there, types the label
 ```
 
-Then open Chrome and refresh MCP in Cursor / Claude.
+Everything above the overlay is platform-neutral and unit-tested. The macOS layer
+is a 60 Hz renderer, an event tap and audio glue. See [docs/BUDDY.md](docs/BUDDY.md).
 
-## Contextual invocation on macOS
+## MCP server (for Cursor, Claude Desktop, Claude Code)
 
-```bash
-mcp-vision doctor
-mcp-vision ui
-```
-
-Tap **Option-Space** anywhere to open the MCP-Vision text panel. Hold
-**Option-Space** to speak: a compact top-center panel streams the transcript,
-and releasing the shortcut submits the final text. It stays compact through
-understanding, acting, verification, and normal completion; clarification and
-errors open the detailed panel. The app collects the foreground application,
-window, selection, and focused accessibility element when macOS makes those
-fields reliably available. A simple Ask is answered in place; the inferred
-Ask · Guide · Act labels do not create a second automation engine.
-
-The first voice interaction asks for Microphone and Speech Recognition access.
-macOS chooses on-device recognition when available and may use Apple Speech as
-a fallback. Audio is not saved. Privacy-safe latency milestones are written to
-`~/.local/share/mcp-vision/interaction_metrics.jsonl` without transcript text.
-
-Auto chooses the behavior separately for each request. Ask can answer general
-questions or gather read-only browser evidence; Guide points at controls; Act
-performs supported operations and checks the resulting state. The popup retains
-the app/tab captured at invocation instead of capturing its own Go button.
-
-Examples in the popup:
-
-- “Explain what a heat pump does” → direct answer.
-- “Research heat pumps” → Google search and observed evidence.
-- “What unread emails are in my Gmail?” → existing Gmail session; sign-in is
-  requested only if needed.
-- “Find flights to SFO next week” → asks for the missing departure airport;
-  your next reply continues that request.
-- “Open Gmail” → opens or reuses the service and verifies the destination.
-- “Open the Notes app” → launches Notes and verifies that it is frontmost.
-- “Create a new tab” → sends Chrome’s native New Tab shortcut and verifies the tab count.
-- “Make a new note” → creates it in the app currently bound to the popup.
-- “Where is the export button?” → Guide on the captured app.
-- “Fill this using my résumé, don’t submit” → factual filling and review.
-
-The runtime checks the selected model before browser research or model-driven
-operations and can start an installed Ollama app if it is stopped. Missing models,
-credentials, OS permissions, sign-in and CAPTCHA remain explicit setup/user steps.
-After a verified app launch, the same popup stays bound to that new app, so a
-follow-up such as “create a new note” continues there without another invocation.
-It does not silently change providers or download model weights. This is a bounded
-assistant, not universal automation: unsupported controls and uncertain outcomes
-stop with a blocker; sending, booking and purchasing remain gated.
-
-While a task is running, hold **Option-Space** and start speaking to interrupt it
-at the next safe boundary and replace it with the new request. Partial speech is
-shown mid-sentence; actions still wait for a final transcript to avoid executing
-an incomplete command.
-
-For Chrome, open `chrome://extensions`, enable Developer mode, choose **Load
-unpacked**, and select this repository's `chrome_relay` folder. Right-click a page
-and choose **Ask MCP-Vision**. The action sends a bounded selection/element/nearby
-DOM context to the same local runtime and opens the native popup. Keep
-`mcp-vision ui` running while using the action.
-
-Useful checks:
+The original browser/desktop runtime still ships, and it is independent of the buddy:
 
 ```bash
-mcp-vision status
-mcp-vision install --host cursor
-```
-
-The UI is optional. Existing `mcp-vision serve`, MCP host configuration, and CLI
-workflows remain independent.
-
-### Runtime boundary
-
-The core owns context, orchestration, trust decisions, verification, receipts,
-and UX. Browser and desktop control sit behind an execution-backend protocol;
-the existing native/CDP/isolated runtimes are the defaults and are not duplicated.
-
-## Ask the bot
-
-```bash
-mcp-vision ask "flights to SFO from ATL Sept 28 to Oct 2"
-mcp-vision ask "what's on my gmail"
-mcp-vision ask "mechanical keyboard on ebay under 100"
-```
-
-Uses your existing Chrome (native, no automation banner). On success a second model
-pass (Ollama by default) cleans the raw page into a short answer. Use `--model none`
-for a local heuristic only.
-
-## Connect an agent host
-
-```bash
-mcp-vision setup --host cursor
-mcp-vision setup --host claude-desktop
-mcp-vision setup --host antigravity
-```
-
-Or print config: `mcp-vision config --allow-browser-writes`
-
-Claude Code:
-
-```bash
+mcp-vision setup --host cursor               # or claude-desktop, antigravity
 claude mcp add --transport stdio mcp-vision -- mcp-vision serve --browser live --driver native --allow-browser-writes
 ```
 
-Then ask the host in plain English: *list my tabs and find flights to SF…*
+- `serve --browser live` drives the Chrome you already have open, with no
+  automation banner.
+- With `TYPESAFE_API_KEY` set, routine actions are picked by Jev's bounded
+  fast policy. Consequential actions always escalate.
+- Buy, send and book actions still need *Allow once*.
 
-## How live Chrome works
+More: [docs/RUNTIME.md](docs/RUNTIME.md), [docs/STATE_RUNTIME.md](docs/STATE_RUNTIME.md),
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
-`serve --browser live` (default `--driver native`) drives the Chrome you already
-have open — cookies, extensions, tabs. No remote-debugging toggle. No “controlled
-by automated software” banner.
+The previous Option-Space popup (Ask / Guide / Act with form filling) is still
+available as `mcp-vision ui`, or as an app with `scripts/build_macos_app.py --entry ui`.
 
-CAPTCHA? You get a notification — solve it in Chrome, click **I solved it**.
-Buy / send / book still need Allow once.
-
-## Quick checks
+## Development
 
 ```bash
-mcp-vision connect
-mcp-vision demo
-mcp-vision bench-fastpath --iterations 10
-mcp-vision probe --live
-mcp-vision studio
-mcp-vision status
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev]'
+PYTHONPATH=src:. python -m pytest
 ```
 
-## Reasoning harness
-
-`src/mcp_vision/reasoning/` is a general, runtime-agnostic decision-making layer
-(not a workflow system): it turns vague requests into a persistent loop of
-understand → assume defensibly → investigate → verify → re-evaluate → finish,
-while the runtimes keep ownership of reality and safety. The model owns
-judgment; the runtime owns real execution, permissions, and verification.
-See [docs/REASONING_HARNESS.md](docs/REASONING_HARNESS.md).
-
-## State-scoped actions
-
-The bounded runtime path exposes immutable UI states, state-owned `@e` element
-references, compiled action candidates, optional fast-policy selection, and
-single-action transactions with successor diffs and semantic postconditions.
-See [docs/STATE_RUNTIME.md](docs/STATE_RUNTIME.md).
-
-The bounded FastPath can execute a routine multi-step subgoal with stale/no-op/
-loop budgets and evidence-based completion. Reproduce the local dynamic-browser
-comparison in [docs/BENCHMARKS.md](docs/BENCHMARKS.md); the checked-in report is
-deliberately explicit about what was and was not measured.
-
-For the execution ladder, perception fallback, Studio/replay experience,
-dogfooding evidence, and current limitations, see
-[docs/COMPUTER_USE_RUNTIME.md](docs/COMPUTER_USE_RUNTIME.md).
+The CI sequence, including real Chromium contracts, is in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

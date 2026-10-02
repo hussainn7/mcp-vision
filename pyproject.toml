@@ -1,7 +1,7 @@
 [project]
 name = "mcp-vision-runtime"
-version = "0.3.0"
-description = "Model-neutral computer-use runtime with grounded actions and explicit evidence"
+version = "0.4.0"
+description = "AI buddy next to your cursor: talk, it sees your screen, answers aloud and points. Plus an MCP computer-use runtime."
 authors = [{name = "Hussain"}]
 license = "MIT"
 readme = "README.md"

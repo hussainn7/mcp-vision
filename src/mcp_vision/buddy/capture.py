@@ -52,7 +52,7 @@ def _mac_scale_factors() -> dict[tuple[int, int], float]:
 def _mss_grab(monitor: dict[str, int]) -> Image.Image:
     import mss
 
-    with mss.MSS() as sct:
+    with mss.mss() as sct:
         shot = sct.grab(monitor)
         return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
 
@@ -60,7 +60,7 @@ def _mss_grab(monitor: dict[str, int]) -> Image.Image:
 def _mss_monitors() -> list[dict[str, int]]:
     import mss
 
-    with mss.MSS() as sct:
+    with mss.mss() as sct:
         return [dict(monitor) for monitor in sct.monitors[1:]]
 
 

@@ -7,10 +7,16 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _env_file() -> Path | None:
-    candidates = (Path.cwd() / ".env", Path.home() / ".config" / "mcp-vision" / ".env",
-                  Path(__file__).resolve().parents[3] / ".env")
-    return next((path for path in candidates if path.is_file()), None)
+def _env_files() -> tuple[Path, ...]:
+    """Existing dotenv files, lowest priority first: checkout, user config, current directory."""
+    candidates = (Path(__file__).resolve().parents[3] / ".env",
+                  Path.home() / ".config" / "mcp-vision" / ".env", Path.cwd() / ".env")
+    seen, found = set(), []
+    for path in candidates:
+        if path.is_file() and path.resolve() not in seen:
+            seen.add(path.resolve())
+            found.append(path)
+    return tuple(found)
 
 
 class BuddySettings(BaseSettings):
@@ -57,4 +63,4 @@ class BuddySettings(BaseSettings):
 
 
 def load_settings(**overrides) -> BuddySettings:
-    return BuddySettings(_env_file=_env_file(), **overrides)
+    return BuddySettings(_env_file=_env_files() or None, **overrides)
