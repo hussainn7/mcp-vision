@@ -47,13 +47,13 @@ class BuddySettings(BaseSettings):
     elevenlabs_model: str = "eleven_flash_v2_5"
     say_voice: str | None = None
 
-    # voice in
-    stt: str = "apple"                  # apple | assemblyai
+    # voice in: "auto" streams through AssemblyAI when its key is set, else Apple Speech
+    stt: str = "auto"                   # auto | assemblyai | apple
     assemblyai_api_key: str | None = Field(default=None, validation_alias=AliasChoices(
         "ASSEMBLYAI_API_KEY", "BUDDY_ASSEMBLYAI_API_KEY"))
 
-    # shortcut: hold to talk
-    hotkey: str = "ctrl+option"         # ctrl+option | option+space
+    # overlay
+    always_visible: bool = True         # False: the buddy only appears while it is working
 
 
 def load_settings(**overrides) -> BuddySettings:

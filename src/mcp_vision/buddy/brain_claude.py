@@ -39,6 +39,11 @@ class ClaudeBrain:
             client = anthropic.AsyncAnthropic(api_key=api_key, timeout=timeout, max_retries=2)
         self.client = client
 
+    async def warm(self) -> str:
+        """Open the TLS connection and validate the key before the first question."""
+        model = await self.client.models.retrieve(self.model)
+        return getattr(model, "display_name", "") or self.model
+
     def request(self, *, system: str, turns: list[Turn], detailed: bool = False) -> dict[str, Any]:
         """The exact request body (minus transport options); handy for tests.
 

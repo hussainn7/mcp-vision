@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import math
 
 import pytest
 from PIL import Image
@@ -34,7 +33,10 @@ def capturer(cursor=(2000.0, 100.0)) -> ScreenCapturer:
     )
 
 
-def shot(index=1, frame=Rect(0, 0, 1512, 982), size=(1280, 831), cursor=True) -> Screenshot:
+PRIMARY = Rect(0, 0, 1512, 982)
+
+
+def shot(index=1, frame=PRIMARY, size=(1280, 831), cursor=True) -> Screenshot:
     screen = ScreenInfo(index=index, frame=frame, scale=2.0, is_cursor_screen=cursor)
     return Screenshot(screen=screen, data=b"\xff\xd8jpeg", width=size[0], height=size[1])
 

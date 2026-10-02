@@ -127,7 +127,7 @@ class ScreenCapturer:
         for image in images:
             monitors.append({"left": left, "top": 0, "width": image.width, "height": image.height})
             left += image.width
-        by_left = {monitor["left"]: image for monitor, image in zip(monitors, images)}
+        by_left = {monitor["left"]: image for monitor, image in zip(monitors, images, strict=True)}
         return cls(monitors=lambda: monitors, grabber=lambda monitor: by_left[monitor["left"]],
                    cursor=lambda: (1.0, 1.0), scale_factors=dict, **options)
 
