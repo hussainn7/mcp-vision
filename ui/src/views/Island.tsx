@@ -125,7 +125,7 @@ export function Island() {
           </div>
           <div style={{ width: notchW }} />
           <div className="flex h-full items-center justify-end pr-3.5" style={{ width: earWidth }}>
-            <RightEar mode={mode} level={state.level} />
+            <RightEar mode={mode} level={state.level} done={state.done} />
           </div>
         </div>
 
@@ -152,9 +152,10 @@ export function Island() {
   )
 }
 
-function RightEar({ mode, level }: { mode: Mode; level: number }) {
+function RightEar({ mode, level, done }: { mode: Mode; level: number; done: boolean }) {
   if (mode === 'listening') return <Waveform level={level} bars={9} color="bg-emerald-300" />
-  if (mode === 'answering') return <Waveform level={level * 0.8} bars={7} color="bg-white/85" />
+  // TTS reports no level; keep the bars alive while Blip is still talking.
+  if (mode === 'answering') return <Waveform level={done ? 0.04 : Math.max(level, 0.42)} bars={7} color="bg-white/85" />
   if (mode === 'thinking')
     return (
       <span className="flex gap-1">

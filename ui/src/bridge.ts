@@ -195,6 +195,7 @@ export function receive(message: Inbound) {
 declare global {
   interface Window {
     __blip?: (message: Inbound | Inbound[]) => void
+    __BLIP_SURFACE__?: string
     webkit?: { messageHandlers?: { blip?: { postMessage: (body: unknown) => void } } }
   }
 }
@@ -215,6 +216,7 @@ export function onMockCommand(handler: (command: Command) => void) {
 export function send(cmd: string, payload: Record<string, unknown> = {}) {
   const body = { cmd, ...payload }
   const handler = window.webkit?.messageHandlers?.blip
-  if (handler) handler.postMessage(body)
+  // A JSON string crosses the WebKit bridge as a plain NSString: no dictionary conversion surprises.
+  if (handler) handler.postMessage(JSON.stringify(body))
   else mockHandlers.forEach((mock) => mock(body))
 }

@@ -127,6 +127,13 @@ class ScreenCapturer:
         image.save(buffer, format="JPEG", quality=self.quality, optimize=True)
         return Screenshot(screen=screen, data=buffer.getvalue(), width=width, height=height)
 
+    def fingerprint(self) -> bytes:
+        """A tiny grayscale thumbnail of the cursor screen for change detection."""
+        from mcp_vision.buddy.watch import fingerprint
+
+        screen = order_cursor_first(self.screens())[0]
+        return fingerprint(self._grab(self._monitor_for(screen)))
+
     @classmethod
     def from_images(cls, paths: list[str], **options) -> ScreenCapturer:
         """Treat image files as displays laid out left to right (headless testing)."""

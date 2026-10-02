@@ -10,7 +10,7 @@ import { Showcase } from './views/Showcase'
 
 type Surface = 'island' | 'mascot' | 'settings' | 'showcase'
 
-const surface = (location.hash.slice(1).split('?')[0] || (isNative() ? 'island' : 'showcase')) as Surface
+const surface = (window.__BLIP_SURFACE__ || location.hash.slice(1).split('?')[0] || (isNative() ? 'island' : 'showcase')) as Surface
 document.body.dataset.surface = surface
 
 if (!isNative()) {

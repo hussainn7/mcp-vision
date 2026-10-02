@@ -26,6 +26,8 @@ TAG_RE = re.compile(
     re.IGNORECASE,
 )
 _MALFORMED_TAG_RE = re.compile(r"\[\s*POINT\b[^\]]*\]", re.IGNORECASE)
+# Walkthrough control tags: "[STEPS:3]" opens a guided task, "[DONE]" ends it.
+CONTROL_RE = re.compile(r"\[\s*(?:STEPS\s*:\s*(?P<steps>\d{1,2})|(?P<done>DONE))\s*\]", re.IGNORECASE)
 _SCREEN_SUFFIX_RE = re.compile(r"^(?P<label>.*?)(?:\s*:\s*screen\s*(?P<screen>\d+))?\s*$", re.IGNORECASE | re.S)
 _SENTENCE_END_RE = re.compile(r"[.!?…]+[\"'”’)\]]*\s+")
 _MAX_TAG_LEN = 200
@@ -44,7 +46,17 @@ class SpeechChunk:
     text: str
 
 
-Event = SpeechChunk | PointTag
+@dataclass(frozen=True)
+class StepsTag:
+    total: int
+
+
+@dataclass(frozen=True)
+class DoneTag:
+    pass
+
+
+Event = SpeechChunk | PointTag | StepsTag | DoneTag
 
 
 def parse_tag(raw: str) -> PointTag | None:
@@ -64,7 +76,7 @@ def parse_tag(raw: str) -> PointTag | None:
 def extract_tags(text: str) -> tuple[str, list[PointTag]]:
     """Non-streaming helper: return the speakable text and every point tag."""
     tags = [tag for tag in (parse_tag(m.group(0)) for m in TAG_RE.finditer(text)) if tag]
-    return clean_spoken(_MALFORMED_TAG_RE.sub(" ", TAG_RE.sub(" ", text))), tags
+    return clean_spoken(CONTROL_RE.sub(" ", _MALFORMED_TAG_RE.sub(" ", TAG_RE.sub(" ", text)))), tags
 
 
 def clean_spoken(text: str) -> str:
@@ -94,6 +106,8 @@ class ReplyStream:
         self._pending_tags: list[PointTag] = []
         self.spoken: list[str] = []
         self.tags: list[PointTag] = []
+        self.steps: int | None = None      # set by [STEPS:n]
+        self.done = False                  # set by [DONE]
 
     @property
     def spoken_text(self) -> str:
@@ -125,6 +139,15 @@ class ReplyStream:
                 self._raw = raw                      # wait for the rest of the tag
                 break
             candidate, raw = raw[:end + 1], raw[end + 1:]
+            control = CONTROL_RE.fullmatch(candidate)
+            if control:
+                events.extend(self._release(merge=False))
+                events.append(StepsTag(int(control.group("steps"))) if control.group("steps") else DoneTag())
+                if control.group("done"):
+                    self.done = True
+                else:
+                    self.steps = int(control.group("steps"))
+                continue
             if TAG_RE.fullmatch(candidate):
                 # Sentences finished before the tag are spoken before it moves,
                 # even short ones that would otherwise wait to be merged.
@@ -142,7 +165,7 @@ class ReplyStream:
     def close(self) -> list[Event]:
         """Flush everything left at the end of the stream."""
         leftover, self._raw = self._raw, ""
-        if not re.match(r"\[\s*POINT\b", leftover, re.IGNORECASE):   # truncated tag: drop it
+        if not re.match(r"\[\s*(?:POINT|STEPS|DONE)\b", leftover, re.IGNORECASE):   # truncated tag: drop it
             self._text += leftover
         return self._release(final=True)
 
