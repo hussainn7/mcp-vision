@@ -8,9 +8,9 @@ Cursor or Gemini plan you already pay for**, and you can even text it from your 
 
 ![Plip walking through a five-step checklist in the notch while the droplet points at the next click](docs/img/plip-plan.jpg)
 
-> "how do I turn on two-factor in GitHub?"
+> "how do I send this deck as a PDF?"
 > → a five-step checklist drops out of the notch, and a little droplet drips down to
-> point at the first click. Plip watches your screen and checks each step off as you go.
+> point at the next click. Plip watches your screen and checks each step off as you go.
 
 > "text Sara I'm running ten minutes late"
 > → *"I'll text Sara that you're running ten minutes late."* A card shows the message
