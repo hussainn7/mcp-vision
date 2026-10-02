@@ -440,17 +440,56 @@ def test_cursor_lookup_survives_pyautogui_exiting(monkeypatch):
     assert capture.cursor_position() is None
 
 
-def test_a_hung_screen_grab_times_out_and_still_answers():
+def test_pointer_queries_never_overlap(monkeypatch):
+    # python-xlib isn't thread safe; overlapping queries on one display can hang forever.
+    import sys
     import threading
+    import types
+
+    from mcp_vision.buddy import capture
+
+    inside, overlaps = [0], []
+    fake = types.ModuleType("pyautogui")
+
+    def position():
+        inside[0] += 1
+        overlaps.append(inside[0])
+        time.sleep(0.02)
+        inside[0] -= 1
+        return 10, 20
+    fake.position = position
+    monkeypatch.setitem(sys.modules, "pyautogui", fake)
+    monkeypatch.setattr(capture.sys, "platform", "linux")
+    threads = [threading.Thread(target=capture.cursor_position) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert overlaps == [1, 1, 1, 1] and capture.cursor_position() == (10.0, 20.0)
+
+
+@pytest.mark.parametrize("stuck_in", ["capture", "screens"])
+def test_a_hung_screen_grab_times_out_and_still_answers(stuck_in):
+    import threading
+
+    from mcp_vision.buddy.router import RuleRouter
 
     gate = threading.Event()
 
-    class Stuck(Capturer):
+    class Stuck(Capturer):                  # e.g. an X server that never answers a pointer query
         def capture(self, *, only_cursor_screen=False):
-            gate.wait(5)
+            if stuck_in == "capture":
+                gate.wait(5)
+            return []
+
+        def screens(self):
+            if stuck_in == "screens":
+                gate.wait(5)
             return []
     brain = ScriptedBrain("Here you go.")
-    buddy = Companion(brain=brain, capturer=Stuck(), speaker=Speaker(), pointer=Pointer(), capture_timeout=0.2)
+    buddy = Companion(brain=brain, capturer=Stuck(), speaker=Speaker(), pointer=Pointer(),
+                      router=RuleRouter(), capture_timeout=0.2)
+
     async def timed():
         started = time.monotonic()
         result = await buddy.respond("what's up")

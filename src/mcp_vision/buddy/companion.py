@@ -484,7 +484,7 @@ class Companion:
         route = Route()
         if self.router is not None:
             try:
-                screens = await asyncio.to_thread(self.capturer.screens)
+                screens = await asyncio.wait_for(asyncio.to_thread(self.capturer.screens), self.capture_timeout)
                 route = await self.router.route(transcript, screens)
             except Exception:
                 route = Route(provider="fallback")

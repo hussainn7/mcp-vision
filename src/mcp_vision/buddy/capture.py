@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import sys
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -11,6 +12,9 @@ from PIL import Image
 from mcp_vision.buddy.geometry import Rect, ScreenInfo, Screenshot, fit_within, order_cursor_first
 
 Grabber = Callable[[dict[str, int]], Image.Image]
+
+
+_POINTER_LOCK = threading.Lock()
 
 
 def cursor_position() -> tuple[float, float] | None:
@@ -26,7 +30,10 @@ def cursor_position() -> tuple[float, float] | None:
     try:
         import pyautogui
 
-        x, y = pyautogui.position()
+        # pyautogui shares one Xlib display, and python-xlib isn't thread safe: two
+        # threads asking at once can swallow each other's reply and wait forever.
+        with _POINTER_LOCK:
+            x, y = pyautogui.position()
         return float(x), float(y)
     except (Exception, SystemExit):         # pyautogui exits the process when tkinter is missing
         return None
