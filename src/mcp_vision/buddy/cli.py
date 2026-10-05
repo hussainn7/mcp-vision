@@ -13,8 +13,6 @@ import click
 @click.pass_context
 def buddy(ctx: click.Context) -> None:
     """Plip, your AI buddy in the notch: hold Control+Option, talk, and it points at things."""
-    from mcp_vision.analytics import ping
-    ping("plip")
     if ctx.invoked_subcommand is None:
         ctx.invoke(run)
 
@@ -26,6 +24,11 @@ def run() -> None:
 
     if sys.platform != "darwin":
         raise click.ClickException("The buddy overlay needs macOS. Try: plip ask --image shot.png \"...\"")
+    from mcp_vision.analytics import ping
+
+    # Only the app pings: it runs for hours, so the request always finishes. A quick command
+    # (`plip memory show`) could exit mid-request, and Python can crash tearing that thread down.
+    ping("app")
     try:
         from mcp_vision.buddy.app_macos import run_buddy_app
         run_buddy_app()

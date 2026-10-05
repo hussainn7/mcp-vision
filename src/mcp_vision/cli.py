@@ -12,8 +12,6 @@ from mcp_vision.log import configure
 def cli() -> None:
     """Plip: hold Control+Option and ask."""
     configure()
-    from mcp_vision.analytics import ping
-    ping("plip")
 
 
 cli.add_command(_buddy)

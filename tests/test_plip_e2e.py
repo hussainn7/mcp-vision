@@ -78,7 +78,7 @@ def plip(tmp_path):
     env.update(PATH=f"{bin_dir}{os.pathsep}{env.get('PATH', '')}", HOME=str(home), FAKE_CLAUDE_LOG=str(log),
                MCP_VISION_CONFIG_DIR=str(tmp_path / "config"), MCP_VISION_STATE_DIR=str(tmp_path / "state"),
                PYTHONPATH=f"{ROOT / 'src'}{os.pathsep}{ROOT}", BUDDY_ROUTER="rules", BUDDY_ENGINE="claude-code",
-               PYTHONFAULTHANDLER="1")
+               PYTHONFAULTHANDLER="1", MCP_VISION_NO_ANALYTICS="1")
 
     def run(*args, stdin: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
         command = [sys.executable, "-m", "mcp_vision.cli", "buddy", *args]
