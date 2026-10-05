@@ -106,7 +106,10 @@ class Memory:
             data = json.loads(self.path.read_text())
         except (OSError, ValueError):
             return
-        self.facts = [Fact(**item) for item in data.get("facts", []) if item.get("key") and item.get("value")]
+        # Skip fields from newer builds so an older app still opens the same memory file.
+        known = Fact.__dataclass_fields__
+        self.facts = [Fact(**{k: v for k, v in item.items() if k in known})
+                      for item in data.get("facts", []) if item.get("key") and item.get("value")]
         self.imports = data.get("imports", {})
         self.contacts = data.get("contacts", [])
         self.handles = data.get("handles", [])
