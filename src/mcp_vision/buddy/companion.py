@@ -354,6 +354,8 @@ class Companion:
         if total and result.finished:
             self.emit("walkthrough", index=total - 1, total=total, label="done", waiting=False, finished=True)
         result.turns = turns
+        if turns > 1 and result.state == "done" and not result.pending:
+            self.conversation.fold()                  # its step-by-step results needn't ride along any more
         return result
 
     async def _answer(self, accept: bool, transcript: str) -> TurnResult | None:
@@ -472,7 +474,7 @@ class Companion:
                 self.speaker.speak(ask)
                 self.emit("answer", text=(" " if result.spoken else "") + ask)
                 result.spoken = (result.spoken + " " + ask).strip()
-            self.conversation.record(transcript, _history_text(reply, result.targets, result.did))
+            self.conversation.record(transcript, _history_text(reply, result.targets, result.did), step=guide)
             self.emit("done", latency_ms=result.timings.get("first_speech"), spoken=result.spoken)
             await self.speaker.drain()
             mark("spoken")

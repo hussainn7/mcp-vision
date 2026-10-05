@@ -329,9 +329,11 @@ def test_turn_runs_actions_and_hands_results_back(tmp_path):
     steps = events.of("step")
     assert {"id": "action-1", "label": "Searching files for invoice", "status": "done", "detail": "1 found"} in steps
     assert events.of("action")[0]["items"][0]["title"] == "Invoice-September.pdf"
-    history = buddy.conversation.history()
-    assert history[1].text == "Looking now. (did: Searching files for invoice)"
-    assert history[-1].text.endswith("Opening it. (did: Opening the file)")
+    history = buddy.conversation.history()                       # the finished task folded into one exchange
+    assert [turn.text for turn in history] == [
+        "find my september invoice",
+        "Looking now. (did: Searching files for invoice) Found it: Invoice September, in your Taxes folder. "
+        "Opening it. (did: Opening the file)"]
 
 
 def test_turn_asks_before_consequential_actions_and_voice_yes_runs_it(tmp_path):
