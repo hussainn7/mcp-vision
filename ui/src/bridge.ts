@@ -235,7 +235,7 @@ export const defaultIsland: IslandState = {
 export const defaultMascot: MascotState = { mood: 'idle', level: 0, lean: 0, look: { x: 0, y: 0 }, label: '' }
 
 export const defaultSettings: SettingsState = {
-  version: '0.7.1',
+  version: '0.8.0',
   engines: [],
   depth: 'balanced',
   permissions: { screen: null, accessibility: null, microphone: null, speech: null },
