@@ -37,7 +37,7 @@ happens until you say yes.
 
 1. Open the `.dmg` and drag **Plip** into **Applications**.
 2. Open Plip from Applications. If macOS says it can't check it for malicious software,
-   right-click Plip → **Open** → **Open** (only the first time).
+   go to System Settings → Privacy & Security and click **Open Anyway** (only the first time).
 3. A short welcome walks you through it: allow Screen Recording, Accessibility and
    Microphone, then click **Connect AI**. Done.
 4. Hold **Control+Option**, ask something, let go.

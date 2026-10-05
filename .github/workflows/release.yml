@@ -1,7 +1,8 @@
 name: release dmg
 
-# Push a tag like v0.7.0 and this builds Plip-<version>.dmg and attaches it to a GitHub release.
-# With the Apple secrets below set, the DMG is also signed + notarized (opens with no warnings).
+# Push a tag like v0.8.0: this builds Plip-<version>.dmg with scripts/build_dmg.py and attaches it to a
+# GitHub release. With the Apple secrets set (docs/RELEASING.md) it's signed + notarized, so it opens
+# with no warning; without them it's signed ad hoc.
 on:
   push:
     tags: ['v*']
@@ -14,34 +15,40 @@ jobs:
   dmg:
     runs-on: macos-15
     timeout-minutes: 45
+    env:
+      APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-      - run: |
-          python -m venv .venv
-          .venv/bin/pip install -q . pyinstaller
-      - name: Import Developer ID certificate
-        if: ${{ env.APPLE_CERT_P12 != '' }}
-        env:
-          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      - name: uv
         run: |
-          echo "$APPLE_CERT_P12" | base64 --decode > cert.p12
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Developer ID certificate + notary login (only when the Apple secrets are set)
+        if: env.APPLE_CERT_P12 != ''
+        env:
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_SIGN_ID: ${{ secrets.APPLE_SIGN_ID }}
+        run: |
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p ci build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p ci build.keychain
-          security import cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
-          xcrun notarytool store-credentials plip --apple-id "${{ secrets.APPLE_ID }}" \
-            --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APPLE_APP_PASSWORD }}"
-          echo "SIGN_ID=${{ secrets.APPLE_SIGN_ID }}" >> "$GITHUB_ENV"
-          echo "NOTARY_PROFILE=plip" >> "$GITHUB_ENV"
-      - run: scripts/build_dmg.sh
+          rm "$RUNNER_TEMP/cert.p12"
+          xcrun notarytool store-credentials plip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD"
+          echo "SIGN_ID=$APPLE_SIGN_ID" >> "$GITHUB_ENV"
+      - name: Build Plip.app + the dmg
+        run: |
+          if [ -n "${SIGN_ID:-}" ]; then
+            uv run --no-project --python 3.12 scripts/build_dmg.py --sign "$SIGN_ID" --notarize plip
+          else
+            uv run --no-project --python 3.12 scripts/build_dmg.py
+          fi
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
