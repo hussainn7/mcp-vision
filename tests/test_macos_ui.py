@@ -144,7 +144,7 @@ def test_launcher_builds_icon_and_uses_stable_designated_requirement():
     from pathlib import Path
 
     src = Path("scripts/build_macos_app.py").read_text()
-    assert "dist' / 'logoW.png" in src
+    assert "assets' / 'plip-icon.png" in src
     assert "CFBundleIconFile" in src and "format='ICNS'" in src
     assert "ImageDraw" in src and "Clean checkouts" in src
     assert 'designated => identifier "org.mcpvision.contextual"' in src
