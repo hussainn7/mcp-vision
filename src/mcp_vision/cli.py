@@ -31,6 +31,8 @@ def agent_cli() -> None:
 def cli() -> None:
     """mcp-vision — screen perception and actuation over MCP."""
     configure()
+    from mcp_vision.analytics import ping
+    ping("mcp-vision")
 
 
 from mcp_vision.buddy.cli import buddy as _buddy  # noqa: E402

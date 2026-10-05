@@ -169,3 +169,7 @@ The CI sequence, including real Chromium contracts, is in
 ## License
 
 MIT
+
+## Analytics
+
+mcp-vision sends one anonymous ping per day (random install id, version, OS) so we can count active users. No screens, files, or prompts are ever sent. Opt out with `MCP_VISION_NO_ANALYTICS=1` or `DO_NOT_TRACK=1`.

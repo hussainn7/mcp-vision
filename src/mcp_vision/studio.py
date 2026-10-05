@@ -1,4 +1,4 @@
-"""Loopback-only Mission Control. No model keys, arbitrary URL runner, or telemetry."""
+"""Loopback-only Mission Control. No model keys, or arbitrary URL runner. Studio itself sends no telemetry."""
 from __future__ import annotations
 
 import asyncio

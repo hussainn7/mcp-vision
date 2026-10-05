@@ -13,6 +13,8 @@ import click
 @click.pass_context
 def buddy(ctx: click.Context) -> None:
     """Plip, your AI buddy in the notch: hold Control+Option, talk, and it points at things."""
+    from mcp_vision.analytics import ping
+    ping("plip")
     if ctx.invoked_subcommand is None:
         ctx.invoke(run)
 
