@@ -43,3 +43,17 @@ def test_dmg_window_is_a_bare_icon_view_with_plip_left_of_applications():
     assert settings["icon_locations"]["Plip.app"] == (180, 232)
     assert settings["icon_locations"]["Applications"] == (480, 232)
     assert settings["symlinks"] == {"Applications": "/Applications"}
+
+
+DEV_ID = "Developer ID Application: Hussain Syed (ABCDE12345)"
+IDENTITIES = f'  1) 0123456789ABCDEF0123456789ABCDEF01234567 "{DEV_ID}"\n     1 valid identities found\n'
+
+
+def test_release_needs_a_developer_id_in_the_keychain_and_a_notary_profile():
+    assert build_dmg.release_problems("-", "", IDENTITIES, None) == []              # everyday ad hoc build
+    assert "needs --sign" in build_dmg.release_problems("-", "plip", IDENTITIES, True)[0]
+    assert "isn't a Developer ID" in build_dmg.release_problems("Apple Development: me", "", IDENTITIES, None)[0]
+    missing = build_dmg.release_problems(DEV_ID, "plip", "     0 valid identities found\n", True)
+    assert len(missing) == 1 and "isn't in your keychain" in missing[0]
+    assert "store-credentials plip" in build_dmg.release_problems(DEV_ID, "plip", IDENTITIES, False)[0]
+    assert build_dmg.release_problems(DEV_ID, "plip", IDENTITIES, True) == []

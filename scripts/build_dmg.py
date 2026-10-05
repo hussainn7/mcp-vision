@@ -5,14 +5,25 @@ on any Apple-silicon Mac with nothing installed. It writes only to ``dist/``.
 
     .venv/bin/python scripts/build_dmg.py         # dist/Plip.app + dist/Plip-<version>.dmg, signed ad hoc
 
+A release Apple trusts (opens with no "can't check this app" warning):
+
+    xcrun notarytool store-credentials plip --apple-id <you> --team-id <TEAM> --password <app-specific>
+    .venv/bin/python scripts/build_dmg.py --sign "Developer ID Application: <Name> (<TEAM>)" --notarize plip
+
+That checks the certificate and the notary profile before building, signs everything with the
+Developer ID, notarizes and staples the app, then signs, notarizes and staples the DMG, and asks
+Gatekeeper about both.
+
 Needs macOS on Apple silicon, the Xcode command line tools (clang, codesign) and ``uv``
 (it copies uv's own CPython 3.12 into the app and runs dmgbuild through ``uv tool run``).
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -254,20 +265,95 @@ def build_dmg(app: Path, dist: Path) -> Path:
     return target
 
 
+# -- a release Apple trusts ---------------------------------------------------------------------------------------
+
+def release_problems(sign: str, profile: str, identities: str, profile_ok: bool | None) -> list[str]:
+    """Why a --sign / --notarize release can't work, found before the build instead of after it."""
+    problems = []
+    if profile and sign == "-":
+        problems.append('--notarize needs --sign "Developer ID Application: <Name> (<TEAM>)"')
+    if sign != "-":
+        if not sign.startswith("Developer ID Application") and not re.fullmatch(r"[0-9A-F]{40}", sign):
+            problems.append(f"{sign!r} isn't a Developer ID Application identity (Apple only notarizes those)")
+        elif sign not in identities:
+            problems.append(f"{sign!r} isn't in your keychain (`security find-identity -v -p codesigning` lists what "
+                            "is). Make one in Xcode > Settings > Accounts > Manage Certificates > Developer ID "
+                            "Application")
+    if profile and profile_ok is False:
+        problems.append(f"no notarytool profile {profile!r}: run xcrun notarytool store-credentials {profile} "
+                        "--apple-id <you> --team-id <TEAM> --password <app-specific password>")
+    return problems
+
+
+def notarize(path: Path, profile: str) -> None:
+    """Upload, wait for Apple's verdict, print its log if it says no, then staple the ticket."""
+    upload = path
+    if path.suffix == ".app":
+        upload = path.with_suffix(".zip")
+        upload.unlink(missing_ok=True)
+        run("ditto", "-c", "-k", "--keepParent", path, upload)
+    result = subprocess.run(["xcrun", "notarytool", "submit", str(upload), "--keychain-profile", profile, "--wait",
+                             "--output-format", "json"], capture_output=True, text=True)
+    if upload != path:
+        upload.unlink(missing_ok=True)
+    try:
+        verdict = json.loads(result.stdout or "{}")
+    except ValueError:
+        verdict = {}
+    status, submission = verdict.get("status", ""), verdict.get("id", "")
+    print(f"   notary: {status or 'no answer'} {submission}")
+    if status != "Accepted":
+        if submission:
+            run("xcrun", "notarytool", "log", submission, "--keychain-profile", profile)
+        raise SystemExit(f"Apple didn't accept {path.name}: {status or result.stderr.strip()[-400:]}")
+    run("xcrun", "stapler", "staple", path)
+    run("xcrun", "stapler", "validate", path)
+
+
+def gatekeeper(app: Path, dmg: Path | None) -> None:
+    run("spctl", "--assess", "--type", "execute", "--verbose=4", app)
+    if dmg is not None:
+        run("spctl", "--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=4", dmg)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--sign", default="-", help='codesign identity (default: ad hoc). "Developer ID Application: …"')
+    parser.add_argument("--notarize", default="", help="notarytool keychain profile; needs a Developer ID --sign")
     parser.add_argument("--app-only", action="store_true", help="build dist/Plip.app, skip the DMG")
     args = parser.parse_args()
     if sys.platform != "darwin" or os.uname().machine != "arm64":
         raise SystemExit("Build on an Apple-silicon Mac (the bundled Python is arm64).")
+    sign, profile = args.sign, args.notarize
+    identities = subprocess.run(["security", "find-identity", "-v", "-p", "codesigning"], capture_output=True,
+                                text=True).stdout
+    profile_ok = None
+    if profile:
+        profile_ok = subprocess.run(["xcrun", "notarytool", "history", "--keychain-profile", profile],
+                                    capture_output=True).returncode == 0
+    problems = release_problems(sign, profile, identities, profile_ok)
+    if problems:
+        raise SystemExit("Can't make a release yet:\n  - " + "\n  - ".join(problems))
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
-    app = build_app(dist)
+    app = build_app(dist, sign)
     size = sum(path.stat().st_size for path in app.rglob("*") if path.is_file() and not path.is_symlink())
     print(f"   {app} ({size / 1e6:.0f} MB)")
-    if not args.app_only:
-        dmg = build_dmg(app, dist)
-        print(f"\n{dmg} ({dmg.stat().st_size / 1e6:.0f} MB)")
+    if profile:
+        print("notarize the app")
+        notarize(app, profile)
+    dmg = None if args.app_only else build_dmg(app, dist)
+    if dmg is not None and sign != "-":
+        run("codesign", "--force", "--sign", sign, "--timestamp", dmg)
+        if profile:
+            print("notarize the dmg")
+            notarize(dmg, profile)
+    if profile:
+        gatekeeper(app, dmg)
+    if dmg is not None:
+        print(f"\n{dmg} ({dmg.stat().st_size / 1e6:.0f} MB)" + ("" if profile else
+              "\nsigned ad hoc: people see \"can't check this app\" until it's built with --sign and --notarize"
+              if sign == "-" else "\nsigned but not notarized: add --notarize <profile>"))
 
 
 if __name__ == "__main__":
