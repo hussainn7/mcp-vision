@@ -147,6 +147,22 @@ await test('settings: usage tab switches periods and clears', async () => {
   await page.close()
 })
 
+await test('settings: voice picks parakeet, downloads with progress, cancels, removes', async () => {
+  const { page, take } = await open('settings?tab=voice')
+  await page.getByRole('button', { name: 'Parakeet' }).click()
+  assert.deepEqual(await take('set-voice'), { cmd: 'set-voice', stt: 'parakeet' })
+  await page.getByRole('button', { name: /Download 663 MB/ }).click()
+  assert.ok(await take('parakeet-download'))
+  await page.getByText(/MB of 663 MB/).waitFor()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  assert.ok(await take('parakeet-cancel'))
+  await page.getByRole('button', { name: /Download 663 MB/ }).click()
+  await page.getByText('Listening with Parakeet').waitFor({ timeout: 8000 })
+  await page.getByRole('button', { name: /Remove/ }).click()
+  assert.ok(await take('parakeet-remove'))
+  await page.close()
+})
+
 await test('settings: every tab renders without errors', async () => {
   for (const tab of ['home', 'skills', 'memory', 'brain', 'voice', 'permissions', 'usage', 'history', 'about']) {
     const { page } = await open(`settings?tab=${tab}`)

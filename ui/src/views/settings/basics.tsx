@@ -1,12 +1,13 @@
-import { AudioLines, Contact, Hand, MessageSquareText, Mic, MonitorUp, ShieldCheck, WandSparkles } from 'lucide-react'
-import { send, type SettingsState } from '../../bridge'
+import { motion } from 'motion/react'
+import { AudioLines, Contact, Download, Hand, MessageSquareText, Mic, MonitorUp, ShieldCheck, WandSparkles } from 'lucide-react'
+import { send, type ParakeetModel, type SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Button, Card, Empty, Header, KeyField, Pill, Section, Segmented } from './ui'
 
 export function VoiceTab({ state }: { state: SettingsState }) {
   return (
     <div>
-      <Header eyebrow="Voice" title="How Plip sounds and listens" subtitle="Works out of the box with macOS voices and on-device recognition. Add keys for a more natural voice and faster streaming transcription." />
+      <Header eyebrow="Voice" title="How Plip sounds and listens" subtitle="Works out of the box with macOS voices and on-device recognition. Add keys for a more natural voice, or download Parakeet for sharper listening that stays on your Mac." />
       <div className="space-y-3">
         <Card>
           <div className="mb-3 flex items-center justify-between">
@@ -33,13 +34,58 @@ export function VoiceTab({ state }: { state: SettingsState }) {
             </div>
             <Segmented
               value={state.voice.stt}
-              options={[{ value: 'assemblyai', label: 'AssemblyAI' }, { value: 'apple', label: 'On-device' }]}
+              options={[{ value: 'apple', label: 'Apple' }, { value: 'parakeet', label: 'Parakeet' }, { value: 'assemblyai', label: 'AssemblyAI' }]}
               onChange={(stt) => send('set-voice', { stt })}
             />
           </div>
           {state.voice.stt === 'assemblyai' && <KeyField name="ASSEMBLYAI_API_KEY" placeholder="AssemblyAI API key" saved={state.voice.assemblyai} />}
+          {state.voice.stt === 'apple' && <p className="text-[12px] leading-relaxed text-white/45">Built into macOS, on your Mac. Nothing to download.</p>}
+          {state.voice.stt === 'parakeet' && state.voice.parakeet && <ParakeetPanel model={state.voice.parakeet} />}
         </Card>
       </div>
+    </div>
+  )
+}
+
+const megabytes = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`
+
+/** Parakeet: what it is, the one-time download (with progress), and where it stands. */
+function ParakeetPanel({ model }: { model: ParakeetModel }) {
+  const share = model.total ? model.done / model.total : 0
+  return (
+    <div className="space-y-2.5">
+      <p className="text-[12px] leading-relaxed text-white/45">
+        NVIDIA&apos;s Parakeet Unified 0.6B, running on your Mac: catches more of what you say than Apple&apos;s, with punctuation, and
+        nothing leaves your Mac.
+      </p>
+      {!model.runtime ? (
+        <div className="rounded-xl bg-sun/[0.08] px-3 py-2 text-[12px] text-amber-100/90">Parakeet needs sherpa-onnx: reinstall Plip</div>
+      ) : model.state === 'ready' ? (
+        <div className="flex items-center justify-between">
+          <Pill tone="good">Listening with Parakeet</Pill>
+          <Button size="sm" variant="danger" onClick={() => send('parakeet-remove')}>Remove ({megabytes(model.total)})</Button>
+        </div>
+      ) : model.state === 'downloading' ? (
+        <div className="space-y-1.5">
+          <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+            <motion.div className="h-full rounded-full brand-gradient" animate={{ width: `${Math.max(2, share * 100)}%` }} transition={{ type: 'spring', stiffness: 120, damping: 20 }} />
+          </div>
+          <div className="flex items-center justify-between text-[11.5px] text-white/45">
+            <span>{megabytes(model.done)} of {megabytes(model.total)} · Apple&apos;s listens until it&apos;s ready</span>
+            <Button size="sm" variant="quiet" onClick={() => send('parakeet-cancel')}>Cancel</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {model.state === 'failed' && <div className="rounded-xl bg-coral/[0.08] px-3 py-2 text-[12px] leading-relaxed text-rose-200/90">{model.error}</div>}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11.5px] text-white/40">One-time download. Apple&apos;s listens until it&apos;s ready.</span>
+            <Button size="sm" variant="brand" onClick={() => send('parakeet-download')}>
+              <Download className="size-3.5" /> {model.state === 'failed' ? 'Try again' : `Download ${megabytes(model.total)}`}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

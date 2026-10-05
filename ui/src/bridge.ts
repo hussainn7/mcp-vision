@@ -121,6 +121,15 @@ export interface MemoryPanel {
   handles: string[]
 }
 
+/** NVIDIA Parakeet Unified 0.6B: an opt-in on-device recognizer, downloaded once. */
+export interface ParakeetModel {
+  state: 'missing' | 'downloading' | 'ready' | 'failed'
+  done: number               // bytes so far, while downloading
+  total: number              // bytes in all
+  error: string
+  runtime: boolean           // sherpa-onnx is installed
+}
+
 export type Outcome = 'done' | 'answered' | 'unverified' | 'paused' | 'waiting' | 'failed' | 'stopped'
 
 export interface UsagePeriod {
@@ -153,7 +162,10 @@ export interface SettingsState {
   engines: Engine[]
   depth: 'fast' | 'balanced' | 'deep'
   permissions: { screen: boolean | null; accessibility: boolean | null; microphone: boolean | null; speech: boolean | null }
-  voice: { tts: 'elevenlabs' | 'say' | 'off'; stt: 'assemblyai' | 'apple'; elevenlabs: boolean; assemblyai: boolean }
+  voice: {
+    tts: 'elevenlabs' | 'say' | 'off'; stt: 'assemblyai' | 'apple' | 'parakeet'; elevenlabs: boolean; assemblyai: boolean
+    parakeet?: ParakeetModel | null
+  }
   jev: { configured: boolean; enabled: boolean; latencyMs: number | null }
   keys: Record<string, boolean>
   history: HistoryItem[]

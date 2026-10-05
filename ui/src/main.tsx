@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { isNative, onMockCommand, send, settings } from './bridge'
+import { isNative, onMockCommand, send, settings, type SettingsState } from './bridge'
 import { loadDemoSettings } from './demo'
 import './styles.css'
 import { Island } from './views/Island'
@@ -30,6 +30,26 @@ if (!isNative()) {
     if (command.cmd === 'set-walkthroughs') settings.set({ walkthroughs: Boolean(command.enabled) })
     if (command.cmd === 'set-voice') {
       settings.set((current) => ({ voice: { ...current.voice, ...(command.tts ? { tts: command.tts } : {}), ...(command.stt ? { stt: command.stt } : {}) } as typeof current.voice }))
+    }
+    // Browser preview: Parakeet's download fills up over a few seconds, then it's listening.
+    const parakeet = (patch: Partial<NonNullable<SettingsState['voice']['parakeet']>>) =>
+      settings.set((current) => ({ voice: { ...current.voice, parakeet: { ...current.voice.parakeet!, ...patch } } }))
+    if (command.cmd === 'parakeet-download' && settings.get().voice.parakeet) {
+      settings.set((current) => ({ voice: { ...current.voice, stt: 'parakeet' } }))
+      const total = settings.get().voice.parakeet!.total
+      parakeet({ state: 'downloading', done: 0, error: '' })
+      const timer = window.setInterval(() => {
+        const now = settings.get().voice.parakeet!
+        if (now.state !== 'downloading') return window.clearInterval(timer)
+        const done = Math.min(total, now.done + total / 12)
+        parakeet(done >= total ? { state: 'ready', done: 0 } : { done })
+        if (done >= total) window.clearInterval(timer)
+      }, 350)
+    }
+    if (command.cmd === 'parakeet-cancel') parakeet({ state: 'missing', done: 0 })
+    if (command.cmd === 'parakeet-remove') {
+      parakeet({ state: 'missing', done: 0 })
+      settings.set((current) => ({ voice: { ...current.voice, stt: 'apple' } }))
     }
   })
 }
