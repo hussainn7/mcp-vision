@@ -5,12 +5,19 @@ English FastConformer-RNNT that writes punctuation and capitals, and nothing you
 Mac. It's big, so nothing is downloaded until you pick it: the int8 ONNX export by sherpa-onnx's
 author (about 663 MB), pinned to one revision and checked against its SHA-256 file by file,
 resumable, into Plip's own folder.
+
+sherpa-onnx runs it on the CPU. Push-to-talk works like the other listeners: the microphone is
+buffered while you hold Control + Option, the live transcript comes from re-reading what's there
+so far (one read at a time, at most every 0.6 s), and the final one from the whole utterance when
+you let go. It only needs the microphone, not Speech Recognition, so it works from a Terminal too.
 """
 from __future__ import annotations
 
+import array
 import hashlib
 import importlib.util
 import os
+import re
 import shutil
 import threading
 import time
@@ -19,6 +26,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from mcp_vision.buddy.speech_in import SAMPLE_RATE, ListenerCallbacks, MicStream, pcm16_level
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,9 @@ MODEL = ModelSpec(
     ),
 )
 CHUNK = 1 << 20                      # bytes per read while downloading
+MIN_AUDIO = 0.25                     # seconds: shorter than this is a tap, not speech
+PARTIAL_EVERY = 0.6                  # seconds between live transcripts, at the least
+_GLUED_MONEY = re.compile(r"(?<=[A-Za-z])(?=[$€£]\d)")
 
 
 def models_dir() -> Path:
@@ -77,6 +89,15 @@ def installed(spec: ModelSpec = MODEL, directory: Path | None = None) -> bool:
 
 def runtime_available() -> bool:
     return importlib.util.find_spec("sherpa_onnx") is not None
+
+
+def unavailable(spec: ModelSpec = MODEL, directory: Path | None = None) -> str:
+    """Why Parakeet can't listen right now, or "" when it can."""
+    if not runtime_available():
+        return "Parakeet needs sherpa-onnx: reinstall Plip"
+    if not installed(spec, directory):
+        return "Parakeet isn't downloaded yet"
+    return ""
 
 
 class DownloadError(RuntimeError):
@@ -230,6 +251,7 @@ class ParakeetModel:
             worker.join(10)
         shutil.rmtree(self.directory, ignore_errors=True)
         self._error, self._done = "", 0
+        forget_recognizer()
         self.on_change()
 
     def _progress(self, done: int, _total: int) -> None:
@@ -255,3 +277,150 @@ class ParakeetModel:
             return
         self._worker = None
         self.on_change()
+
+
+# -- recognition ----------------------------------------------------------------------------------
+
+_RECOGNIZER: dict[str, Any] = {}
+_RECOGNIZER_LOCK = threading.Lock()
+
+
+def recognizer(directory: Path | None = None, threads: int | None = None):
+    """The loaded model, shared by every listener in this process (loading it takes a second or two)."""
+    directory = directory or model_dir()
+    with _RECOGNIZER_LOCK:
+        loaded = _RECOGNIZER.get(str(directory))
+        if loaded is None:
+            import sherpa_onnx
+
+            loaded = sherpa_onnx.OfflineRecognizer.from_transducer(
+                encoder=str(directory / "encoder.int8.onnx"), decoder=str(directory / "decoder.int8.onnx"),
+                joiner=str(directory / "joiner.int8.onnx"), tokens=str(directory / "tokens.txt"),
+                num_threads=threads or max(2, min(8, (os.cpu_count() or 4) - 2)), sample_rate=SAMPLE_RATE,
+                feature_dim=80, decoding_method="greedy_search", model_type="nemo_transducer")
+            _RECOGNIZER[str(directory)] = loaded
+        return loaded
+
+
+def forget_recognizer() -> None:
+    with _RECOGNIZER_LOCK:
+        _RECOGNIZER.clear()
+
+
+def transcribe(model: Any, pcm16: bytes) -> str:
+    """16 kHz mono int16 audio -> text, with Parakeet's own punctuation and capitals."""
+    samples = array.array("h")
+    samples.frombytes(pcm16[: len(pcm16) // 2 * 2])
+    if len(samples) < SAMPLE_RATE * MIN_AUDIO:
+        return ""
+    stream = model.create_stream()
+    stream.accept_waveform(SAMPLE_RATE, [sample / 32768.0 for sample in samples])
+    model.decode_stream(stream)
+    text = " ".join(str(stream.result.text).split())
+    return _GLUED_MONEY.sub(" ", text)                # "at least$150,000" -> "at least $150,000"
+
+
+class ParakeetListener:
+    """Push-to-talk with Parakeet. Same contract as the Apple and AssemblyAI listeners."""
+
+    name = "parakeet"
+
+    def __init__(self, callbacks: ListenerCallbacks, *, model: Callable[[], Any] = recognizer,
+                 mic_factory: Callable[[Callable[[bytes], None]], Any] = MicStream,
+                 partial_every: float = PARTIAL_EVERY):
+        self.callbacks = callbacks
+        self._model = model
+        self._mic_factory = mic_factory
+        self.partial_every = partial_every
+        self._lock = threading.Lock()
+        self._decoding = threading.Lock()                 # one read of the model at a time
+        self._generation = 0
+        self._audio = bytearray()
+        self._mic = None
+        threading.Thread(target=self._warm, daemon=True, name="plip-parakeet-load").start()
+
+    def _warm(self) -> None:
+        """Load the model now, so the first press doesn't wait for it."""
+        try:
+            self._model()
+        except Exception:
+            pass                                          # start() reports it if it still can't load
+
+    def start(self) -> None:
+        self.cancel()
+        with self._lock:
+            generation = self._generation
+            self._audio = bytearray()
+        try:
+            self._mic = self._mic_factory(lambda chunk: self._on_audio(chunk, generation))
+            self._mic.start()
+        except Exception as exc:
+            self.callbacks.error(f"microphone unavailable: {exc}")
+            return
+        threading.Thread(target=self._live, args=(generation,), daemon=True, name="plip-parakeet-live").start()
+
+    def _on_audio(self, chunk: bytes, generation: int) -> None:
+        with self._lock:
+            if generation != self._generation:
+                return
+            self._audio.extend(chunk)
+        self.callbacks.level(pcm16_level(chunk))
+
+    def _snapshot(self, generation: int) -> bytes | None:
+        with self._lock:
+            return bytes(self._audio) if generation == self._generation else None
+
+    def _live(self, generation: int) -> None:
+        """While the keys are held: the transcript so far, re-read now and then (never two reads at once)."""
+        heard = 0
+        wait = self.partial_every
+        while True:
+            time.sleep(wait)
+            audio = self._snapshot(generation)
+            if audio is None or self._mic is None:
+                return
+            if len(audio) == heard:
+                continue
+            heard = len(audio)
+            started = time.monotonic()
+            try:
+                with self._decoding:
+                    text = transcribe(self._model(), audio)
+            except Exception:
+                return                                    # the final read reports anything real
+            # A long hold takes longer to re-read: space the reads out so the Mac stays responsive.
+            wait = max(self.partial_every, (time.monotonic() - started) * 2)
+            if text and self._snapshot(generation) is not None and self._mic is not None:
+                self.callbacks.partial(text)
+
+    def release(self) -> None:
+        self._stop_mic()
+        with self._lock:
+            generation = self._generation
+            audio = bytes(self._audio)
+        threading.Thread(target=self._final, args=(generation, audio), daemon=True,
+                         name="plip-parakeet-final").start()
+
+    def _final(self, generation: int, audio: bytes) -> None:
+        try:
+            with self._decoding:
+                if generation != self._generation:
+                    return
+                text = transcribe(self._model(), audio)
+        except Exception as exc:
+            if generation == self._generation:
+                self.callbacks.error(f"speech recognition failed: {exc}")
+            return
+        if generation == self._generation:
+            self.callbacks.final(text)
+
+    def cancel(self) -> None:
+        self._stop_mic()
+        with self._lock:
+            self._generation += 1
+            self._audio = bytearray()
+
+    def _stop_mic(self) -> None:
+        mic, self._mic = self._mic, None
+        if mic is not None:
+            mic.stop()

@@ -16,6 +16,8 @@ dependencies = [
     "click>=8.1.0",
     "websockets>=13.0",
     "sounddevice>=0.4.6; sys_platform == 'darwin'",
+    "sherpa-onnx>=1.13.8; sys_platform == 'darwin'",     # runs Parakeet; the model itself is an opt-in download
+    "sherpa-onnx-core>=1.13.8; sys_platform == 'darwin'",   # sherpa-onnx's native half (uv's lock misses it)
     "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-AVFoundation>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",

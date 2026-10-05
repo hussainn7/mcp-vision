@@ -57,7 +57,7 @@ class BuddySettings(BaseSettings):
     say_voice: str | None = None
 
     # voice in: "auto" streams through AssemblyAI when its key is set, else Apple Speech
-    stt: str = "auto"                   # auto | assemblyai | apple
+    stt: str = "auto"                   # auto | assemblyai | apple | parakeet
     assemblyai_api_key: str | None = Field(default=None, validation_alias=AliasChoices(
         "ASSEMBLYAI_API_KEY", "BUDDY_ASSEMBLYAI_API_KEY"))
 

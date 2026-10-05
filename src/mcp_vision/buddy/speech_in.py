@@ -427,6 +427,12 @@ class AppleListener:
 
 def make_listener(settings: Any, callbacks: ListenerCallbacks) -> Listener:
     choice = (getattr(settings, "stt", "auto") or "auto").lower()
+    if choice == "parakeet":
+        from mcp_vision.buddy import parakeet
+
+        if not parakeet.unavailable():
+            return parakeet.ParakeetListener(callbacks)       # the mic only, no Speech framework
+        choice = "apple"                              # not downloaded yet: Apple's keeps you heard meanwhile
     key = getattr(settings, "assemblyai_api_key", None)
     if choice in {"auto", "assemblyai"} and key:
         try:

@@ -26,7 +26,7 @@ def apply_prefs(settings: BuddySettings, prefs: Prefs | None) -> BuddySettings:
         changes["effort"] = DEPTH_EFFORT[prefs.depth]
     if prefs.tts in {"elevenlabs", "say", "off"}:
         changes["tts"] = prefs.tts
-    if prefs.stt in {"assemblyai", "apple"}:
+    if prefs.stt in {"assemblyai", "apple", "parakeet"}:
         changes["stt"] = prefs.stt
     if prefs.engine:
         changes["engine"] = prefs.engine
