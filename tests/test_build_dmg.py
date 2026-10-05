@@ -57,3 +57,13 @@ def test_release_needs_a_developer_id_in_the_keychain_and_a_notary_profile():
     assert len(missing) == 1 and "isn't in your keychain" in missing[0]
     assert "store-credentials plip" in build_dmg.release_problems(DEV_ID, "plip", IDENTITIES, False)[0]
     assert build_dmg.release_problems(DEV_ID, "plip", IDENTITIES, True) == []
+
+
+def test_only_a_clean_python_gets_bundled(tmp_path):
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    for name in ("README.txt", "pip", "pip-26.2.1.dist-info"):
+        (site / name).mkdir() if "." not in name or name.endswith("dist-info") else (site / name).write_text("")
+    assert build_dmg.extra_packages(site) == []
+    (site / "pandas").mkdir()                    # someone's base interpreter with packages installed into it
+    assert build_dmg.extra_packages(site) == ["pandas"]

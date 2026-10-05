@@ -125,17 +125,26 @@ def app_requirement(sign: str) -> list[str]:
 
 
 def managed_python() -> Path:
-    """uv's own CPython 3.12: relocatable and clean (no packages but pip), whatever Python runs this script."""
-    found = subprocess.run(["uv", "python", "find", "--python-preference", "only-managed", "3.12"],
-                           capture_output=True, text=True)
+    """uv's own CPython 3.12: relocatable and clean, whatever Python (or venv) runs this script."""
+    find = ["uv", "python", "find", "--system", "--no-project", "--python-preference", "only-managed", "3.12"]
+    found = subprocess.run(find, capture_output=True, text=True)
     if found.returncode != 0:
         run("uv", "python", "install", "3.12")
-        found = subprocess.run(["uv", "python", "find", "--python-preference", "only-managed", "3.12"],
-                               capture_output=True, text=True, check=True)
+        found = subprocess.run(find, capture_output=True, text=True, check=True)
     prefix = Path(found.stdout.strip()).resolve().parents[1]
     if not (prefix / "lib" / f"lib{PY}.dylib").exists():
         raise SystemExit(f"{prefix} has no lib/lib{PY}.dylib, so it can't be bundled")
+    extra = extra_packages(prefix / "lib" / PY / "site-packages")
+    if extra:
+        raise SystemExit(f"{prefix} has packages of its own ({', '.join(extra[:5])}…); the app would carry them")
     return prefix
+
+
+def extra_packages(site_packages: Path) -> list[str]:
+    """Anything in a fresh CPython's site-packages beyond pip/setuptools."""
+    stock = ("pip", "setuptools", "_distutils_hack", "distutils-precedence", "README")
+    return sorted(path.name for path in site_packages.iterdir() if not path.name.startswith(stock)) \
+        if site_packages.is_dir() else []
 
 
 def macho(path: Path) -> bool:
