@@ -1,5 +1,5 @@
 import {
-  AppWindow, BookUser, CalendarClock, FolderSearch, Plane, SlidersHorizontal, Type,
+  AppWindow, BookUser, CalendarClock, FolderSearch, Plane, SlidersHorizontal, Type, MousePointerClick,
 } from 'lucide-react'
 import { send, type SettingsState } from '../../bridge'
 import { cn } from '../../components/bits'
@@ -7,6 +7,7 @@ import { Card, Header, IconTile, Section, Segmented, Toggle } from './ui'
 
 const SKILLS = [
   { id: 'apps', icon: AppWindow, name: 'Apps & web', text: 'Open apps, links and web searches.', example: 'Open Spotify', gradient: 'bg-gradient-to-br from-sky-200 to-cyan-400' },
+  { id: 'control', icon: MousePointerClick, name: 'Hands', text: 'Clicks, scrolls, presses keys and drags for you. Anything that buys, sends or deletes asks first.', example: 'Play this song', gradient: 'bg-gradient-to-br from-blue-200 to-indigo-400', asks: 'Risky clicks ask' },
   { id: 'files', icon: FolderSearch, name: 'Files & desktop', text: 'Find anything with Spotlight. Tidy your desktop into folders (asks first, and you can undo it).', example: 'Find my lease PDF', gradient: 'bg-gradient-to-br from-teal-200 to-emerald-400', asks: 'Asks first' },
   { id: 'writing', icon: Type, name: 'Writing', text: 'Types for you, rewrites or translates the text you selected.', example: 'Make this email friendlier', gradient: 'bg-gradient-to-br from-violet-200 to-indigo-400' },
   { id: 'planning', icon: CalendarClock, name: 'Reminders & timers', text: 'Reminders, notes and timers that ping you when they’re done.', example: 'Remind me to call Mom at 6', gradient: 'bg-gradient-to-br from-rose-200 to-pink-400' },

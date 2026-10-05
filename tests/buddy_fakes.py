@@ -138,8 +138,17 @@ class FakeHost:
     def replace_selection(self, text):
         self.calls.append(("replace", text))
 
-    def click(self, x, y):
-        self.calls.append(("click", round(x), round(y)))
+    def click(self, x, y, button="left", count=1):
+        self.calls.append(("click", round(x), round(y)) + ((button, count) if (button, count) != ("left", 1) else ()))
+
+    def scroll(self, x, y, dy, dx=0):
+        self.calls.append(("scroll", round(x), round(y), dy, dx))
+
+    def press(self, keys):
+        self.calls.append(("press", keys))
+
+    def drag(self, x1, y1, x2, y2):
+        self.calls.append(("drag", round(x1), round(y1), round(x2), round(y2)))
 
     def set_field(self, x, y, value):
         self.calls.append(("field", round(x), round(y), value))

@@ -41,6 +41,8 @@ class ActionContext:
     announce: Callable[[str], None] = lambda text: None       # speak + show later (timers)
     schedule: Callable[[float, Callable[[], None]], Any] = lambda delay, fn: None
     screen: Any = None                                         # last screenshots/context, for forms
+    observe: Callable[[], Any] = lambda: None                  # a fresh screen map now (no screenshot, no tokens)
+    animate: Callable[[float, float, str], Any] = lambda x, y, label: None   # Plip flies to where it acts
 
 
 Runner = Callable[[ActionContext, dict], Awaitable[ActionResult] | ActionResult]

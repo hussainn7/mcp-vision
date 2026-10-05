@@ -132,6 +132,8 @@ class ActionEngine:
                 return Outcome("failed", spec, args, message=str(exc))
             except Exception as exc:
                 return Outcome("failed", spec, args, message=_friendly(exc))
+            if preview is None:                         # this one needs no yes (a plain click, an ordinary key)
+                return await self._run(spec, args)
             self.pending = Pending(spec, args, preview)
             return Outcome("pending", spec, args, preview=preview)
         return await self._run(spec, args)

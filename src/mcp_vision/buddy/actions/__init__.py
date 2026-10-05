@@ -6,14 +6,15 @@ from mcp_vision.buddy.actions.engine import ActionEngine, ActionLog, Outcome, an
 
 
 def all_specs() -> list[ActionSpec]:
-    from mcp_vision.buddy.actions import core
+    from mcp_vision.buddy.actions import control, core
     from mcp_vision.buddy.memory import skills as memory_skills
 
-    return [*core.SPECS, *memory_skills.SPECS]
+    return [*core.SPECS, *control.SPECS, *memory_skills.SPECS]
 
 
 SKILLS = {
     "apps": ("Apps & web", "Open apps, links and searches"),
+    "control": ("Hands", "Click, scroll, press keys and drag for you (risky clicks ask first)"),
     "files": ("Files & desktop", "Find files with Spotlight, tidy your desktop"),
     "system": ("Mac controls", "Dark mode, volume, your Apple Shortcuts"),
     "writing": ("Writing", "Type for you, rewrite the selected text"),

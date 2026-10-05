@@ -32,6 +32,43 @@ SPOTLIGHT_KINDS = {"pdf": "com.adobe.pdf", "image": "public.image", "video": "pu
                    "audio": "public.audio", "archive": "public.archive", "document": "public.content"}
 
 
+KEY_CODES = {
+    "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "backspace": 51, "escape": 53, "esc": 53,
+    "forwarddelete": 117, "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
+    "left": 123, "right": 124, "down": 125, "up": 126,
+    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100,
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
+    "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23,
+    "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34,
+    "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43, "/": 44, "n": 45, "m": 46,
+    ".": 47, "`": 50,
+}
+KEY_ALIASES = {"plus": "=", "minus": "-", "zoomin": "=", "zoomout": "-"}
+MODIFIER_NAMES = {"cmd": "cmd", "command": "cmd", "⌘": "cmd", "shift": "shift", "⇧": "shift", "alt": "alt",
+                  "option": "alt", "opt": "alt", "⌥": "alt", "ctrl": "ctrl", "control": "ctrl", "⌃": "ctrl"}
+
+
+def parse_keys(keys: str, masks: dict[str, int] | None = None) -> tuple[int, int]:
+    """"cmd+shift+t" -> (key code, modifier flags). "cmd++" and "cmd+plus" both zoom in. Raises ValueError."""
+    masks = masks or {"cmd": 1 << 20, "shift": 1 << 17, "alt": 1 << 19, "ctrl": 1 << 18}
+    compact = keys.replace(" ", "").lower()
+    if compact.endswith("++"):
+        compact = compact[:-1] + "="                  # "cmd++" means the + key, which is = on the keyboard
+    parts = [part for part in compact.split("+") if part]
+    if not parts:
+        raise ValueError("no key")
+    flags = 0
+    for part in parts[:-1]:
+        name = MODIFIER_NAMES.get(part)
+        if name is None:
+            raise ValueError(f"unknown modifier {part}")
+        flags |= masks[name]
+    key = KEY_ALIASES.get(parts[-1], parts[-1])
+    if key not in KEY_CODES:
+        raise ValueError(f"unknown key {key}")
+    return KEY_CODES[key], flags
+
+
 class NotSupported(RuntimeError):
     pass
 
@@ -137,8 +174,19 @@ class PortableHost:
     def replace_selection(self, text: str) -> None:
         raise NotSupported("Editing text for you needs macOS.")
 
-    def click(self, x: float, y: float) -> None:
+    def click(self, x: float, y: float, button: str = "left", count: int = 1) -> None:
         raise NotSupported("Clicking needs macOS.")
+
+    def scroll(self, x: float, y: float, dy: int, dx: int = 0) -> None:
+        """Scroll ``dy`` lines (positive = scroll down) at a global point."""
+        raise NotSupported("Scrolling needs macOS.")
+
+    def press(self, keys: str) -> None:
+        """A key or combo like "cmd+t", "return", "pagedown"."""
+        raise NotSupported("Pressing keys needs macOS.")
+
+    def drag(self, x1: float, y1: float, x2: float, y2: float) -> None:
+        raise NotSupported("Dragging needs macOS.")
 
     def set_field(self, x: float, y: float, value: str) -> bool:
         raise NotSupported("Filling forms needs macOS.")
@@ -257,14 +305,62 @@ class MacHost(PortableHost):
             board.clearContents()
             board.setString_forType_(saved, AppKit.NSPasteboardTypeString)
 
-    def click(self, x: float, y: float) -> None:
+    def click(self, x: float, y: float, button: str = "left", count: int = 1) -> None:
         import Quartz
 
         point = Quartz.CGPointMake(x, y)
-        for kind in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-            event = Quartz.CGEventCreateMouseEvent(None, kind, point, Quartz.kCGMouseButtonLeft)
+        down, up, which = {
+            "right": (Quartz.kCGEventRightMouseDown, Quartz.kCGEventRightMouseUp, Quartz.kCGMouseButtonRight),
+        }.get(button, (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp, Quartz.kCGMouseButtonLeft))
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved,
+                                                                                 point, which))
+        time.sleep(0.02)
+        for click in range(1, max(1, min(count, 3)) + 1):
+            for kind in (down, up):
+                event = Quartz.CGEventCreateMouseEvent(None, kind, point, which)
+                Quartz.CGEventSetIntegerValueField(event, Quartz.kCGMouseEventClickState, click)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+                time.sleep(0.03)
+
+    def scroll(self, x: float, y: float, dy: int, dx: int = 0) -> None:
+        """Wheel scrolling in small line steps, aimed at (x, y)."""
+        import Quartz
+
+        point = Quartz.CGPointMake(x, y)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(
+            None, Quartz.kCGEventMouseMoved, point, Quartz.kCGMouseButtonLeft))
+        for index in range(max(abs(dy), abs(dx), 1)):
+            line_y = (-1 if dy > 0 else 1) if index < abs(dy) else 0      # negative wheel = scroll down
+            line_x = (-1 if dx > 0 else 1) if index < abs(dx) else 0
+            event = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, line_y * 3,
+                                                         line_x * 3)
+            Quartz.CGEventSetLocation(event, point)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
-            time.sleep(0.03)
+            time.sleep(0.012)
+
+    def press(self, keys: str) -> None:
+        import Quartz
+
+        code, flags = parse_keys(keys, {
+            "cmd": Quartz.kCGEventFlagMaskCommand, "shift": Quartz.kCGEventFlagMaskShift,
+            "alt": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl})
+        self._key(code, flags)
+
+    def drag(self, x1: float, y1: float, x2: float, y2: float) -> None:
+        import Quartz
+
+        left = Quartz.kCGMouseButtonLeft
+        start, end = Quartz.CGPointMake(x1, y1), Quartz.CGPointMake(x2, y2)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap,
+                           Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, start, left))
+        for step in range(1, 21):
+            t = step / 20
+            point = Quartz.CGPointMake(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap,
+                               Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDragged, point, left))
+            time.sleep(0.01)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap,
+                           Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, end, left))
 
     def set_field(self, x: float, y: float, value: str) -> bool:
         """Fill the text field at a global point: click it, select all, type the value."""

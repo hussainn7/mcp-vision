@@ -391,6 +391,15 @@ class Companion:
         return result
 
     # -- timers and other late announcements (called from worker threads) ------------------
+    def _observe(self):
+        """The screen map right now (any thread). No screenshot, no tokens."""
+        if self.context is None:
+            return None
+        try:
+            return self.context.snapshot()
+        except Exception:
+            return None
+
     async def _settle(self, limit: float) -> bool:
         """Wait until the screen map stops changing (an app opened, a page loaded), at most ``limit`` seconds.
 
@@ -466,6 +475,8 @@ class Companion:
             shots, context, result.route = await self._look(transcript, result, screen)
             mark("looked")
             self._shots, self._context = shots, context
+            if self.actions is not None and (shots or context is not None):
+                self.actions.ctx.state.pop("scrolled", None)        # a fresh look: the numbers are current again
             history = self.conversation.history()
             text = user_turn_text(transcript, shots, context, vision=self.vision, notes=self._notes())
             turn = Turn("user", text, images=tuple(shots) if self.vision else ())
@@ -626,6 +637,8 @@ class Companion:
         self.actions.ctx.schedule = self._schedule
         self.actions.ctx.announce = self.announce
         self.actions.ctx.screen = (getattr(self, "_shots", []), getattr(self, "_context", None))
+        self.actions.ctx.observe = self._observe
+        self.actions.ctx.animate = lambda x, y, label: self.pointer.point(x, y, label)
         self._action_seq = getattr(self, "_action_seq", 0) + 1
         step_id = f"action-{self._action_seq}"
         spec = self.actions.specs.get(tag.name)
