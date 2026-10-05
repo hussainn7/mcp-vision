@@ -31,7 +31,21 @@ Cursor or Gemini plan you already pay for**.
 Anything that moves your files shows you a preview first, and nothing
 happens until you say yes.
 
-## Quick start
+## Download
+
+**[⬇ Download Plip for Mac (.dmg)](https://github.com/hussainn7/mcp-vision/releases/latest)**: free and open source. macOS 13+, Apple Silicon.
+
+1. Open the `.dmg` and drag **Plip** into **Applications**.
+2. Open Plip from Applications. If macOS says it can't check it for malicious software,
+   right-click Plip → **Open** → **Open** (only the first time).
+3. A short welcome walks you through it: allow Screen Recording, Accessibility and
+   Microphone, then click **Connect AI**. Done.
+4. Hold **Control+Option**, ask something, let go.
+
+Something broken? Click **Report an issue** in Plip's sidebar, or
+[open a GitHub issue](https://github.com/hussainn7/mcp-vision/issues).
+
+## Quick start (from source)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hussainn7/mcp-vision/main/scripts/install.sh | bash
