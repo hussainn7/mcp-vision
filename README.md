@@ -8,10 +8,10 @@ for you: finds files, tidies your desktop, pulls up flights, sets reminders,
 rewrites your text. It thinks with the **Claude, ChatGPT,
 Cursor or Gemini plan you already pay for**.
 
-![Plip walking through a five-step checklist in the notch while the droplet points at the next click](docs/img/plip-plan.jpg)
+![Plip walking through a five-step checklist in the notch while Plip points at the next click](docs/img/plip-plan.jpg)
 
 > "how do I send this deck as a PDF?"
-> → a five-step checklist drops out of the notch, and a little droplet drips down to
+> → a five-step checklist drops out of the notch, and Plip slips out of the notch to
 > point at the next click. Plip watches your screen and checks each step off as you go.
 
 > "tidy up my desktop"
@@ -124,7 +124,7 @@ From the terminal: `plip memory import contacts`, `plip memory show`, `plip memo
                            ▼
    your brain (Claude Code / Codex / Cursor / Gemini / API), streamed
      ├─▶ sentences ──▶ TTS queue (speaks sentence 1 while 2 is synthesized)
-     ├─▶ [POINT:x,y:label]       ──▶ snap to the real control ──▶ the droplet drips out of the notch to it
+     ├─▶ [POINT:x,y:label]       ──▶ snap to the real control ──▶ Plip slips out of the notch to it
      ├─▶ [STEPS:n] [PLAN: a | b] ──▶ checklist in the notch; Plip watches the screen and gives the next step
      └─▶ [DO:name {json}]        ──▶ action engine ──▶ preview + your yes (if it moves files) ──▶ done
                                        └──▶ results (search hits, a loaded page) go back for one more turn
@@ -143,7 +143,7 @@ From the terminal: `plip memory import contacts`, `plip memory show`, `plip memo
 
 Everything above the windows is platform-neutral and tested, including the CLI
 engines (through real subprocesses) and a full `plip` CLI run against a fake Claude
-Code. The macOS layer is three WKWebViews (island, droplet, dashboard) rendering one
+Code. The macOS layer is three WKWebViews (island, mascot, dashboard) rendering one
 React bundle, plus an event tap and audio glue. See [docs/BUDDY.md](docs/BUDDY.md).
 
 ## MCP server (for Cursor, Claude Desktop, Claude Code)

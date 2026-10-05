@@ -2,7 +2,7 @@
 
 `plip` (also `mcp-vision buddy`) is a voice companion that lives in the MacBook
 notch. You hold Control+Option and talk. The notch island shows what it heard and
-what it is doing. It looks at your screens, answers out loud, drips a small droplet
+what it is doing. It looks at your screens, answers out loud, sends a small Plip
 out of the notch to point at things, and does tasks on the Mac with your OK.
 
 The product model and most of the tuning come from a source-level reading of
@@ -143,7 +143,7 @@ changing a macOS module, do these checks.
 3. Hold Control+Option and say "where is the apple menu".
    - The island drops down with a live waveform and your words.
    - When you let go, it shows the steps it is taking ("Looked at 1 screen", "Claude is thinking").
-   - Plip speaks, the droplet drips out of the notch to the Apple menu, shows
+   - Plip speaks, Plip slips out of the notch to the Apple menu, shows
      "apple menu" in its bubble, and floats back up. Click ⌃ to minimize the island.
 4. Ask "how do I turn on dark mode". The island shows a checklist. Do the step;
    Plip notices the screen change and checks it off.
