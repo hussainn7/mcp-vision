@@ -346,7 +346,16 @@ def test_macos_modules_import_without_appkit():
     from mcp_vision.buddy.ax_locator import elements_near, probe_points
 
     assert len(probe_points(10, 10, 90)) == 17
-    assert elements_near(10, 10, 90) == []          # no accessibility API here: nothing, no crash
+    found = elements_near(10, 10, 90)               # no crash either way
+    try:
+        import ApplicationServices as AX
+        trusted = bool(AX.AXIsProcessTrusted())
+    except ImportError:
+        trusted = False
+    if not trusted:
+        assert found == []                          # no accessibility API here: nothing
+    else:
+        assert all(e.bounds.width >= 0 for e in found)   # a mac that granted it sees the real menu bar
 
 
 def test_setup_error_speaks_instead_of_listening(loop):

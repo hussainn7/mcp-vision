@@ -170,7 +170,11 @@ def test_jev_settings_honor_typesafe_sdk_variables(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_jev_status_not_configured_without_key(monkeypatch):
+    from mcp_vision import fast_policy
+
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    no_file = fast_policy._jev_settings
+    monkeypatch.setattr(fast_policy, "_jev_settings", lambda load_env=True: no_file(load_env=False))  # not the repo's .env
     status = jev_status()
     assert status["configured"] is False
     assert status["key_source"] == "unset"

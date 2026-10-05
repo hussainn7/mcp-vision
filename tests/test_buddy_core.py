@@ -494,6 +494,7 @@ def test_buddy_setup_merges_keys_privately(tmp_path, monkeypatch):
     workdir.mkdir()
     (workdir / ".env").write_text("BUDDY_EFFORT=medium\n")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("MCP_VISION_CONFIG_DIR", raising=False)    # the config folder under that HOME
     monkeypatch.chdir(workdir)
     for name in ("ANTHROPIC_API_KEY", "BUDDY_EFFORT"):
         monkeypatch.delenv(name, raising=False)

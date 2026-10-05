@@ -316,7 +316,7 @@ def test_codex_brain_attaches_screens_and_reads_stdin(tmp_path):
 def test_cursor_brain_is_text_only(tmp_path):
     binary = fake_cli(tmp_path, "cursor-agent", """
         assert argv[0] == "-p" and "--stream-partial-output" in argv
-        assert argv[argv.index("--mode") + 1] == "ask" and argv[argv.index("--workspace") + 1] == os.getcwd()
+        assert argv[argv.index("--mode") + 1] == "ask" and os.path.realpath(argv[argv.index("--workspace") + 1]) == os.path.realpath(os.getcwd())
         assert "SYSTEM" in argv[-1] and "and bluetooth?" in argv[-1]
         out({"type": "assistant", "timestamp_ms": 1, "message": {"content": [{"type": "text", "text": "Top "}]}})
         out({"type": "assistant", "timestamp_ms": 2, "message": {"content": [{"type": "text", "text": "right."}]}})
