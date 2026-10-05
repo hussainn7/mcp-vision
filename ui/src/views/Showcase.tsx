@@ -101,7 +101,7 @@ function FlyingPlip({ x, y, docked }: { x: number; y: number; docked: boolean })
           initial={{ opacity: 0, scale: 0.6, x: -4 }}
           animate={{ opacity: 1, scale: 1, x: 0 }}
           transition={{ delay: 0.5, type: 'spring', stiffness: 500, damping: 26 }}
-          className="brand-gradient absolute left-[25px] top-[14px] origin-left whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-semibold text-slate-950 shadow-[0_6px_18px_-6px_rgba(34,211,238,0.9),inset_0_1px_0_rgba(255,255,255,0.5)]"
+          className="brand-gradient absolute left-[25px] top-[14px] origin-left whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-semibold text-slate-950 shadow-[0_6px_18px_-6px_rgba(95,142,244,0.9),inset_0_1px_0_rgba(255,255,255,0.5)]"
         >
           {state.label}
         </motion.div>

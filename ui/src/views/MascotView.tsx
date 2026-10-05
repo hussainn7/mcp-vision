@@ -44,7 +44,7 @@ export function MascotView() {
             exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.25 } }}
             transition={{ type: 'spring', stiffness: 500, damping: 26 }}
             style={{ left: MASCOT_ANCHOR.x + MASCOT_SIZE / 2 + 3, top: MASCOT_ANCHOR.y + 3, transformOrigin: 'left center' }}
-            className="brand-gradient absolute whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-semibold tracking-tight text-slate-950 shadow-[0_6px_18px_-6px_rgba(34,211,238,0.9),inset_0_1px_0_rgba(255,255,255,0.5)]"
+            className="brand-gradient absolute whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-semibold tracking-tight text-slate-950 shadow-[0_6px_18px_-6px_rgba(95,142,244,0.9),inset_0_1px_0_rgba(255,255,255,0.5)]"
           >
             {typed}
           </motion.div>

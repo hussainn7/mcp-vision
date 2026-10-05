@@ -202,7 +202,7 @@ function RightEar({ mode, level, done }: { mode: Mode; level: number; done: bool
     )
   if (mode === 'error') return <AlertTriangle className="size-3.5 text-coral" />
   if (mode === 'peek') return <Sparkles className="size-3.5 text-plip-300" />
-  return <span className="size-1.5 rounded-full bg-plip-300/60 shadow-[0_0_8px_rgba(103,232,249,0.7)]" />
+  return <span className="size-1.5 rounded-full bg-plip-300/60 shadow-[0_0_8px_rgba(143,179,250,0.7)]" />
 }
 
 function Body({ mode }: { mode: Mode }) {
@@ -339,7 +339,7 @@ function Checklist({ plan, index }: { plan: string[]; index: number }) {
             <span
               className={cn(
                 'grid size-[18px] shrink-0 place-items-center rounded-full text-[10px] font-bold transition-colors',
-                done ? 'bg-mint text-slate-950' : current ? 'brand-gradient text-slate-950 shadow-[0_0_12px_rgba(34,211,238,0.55)]' : 'bg-white/[0.07] text-white/40',
+                done ? 'bg-mint text-slate-950' : current ? 'brand-gradient text-slate-950 shadow-[0_0_12px_rgba(95,142,244,0.55)]' : 'bg-white/[0.07] text-white/40',
               )}
             >
               {done ? <Check className="size-3" strokeWidth={3.5} /> : position + 1}

@@ -50,7 +50,7 @@ function KnowledgePanel({ state }: { state: SettingsState }) {
     <Card className="overflow-hidden p-0">
       <div className="relative flex items-center gap-4 px-5 pb-4 pt-5">
         <div className="pointer-events-none absolute -right-16 -top-24 size-56 rounded-full bg-plip-400/15 blur-3xl" />
-        <span className="brand-gradient grid size-14 place-items-center rounded-2xl text-[20px] font-bold text-slate-950 shadow-[0_10px_30px_-10px_rgba(34,211,238,0.8)]">
+        <span className="brand-gradient grid size-14 place-items-center rounded-2xl text-[20px] font-bold text-slate-950 shadow-[0_10px_30px_-10px_rgba(95,142,244,0.8)]">
           {initials(name || '?')}
         </span>
         <div className="min-w-0">
@@ -140,7 +140,7 @@ function AiMemory({ state }: { state: SettingsState }) {
         value={text}
         onChange={(event) => setText(event.target.value)}
         placeholder={'Name: …\nEmail: …\nPrefers aisle seats…'}
-        className="h-24 w-full resize-none rounded-xl bg-black/40 p-3 font-mono text-[12px] leading-relaxed text-white outline-none hairline placeholder:text-white/20 focus:shadow-[inset_0_0_0_1px_rgba(103,232,249,0.6)]"
+        className="h-24 w-full resize-none rounded-xl bg-black/40 p-3 font-mono text-[12px] leading-relaxed text-white outline-none hairline placeholder:text-white/20 focus:shadow-[inset_0_0_0_1px_rgba(143,179,250,0.6)]"
       />
       <div className="mt-2.5 flex items-center justify-between">
         <span className="text-[11px] text-white/35">{imported ? `${imported.count} facts from ${source} · ${timeAgo(imported.at)}` : 'Nothing imported yet'}</span>

@@ -53,7 +53,7 @@ export function Button({ children, onClick, variant = 'primary', className, disa
         'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full font-semibold tracking-tight transition active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40',
         size === 'md' ? 'px-3.5 py-1.5 text-[12.5px]' : 'px-2.5 py-1 text-[11.5px]',
         variant === 'primary' && 'bg-white text-slate-950 shadow-[0_6px_20px_-8px_rgba(255,255,255,0.45)] hover:bg-plip-50',
-        variant === 'brand' && 'brand-gradient text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_8px_22px_-8px_rgba(34,211,238,0.75)] hover:brightness-110',
+        variant === 'brand' && 'brand-gradient text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_8px_22px_-8px_rgba(95,142,244,0.75)] hover:brightness-110',
         variant === 'ghost' && 'bg-white/[0.07] text-white/85 hairline hover:bg-white/[0.11]',
         variant === 'quiet' && 'text-white/50 hover:text-white',
         variant === 'danger' && 'text-coral/80 hover:bg-coral/10 hover:text-coral',
@@ -172,7 +172,7 @@ export function Input({ value, onChange, placeholder, className, type = 'text' }
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
       className={cn(
-        'h-9 w-full rounded-full bg-black/40 px-3.5 text-[12.5px] text-white outline-none hairline placeholder:font-sans placeholder:text-white/25 focus:shadow-[inset_0_0_0_1px_rgba(103,232,249,0.6)]',
+        'h-9 w-full rounded-full bg-black/40 px-3.5 text-[12.5px] text-white outline-none hairline placeholder:font-sans placeholder:text-white/25 focus:shadow-[inset_0_0_0_1px_rgba(143,179,250,0.6)]',
         className,
       )}
     />
