@@ -552,3 +552,61 @@ def test_the_api_brain_reports_the_final_messages_usage():
     assert asyncio.run(collect(brain, [Turn("user", "hi")])) == "Hi."
     used = brain.last_usage
     assert (used.input, used.output, used.cache_read, used.cache_write, used.model) == (20, 7, 3000, 0, "claude-opus-5-5")
+
+
+# -- a warm claude process for the next turn -------------------------------------------------
+
+def test_the_app_keeps_the_next_claude_process_warm_and_reuses_it(tmp_path):
+    marker = tmp_path / "pids"
+    binary = fake_cli(tmp_path, "claude", f"""
+        open({str(marker)!r}, "a").write(str(os.getpid()) + "\\n")
+        out({{"type": "stream_event", "event": {{"type": "content_block_delta",
+                                                "delta": {{"type": "text_delta", "text": "ok"}}}}}})
+        out({{"type": "result", "subtype": "success", "is_error": False, "result": "ok"}})
+    """)
+
+    async def three_turns():
+        brain = ClaudeCodeBrain(binary)
+        brain.prewarm = True
+        answers = [await collect(brain, TURNS)]
+        for _ in range(100):                                  # the next process starts in the background
+            if getattr(brain, "_warm", None) is not None:
+                break
+            await asyncio.sleep(0.02)
+        warm_pid = brain._warm[1].pid
+        answers.append(await collect(brain, TURNS))           # same command line: uses the warm one
+        await asyncio.sleep(0.2)
+        answers.append(await collect(brain, TURNS, detailed=True))   # different effort: a fresh process
+        await brain.aclose()
+        return answers, warm_pid, brain
+
+    answers, warm_pid, brain = asyncio.run(three_turns())
+    pids = [int(line) for line in marker.read_text().split()]
+    assert answers == ["ok", "ok", "ok"] and pids[1] == warm_pid
+    assert getattr(brain, "_warm", None) is None and brain.prewarm is False
+
+
+def test_an_old_warm_process_is_replaced_and_one_shot_runs_leave_none(tmp_path):
+    binary = fake_cli(tmp_path, "claude", """
+        out({"type": "result", "subtype": "success", "is_error": False, "result": "ok"})
+    """)
+    brain = ClaudeCodeBrain(binary)
+    assert asyncio.run(collect(brain, TURNS)) == "ok" and getattr(brain, "_warm", None) is None
+
+    async def stale():
+        warm = ClaudeCodeBrain(binary)
+        warm.prewarm = True
+        warm.warm_ttl = 0.0                                   # anything warm is already too old
+        await collect(warm, TURNS)
+        for _ in range(100):
+            if getattr(warm, "_warm", None) is not None:
+                break
+            await asyncio.sleep(0.02)
+        old = warm._warm[1]
+        assert await collect(warm, TURNS) == "ok"             # started fresh; the old one is gone
+        await asyncio.sleep(0.1)
+        await warm.aclose()
+        return old
+
+    old = asyncio.run(stale())
+    assert old.returncode is not None

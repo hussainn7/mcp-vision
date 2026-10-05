@@ -359,6 +359,9 @@ def run_buddy_app() -> None:
         old = controller.companion
         if old is not None and old is not companion:
             loop.call_soon_threadsafe(old.interrupt, None)
+            closing = getattr(old.brain, "aclose", None)
+            if closing is not None:                 # its warm process won't be used again
+                asyncio.run_coroutine_threadsafe(closing(), loop)
         controller.companion = companion
         state["brain_error"] = error
         state["building"] = False
@@ -399,6 +402,8 @@ def run_buddy_app() -> None:
             except Exception as exc:
                 log.warning("plip brain warm-up failed: %s", exc)
                 AppHelper.callAfter(menu.set_status, "Brain problem: check its key or sign-in in Plip's settings")
+        if hasattr(companion.brain, "prewarm"):
+            companion.brain.prewarm = True          # the app lives on: keep the next brain process ready
         asyncio.run_coroutine_threadsafe(companion.brain.warm(), loop).add_done_callback(warmed)
 
     def rebuild(probe: bool = False) -> None:
@@ -517,4 +522,8 @@ def run_buddy_app() -> None:
 
     log.info("plip running (hotkey=%s, web=%s)", controller.hotkey_mode, web)
     print("Plip is in your menu bar and notch. Hold Control+Option and ask.", flush=True)
+    import atexit
+
+    # Quitting: drop the warm brain process so nothing is left waiting for a question.
+    atexit.register(lambda: getattr(getattr(controller.companion, "brain", None), "close", lambda: None)())
     AppHelper.runEventLoop(installInterrupt=True)

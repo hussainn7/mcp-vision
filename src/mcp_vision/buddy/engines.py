@@ -455,22 +455,35 @@ class CLIBrain:
     async def warm(self) -> str:
         return self.label
 
+    async def _launch(self, call: Invocation, workdir: str) -> Any:
+        env = child_env(self.binary)
+        env.update(call.env)
+        try:
+            return await self._spawn(*call.argv, stdin=asyncio.subprocess.PIPE if call.stdin is not None
+                                     else asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+                                     stderr=asyncio.subprocess.PIPE, cwd=workdir, env=env, limit=8 * 1024 * 1024)
+        except FileNotFoundError as exc:
+            raise EngineError(f"{self.label} is not installed ({exc.filename}).") from exc
+
+    async def _start(self, call: Invocation, workdir: str) -> tuple[Any, str]:
+        """The process for this call and the folder it runs in (subclasses may hand back a warm one)."""
+        return await self._launch(call, workdir), workdir
+
+    def _ended(self, call: Invocation) -> None:
+        """A call finished cleanly (subclasses get the next one ready)."""
+
     async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False) -> AsyncIterator[str]:
         workdir = tempfile.mkdtemp(prefix="plip-")
         process = None
         errors: asyncio.Future | None = None
         self.last_usage = None
+        clean = False
         try:
             call = self.invocation(system=system, turns=turns, workdir=workdir, detailed=detailed)
-            env = child_env(self.binary)
-            env.update(call.env)
-            try:
-                process = await self._spawn(*call.argv, stdin=asyncio.subprocess.PIPE if call.stdin is not None
-                                            else asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-                                            stderr=asyncio.subprocess.PIPE, cwd=workdir, env=env,
-                                            limit=8 * 1024 * 1024)
-            except FileNotFoundError as exc:
-                raise EngineError(f"{self.label} is not installed ({exc.filename}).") from exc
+            process, used = await self._start(call, workdir)
+            if used != workdir:                      # a warm process: it already has its own folder
+                shutil.rmtree(workdir, ignore_errors=True)
+                workdir = used
             if call.stdin is not None:
                 process.stdin.write(call.stdin)
                 await process.stdin.drain()
@@ -507,7 +520,10 @@ class CLIBrain:
                 raise EngineError(f"{self.label} failed: {_tail(parser.error or stderr) or f'exit {code}'}")
             if not parser.produced:
                 raise EngineError(f"{self.label} returned no answer. {_tail(stderr)}".strip())
+            clean = True
         finally:
+            if clean:
+                self._ended(call)
             if process is not None and process.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     process.kill()
@@ -522,6 +538,17 @@ class CLIBrain:
                 if transport is not None:
                     transport.close()
             shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _discard(process: Any, folder: str) -> None:
+    with contextlib.suppress(ProcessLookupError, OSError):
+        if process.returncode is None:
+            process.kill()
+    transport = getattr(process, "_transport", None)
+    if transport is not None:                # or it's collected after its event loop is gone
+        with contextlib.suppress(Exception):
+            transport.close()
+    shutil.rmtree(folder, ignore_errors=True)
 
 
 def _tail(text: str, limit: int = 240) -> str:
@@ -586,6 +613,63 @@ class ClaudeCodeBrain(CLIBrain):
 
     def parser(self):
         return ClaudeCodeParser()
+
+    # Claude Code's command line doesn't depend on the question (it arrives on stdin), so the next
+    # process can start while Plip is idle: each turn then skips the CLI's start-up (~0.2 s).
+    # Only the long-running app turns this on; one-shot runs (plip ask, tests) would leave it waiting.
+    prewarm = False
+    warm_ttl = 600.0                     # a warm process older than 10 minutes is started fresh
+
+    async def _start(self, call: Invocation, workdir: str) -> tuple[Any, str]:
+        warm, self._warm = getattr(self, "_warm", None), None
+        if warm is not None:
+            key, process, folder, born = warm
+            if key == self._key(call) and process.returncode is None and time.monotonic() - born < self.warm_ttl:
+                return process, folder
+            _discard(process, folder)        # different flags (effort, model) or too old
+        return await self._launch(call, workdir), workdir
+
+    def _ended(self, call: Invocation) -> None:
+        if not self.prewarm:
+            return
+        try:
+            self._warming = asyncio.get_running_loop().create_task(self._prewarm(call))
+        except RuntimeError:
+            pass
+
+    async def _prewarm(self, call: Invocation) -> None:
+        if getattr(self, "_warm", None) is not None:
+            return
+        folder = tempfile.mkdtemp(prefix="plip-")
+        try:
+            process = await self._launch(call, folder)
+        except Exception:
+            shutil.rmtree(folder, ignore_errors=True)
+            return
+        if not self.prewarm:                 # closed while it was starting
+            _discard(process, folder)
+            return
+        self._warm = (self._key(call), process, folder, time.monotonic())
+
+    @staticmethod
+    def _key(call: Invocation) -> tuple:
+        return tuple(call.argv), tuple(sorted(call.env.items()))
+
+    def close(self) -> None:
+        """Drop the warm process (app quitting, brain switched)."""
+        self.prewarm = False
+        warm, self._warm = getattr(self, "_warm", None), None
+        if warm is not None:
+            _discard(warm[1], warm[2])
+
+    async def aclose(self) -> None:
+        """Like close, after letting a process that's still starting finish, so nothing is left waiting."""
+        self.prewarm = False
+        warming = getattr(self, "_warming", None)
+        if warming is not None and not warming.done():
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(warming), 5.0)
+        self.close()
 
 
 # Codex (ChatGPT) -------------------------------------------------------------------------
