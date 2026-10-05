@@ -443,6 +443,19 @@ def run_buddy_app() -> None:
         else:
             subprocess.Popen(["say", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    def parakeet_ready() -> None:
+        """The download landed: listen with Parakeet from the next press (the brain stays as it is)."""
+        settings = apply_prefs(load_settings(), Prefs.load())
+        state["settings"] = settings
+        install_listener(settings)
+        update_setup_error()
+        service.push()
+
+    from mcp_vision.buddy.parakeet import ParakeetModel
+
+    parakeet = ParakeetModel(on_change=lambda: AppHelper.callAfter(service.push),
+                             on_ready=lambda: AppHelper.callAfter(parakeet_ready))
+
     service = SettingsService(
         engines=lambda: registry.cards(selected=Prefs.load().engine),
         settings=lambda: state["settings"],
@@ -459,6 +472,7 @@ def run_buddy_app() -> None:
         run_import=run_import,
         action_log=ActionLog(),
         usage=usage_log,
+        parakeet=parakeet,
     )
 
     def handle_command(command: dict[str, Any]) -> None:

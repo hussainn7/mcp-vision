@@ -51,6 +51,7 @@ class SettingsService:
     run_import: Callable[[str], None] = lambda source: None   # background import (Contacts, Mail, ...)
     action_log: Any = None                                 # buddy.actions.ActionLog (for stats)
     usage: Any = None                                      # buddy.usage.UsageLog (the Usage tab)
+    parakeet: Any = None                                   # buddy.parakeet.ParakeetModel (the opt-in download)
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
     report_note: str = ""                                  # "sent" | "failed" after Report an issue
 
@@ -76,7 +77,8 @@ class SettingsService:
             "permissions": {"screen": perms.get("screenRecording"), "accessibility": perms.get("accessibility"),
                             "microphone": perms.get("microphone"), "speech": perms.get("speechRecognition")},
             "voice": {"tts": tts, "stt": stt, "elevenlabs": keys["ELEVENLABS_API_KEY"],
-                      "assemblyai": keys["ASSEMBLYAI_API_KEY"]},
+                      "assemblyai": keys["ASSEMBLYAI_API_KEY"],
+                      "parakeet": self.parakeet.snapshot() if self.parakeet is not None else None},
             "jev": {"configured": keys["TYPESAFE_API_KEY"], "enabled": settings.router != "off", "latencyMs": None},
             "keys": keys,
             "history": self.history.items()[-50:],
@@ -155,10 +157,31 @@ class SettingsService:
         changes = {}
         if command.get("tts") in {"elevenlabs", "say", "off"}:
             changes["tts"] = command["tts"]
-        if command.get("stt") in {"assemblyai", "apple"}:
+        if command.get("stt") in {"assemblyai", "apple", "parakeet"}:
             changes["stt"] = command["stt"]
         if changes:
             self._update_prefs(**changes)
+
+    # -- Parakeet: picked in Voice, downloaded once (Apple's listens until it's in place) ----------
+    def _cmd_parakeet_download(self, _command):
+        if self.parakeet is None:
+            return
+        if self.prefs.stt != "parakeet":
+            self._update_prefs(stt="parakeet")
+        self.parakeet.start()
+
+    def _cmd_parakeet_cancel(self, _command):
+        if self.parakeet is not None:
+            self.parakeet.cancel()
+
+    def _cmd_parakeet_remove(self, _command):
+        if self.parakeet is None:
+            return
+        self.parakeet.remove()
+        if self.prefs.stt == "parakeet":
+            self._update_prefs(stt="apple")
+        else:
+            self.push()
 
     def _cmd_finish_onboarding(self, _command):
         prefs = self.prefs

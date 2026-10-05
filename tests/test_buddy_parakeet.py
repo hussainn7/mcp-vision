@@ -257,6 +257,40 @@ def test_until_its_downloaded_apples_listens(monkeypatch):
     assert speech_in.make_listener(Settings(key="aai"), ListenerCallbacks()).name == "apple"   # not AssemblyAI either
 
 
+def test_settings_downloads_switches_and_removes(tmp_path):
+    from mcp_vision.buddy.settings import BuddySettings
+    from mcp_vision.buddy.settings_service import SettingsService
+    from mcp_vision.buddy.store import Prefs
+
+    class Model:
+        def __init__(self):
+            self.calls = []
+
+        def snapshot(self):
+            return {"state": "missing", "done": 0, "total": 663_043_117, "error": "", "runtime": True}
+
+        def start(self):
+            self.calls.append("start")
+
+        def cancel(self):
+            self.calls.append("cancel")
+
+        def remove(self):
+            self.calls.append("remove")
+    model, posted, reloads = Model(), [], []
+    service = SettingsService(engines=lambda: [], settings=lambda: BuddySettings(_env_file=None),
+                              reload=lambda: reloads.append(1), post=posted.extend, prefs_path=tmp_path / "prefs.json",
+                              parakeet=model)
+    assert service.snapshot()["voice"]["parakeet"]["state"] == "missing"
+    service.handle({"cmd": "parakeet-download"})
+    assert model.calls == ["start"] and Prefs.load(tmp_path / "prefs.json").stt == "parakeet"
+    service.handle({"cmd": "parakeet-cancel"})
+    service.handle({"cmd": "parakeet-remove"})
+    assert model.calls == ["start", "cancel", "remove"] and Prefs.load(tmp_path / "prefs.json").stt == "apple"
+    service.handle({"cmd": "set-voice", "stt": "parakeet"})
+    assert Prefs.load(tmp_path / "prefs.json").stt == "parakeet" and reloads
+
+
 # The tests run in a sandboxed state folder; the real download lives in the real one.
 REAL_MODEL = Path.home() / ".local/share/mcp-vision/models" / parakeet.MODEL.folder
 

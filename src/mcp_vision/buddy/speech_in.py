@@ -1,6 +1,6 @@
 """Push-to-talk speech recognition for the buddy.
 
-Two engines, one interface (``start`` on press, ``release`` on let-go,
+Three engines, one interface (``start`` on press, ``release`` on let-go,
 ``cancel`` when the chord turned out to be another shortcut):
 
 * ``AssemblyAIListener`` - the engine Clicky ships: AssemblyAI streaming v3
@@ -8,6 +8,7 @@ Two engines, one interface (``start`` on press, ``release`` on let-go,
   and delivers the transcript at the first finished turn or after a 1.4 s
   grace period, then ``Terminate``s the session.
 * ``AppleListener`` - on-device Apple Speech; no key needed.
+* ``parakeet.ParakeetListener`` - NVIDIA's Parakeet Unified 0.6B on the Mac (opt-in download).
 
 Callbacks may fire on any thread; the app hops them to the main thread.
 """
