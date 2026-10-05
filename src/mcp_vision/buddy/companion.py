@@ -29,6 +29,7 @@ from mcp_vision.buddy.prompt import (
     ACTION_FOLLOWUP, GUIDE_FOLLOWUP, LOOK_FOLLOWUP, SYSTEM_PROMPT, system_prompt, user_turn_text,
 )
 from mcp_vision.buddy.screen_context import ScreenContext
+from mcp_vision.buddy.usage import Request, Usage, estimate, image_tokens, text_tokens
 
 Observer = Callable[[str, dict[str, Any]], None]
 
@@ -120,6 +121,19 @@ class TurnResult:
     look_after: float | None = None  # an action wants a fresh look (e.g. a page loading)
     pending: str = ""                # an action is waiting for the user's yes
     plan: tuple[str, ...] = ()
+    failed: list[str] = field(default_factory=list)       # actions that didn't work
+    outcome: str = ""                # how the request ended (usage.OUTCOMES), set when it's over
+    usage: Usage | None = None       # tokens the whole request used (as the brain reported, or estimated)
+
+
+@dataclass
+class _Meter:
+    """What one request (a question, or a whole task) costs, across every model call it takes."""
+
+    started: float
+    usage: Usage = field(default_factory=Usage)
+    turns: int = 0
+    actions: list[str] = field(default_factory=list)
 
 
 class _NullPointer:
@@ -166,7 +180,7 @@ class Companion:
                  observer: Observer | None = None, watcher: Watcher | None = None,
                  walkthroughs: bool = True, guide_timeout: float = 90.0, max_guide_turns: int = 10,
                  actions: Any = None, notes: Callable[[], str] | None = None, max_followups: int = 3,
-                 capture_timeout: float = 6.0):
+                 capture_timeout: float = 6.0, usage: Any = None, usage_kind: str = "voice"):
         self.brain = brain
         self.capturer = capturer
         self.speaker = speaker or _NullSpeaker()
@@ -187,6 +201,9 @@ class Companion:
         self.notes = notes
         self.capture_timeout = capture_timeout
         self.max_followups = max_followups
+        self.usage = usage                      # buddy.usage.UsageLog, or None to keep no record
+        self.usage_kind = usage_kind
+        self._meter: _Meter | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
         self._token: int | None = None
@@ -253,11 +270,39 @@ class Companion:
     async def _own(self, coroutine, transcript: str) -> TurnResult:
         self._loop = asyncio.get_running_loop()
         self._stop_current()
+        meter = self._meter = _Meter(started=time.time())
         self._task = asyncio.ensure_future(coroutine)
         try:
-            return await self._task
+            result = await self._task
         except asyncio.CancelledError:
-            return TurnResult(transcript=transcript, state="cancelled")
+            result = TurnResult(transcript=transcript, state="cancelled")
+        result.usage = meter.usage if meter.turns else None
+        result.outcome = _outcome(result)
+        self._record(meter, result)
+        return result
+
+    @staticmethod
+    def _meter_turn(meter: _Meter | None, used: Usage) -> None:
+        """One model call, added to the meter of the request it belongs to."""
+        if meter is not None:
+            meter.usage = meter.usage + used
+            meter.turns += 1
+
+    def _record(self, meter: _Meter, result: TurnResult) -> None:
+        """One line in usage.jsonl per request that reached the brain."""
+        if self.usage is None or not meter.turns:
+            return
+        used, engine = meter.usage, str(getattr(self.brain, "name", "") or "")
+        try:
+            self.usage.add(Request(
+                at=meter.started, engine=engine, label=brain_badge(self.brain)["label"], kind=self.usage_kind,
+                model=used.model or str(getattr(self.brain, "model", "") or ""), input=used.input,
+                output=used.output, cache_read=used.cache_read, cache_write=used.cache_write,
+                cost=round(used.price(engine), 6), estimated=used.estimated, turns=meter.turns,
+                actions=meter.actions[:40], outcome=result.outcome, goal=meter.turns > 1,
+                ms=int((time.time() - meter.started) * 1000)))
+        except Exception:
+            pass                                      # bookkeeping must never break a turn
 
     async def _session(self, transcript: str) -> TurnResult:
         if self.actions is not None and self.actions.pending is not None:
@@ -385,7 +430,8 @@ class Companion:
 
         self.pointer.set_state("thinking")
         self.emit("phase", phase="thinking", transcript="" if guide else transcript, guide=guide)
-        cancelled = False
+        cancelled = called = False
+        meter = self._meter                    # this request's, even if a newer press replaces self._meter
         try:
             shots, context, result.route = await self._look(transcript, result, screen)
             mark("looked")
@@ -398,6 +444,7 @@ class Companion:
             self.emit("engine", **badge)
             self.emit("step", id="think", label=f"{badge['label']} is thinking", status="active")
             first = True
+            called = True
             async for delta in self.brain.stream(system=self.system_prompt, turns=[*history, turn],
                                                  detailed=result.route.detailed):
                 if first:
@@ -410,6 +457,12 @@ class Companion:
             for event in reply.close():
                 await self._handle(event, shots, result, mark)
             mark("model_done")
+            called = False
+            reported = getattr(self.brain, "last_usage", None)
+            self._meter_turn(meter, reported if isinstance(reported, Usage) else estimate(
+                text_tokens(self.system_prompt) + sum(text_tokens(t.text) for t in [*history, turn])
+                + sum(image_tokens(shot.width, shot.height) for shot in turn.images),
+                reply.spoken_text, str(getattr(self.brain, "model", "") or "")))
             result.spoken = reply.spoken_text
             result.finished = reply.done
             result.steps_total = reply.steps
@@ -427,10 +480,14 @@ class Companion:
             # A new press owns the overlay now (it is already "listening");
             # don't stomp on it with "idle" from this abandoned turn.
             cancelled = True
+            if called:
+                self._meter_turn(meter, Usage())        # stopped mid-answer: still a call they made
             self.speaker.stop()
             self.pointer.release()
             raise
         except Exception as exc:  # surfaced to the user, never silently swallowed
+            if called:
+                self._meter_turn(meter, Usage())        # the brain was asked and failed: a call, no tokens known
             result.state = "error"
             result.error = _friendly_error(exc)
             self.emit("error", message=result.error)
@@ -554,6 +611,8 @@ class Companion:
         if outcome.status == "done":
             action_result = outcome.result
             result.did.append(label)
+            if self._meter is not None:
+                self._meter.actions.append(tag.name)    # names only
             if action_result.report:
                 result.reports.append(f"{tag.name}: {action_result.report}")
             if action_result.look_after:
@@ -566,10 +625,28 @@ class Companion:
                 self.emit("answer", text=" " + action_result.say)
             return
         # failed, unknown, disabled: say why, and let the model know if it gets another turn
+        result.failed.append(label)
         self.emit("step", id=step_id, label=label, status="failed", detail=outcome.message)
         self.emit("action", name=tag.name, status="failed", label=label, detail=outcome.message)
         self.speaker.speak(outcome.message)
         self.emit("answer", text=" " + outcome.message)
+
+
+def _outcome(result: TurnResult) -> str:
+    """How a request ended, for the Usage tab: did the job get done?"""
+    if result.state == "cancelled":
+        return "stopped"
+    if result.state == "error":
+        return "failed"
+    if result.pending:
+        return "waiting"                              # an action is waiting for their yes
+    if result.reports:
+        return "unverified"                           # it acted, but ran out of turns to check the results
+    if result.steps_total and not result.finished:
+        return "paused"                               # a walkthrough that didn't reach the last step
+    if result.failed and not result.did:
+        return "failed"
+    return "done" if result.did or result.steps_total else "answered"
 
 
 def _history_text(reply: ReplyStream, targets: list[Target], did: list[str] | None = None) -> str:

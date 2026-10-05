@@ -106,7 +106,7 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
                    speaker: Speaker | None = None, capturer: ScreenCapturer | None = None,
                    brain: Any = None, observer: Observer | None = None, prefs: Prefs | None = None,
                    engines: list | None = None, watch: bool = False, actions=None,
-                   notes=None, memory=None) -> Companion:
+                   notes=None, memory=None, usage=None, usage_kind: str = "voice") -> Companion:
     settings = apply_prefs(settings, prefs)
     jev = make_jev(settings)
     capturer = capturer or ScreenCapturer(max_edge=settings.max_image_edge, quality=settings.jpeg_quality)
@@ -129,6 +129,8 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
         walkthroughs=prefs.walkthroughs if prefs is not None else True,
         actions=actions if actions is not None else make_actions(settings, prefs, memory=memory),
         notes=notes if notes is not None else make_notes(memory),
+        usage=usage,
+        usage_kind=usage_kind,
     )
 
 

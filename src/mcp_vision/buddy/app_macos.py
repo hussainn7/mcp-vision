@@ -247,6 +247,7 @@ def run_buddy_app() -> None:
     from mcp_vision.buddy.settings import load_settings
     from mcp_vision.buddy.settings_service import Platform, SettingsService
     from mcp_vision.buddy.speech_in import ListenerCallbacks, make_listener
+    from mcp_vision.buddy.usage import UsageLog
     from mcp_vision.buddy.store import History, Prefs
     from mcp_vision.native_permissions import native_permission_snapshot
 
@@ -264,6 +265,7 @@ def run_buddy_app() -> None:
     from mcp_vision.buddy.memory import Memory
 
     memory = Memory()
+    usage_log = UsageLog()                # the Usage tab: one row per request
 
     def main(fn):
         return lambda *args: AppHelper.callAfter(fn, *args)
@@ -336,7 +338,7 @@ def run_buddy_app() -> None:
         companion, error = None, ""
         try:
             companion = make_companion(settings, pointer=MainThreadPointer(mascot), observer=presenter, prefs=prefs,
-                                       engines=statuses, watch=True, memory=memory)
+                                       engines=statuses, watch=True, memory=memory, usage=usage_log)
         except SetupError as exc:
             error = str(exc)
         except Exception as exc:          # a broken optional piece must not kill the app

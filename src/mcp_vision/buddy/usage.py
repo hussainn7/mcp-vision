@@ -5,14 +5,21 @@ what that call would cost at API prices). ``Usage`` normalizes those reports;
 when a brain says nothing, the companion estimates from what it sent and got
 back and marks the record ``estimated``.
 
+``UsageLog`` appends one line per request (a question, or a whole multi-step
+task) to ``usage.jsonl`` in the state folder.
+
 Dollar figures are what the traffic would cost at pay-per-use API rates. On a
 Claude, ChatGPT, Cursor or Google plan nothing is billed per token; the number
 is there to show what the plan is worth.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
+
+from mcp_vision.paths import state_dir
 
 # $ per million tokens: input, output, cache read. Cache writes cost 1.25x input.
 # First match wins, so specific ids come before families.
@@ -133,4 +140,71 @@ def image_tokens(width: int, height: int) -> int:
     return min(1600, max(1, round(width * height / 750)))
 
 
-__all__ = ["PRICES", "Usage", "estimate", "from_report", "image_tokens", "rates_for", "text_tokens"]
+# -- the log -----------------------------------------------------------------------------------
+
+OUTCOMES = ("done", "answered", "unverified", "paused", "waiting", "failed", "stopped")
+
+
+@dataclass
+class Request:
+    """One thing the user asked for, start to finish (every model call and action it took)."""
+
+    at: float
+    engine: str = ""            # engine id: claude-code, codex, cursor, gemini, claude (the API)
+    label: str = ""             # what the UI calls it: Claude, ChatGPT…
+    kind: str = "voice"         # voice | cli
+    model: str = ""
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+    cost: float = 0.0           # at API list price
+    estimated: bool = False
+    turns: int = 0              # model calls
+    actions: list[str] = field(default_factory=list)      # names only, never what they were about
+    outcome: str = "answered"   # one of OUTCOMES
+    goal: bool = False          # a multi-step task (more than one model call)
+    ms: int = 0
+
+
+class UsageLog:
+    def __init__(self, path: Path | None = None, keep: int = 5000):
+        self.path = path or state_dir() / "usage.jsonl"
+        self.keep = keep
+
+    def add(self, request: Request) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(asdict(request), separators=(",", ":")) + "\n")
+            if self.path.stat().st_size > self.keep * 600:
+                rows = self.rows()
+                self.path.write_text("".join(json.dumps(row, separators=(",", ":")) + "\n"
+                                             for row in rows[-self.keep:]), encoding="utf-8")
+        except OSError:
+            pass                        # usage is nice to have; never break a turn over it
+
+    def rows(self) -> list[dict[str, Any]]:
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        out = []
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and isinstance(row.get("at"), (int, float)):
+                out.append(row)
+        return out
+
+    def clear(self) -> None:
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
+__all__ = ["OUTCOMES", "PRICES", "Request", "Usage", "UsageLog", "estimate", "from_report", "image_tokens",
+           "rates_for", "text_tokens"]

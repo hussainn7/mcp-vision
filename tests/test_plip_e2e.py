@@ -101,6 +101,7 @@ def plip(tmp_path):
     run.calls = calls
     run.screenshot = str(screenshot)
     run.config = tmp_path / "config"
+    run.state = tmp_path / "state"
     return run
 
 
@@ -136,3 +137,11 @@ def test_how_to_questions_get_a_plan_and_a_point(plip):
     assert result["plan"] == ["open settings", "security", "turn on two factor"]
     assert result["spoken"] == "First, open your profile menu up top."
     assert result["targets"][0]["label"] == "profile menu"
+
+
+def test_ask_logs_one_usage_row_and_reports_it(plip):
+    result = json.loads(plip("ask", "--json", "--image", plip.screenshot, "find my lease").stdout)
+    assert result["outcome"] == "done" and result["usage"]["estimated"] is True   # the fake reports no tokens
+    rows = [json.loads(line) for line in (plip.state / "usage.jsonl").read_text().splitlines()]
+    assert len(rows) == 1 and rows[0]["kind"] == "cli" and rows[0]["turns"] == 2
+    assert rows[0]["engine"] == "claude-code" and rows[0]["actions"] == ["search_files"]

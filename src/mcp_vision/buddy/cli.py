@@ -61,7 +61,10 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
     try:
         from mcp_vision.buddy.memory import Memory
 
-        companion = make_companion(settings, capturer=capturer, speaker=speaker, prefs=prefs, memory=Memory())
+        from mcp_vision.buddy.usage import UsageLog
+
+        companion = make_companion(settings, capturer=capturer, speaker=speaker, prefs=prefs, memory=Memory(),
+                                   usage=UsageLog(), usage_kind="cli")
     except SetupError as exc:
         raise click.ClickException(str(exc)) from exc
     loop = asyncio.new_event_loop()
@@ -74,6 +77,12 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
             "engine": getattr(companion.brain, "label", None),
             "state": result.state, "error": result.error, "spoken": result.spoken,
             "did": result.did, "pending": result.pending, "plan": list(result.plan), "turns": result.turns,
+            "outcome": result.outcome,
+            "usage": ({"input": result.usage.input, "output": result.usage.output,
+                       "cache_read": result.usage.cache_read, "cache_write": result.usage.cache_write,
+                       "model": result.usage.model, "estimated": result.usage.estimated,
+                       "cost_usd": round(result.usage.price(getattr(companion.brain, "name", "")), 6)}
+                      if result.usage else None),
             "route": result.route.__dict__, "timings_ms": result.timings,
             "targets": [{**target.__dict__, "element": target.element.__dict__ if target.element else None}
                         for target in result.targets],
