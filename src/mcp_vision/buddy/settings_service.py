@@ -34,6 +34,7 @@ class Platform:
     say: Callable[[str], None] = lambda text: None
     quit: Callable[[], None] = lambda: None
     open_settings: Callable[[str], None] = lambda tab: None
+    restart: Callable[[], None] = lambda: None             # quit and open Plip again
 
 
 @dataclass
@@ -75,7 +76,8 @@ class SettingsService:
             "depth": prefs.depth if prefs.depth in DEPTHS else "balanced",
             "walkthroughs": prefs.walkthroughs,
             "permissions": {"screen": perms.get("screenRecording"), "accessibility": perms.get("accessibility"),
-                            "microphone": perms.get("microphone"), "speech": perms.get("speechRecognition")},
+                            "microphone": perms.get("microphone"), "speech": perms.get("speechRecognition"),
+                            "restart": bool(perms.get("restart")), "guiding": str(perms.get("guiding") or "")},
             "voice": {"tts": tts, "stt": stt, "elevenlabs": keys["ELEVENLABS_API_KEY"],
                       "assemblyai": keys["ASSEMBLYAI_API_KEY"],
                       "parakeet": self.parakeet.snapshot() if self.parakeet is not None else None},
@@ -240,6 +242,9 @@ class SettingsService:
                                          "fulldisk"}:
             self.platform.request_permission(command["permission"])
             self.push()
+
+    def _cmd_restart_app(self, _command):
+        self.platform.restart()
 
     def _cmd_test_voice(self, _command):
         self.platform.say("Hey, I'm Plip. Hold control and option, and ask me anything.")

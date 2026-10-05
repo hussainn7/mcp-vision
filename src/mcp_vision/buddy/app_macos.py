@@ -20,9 +20,8 @@ from mcp_vision.log import get_logger
 
 log = get_logger("mcp_vision.buddy")
 _CLASSES: dict[str, type] = {}
-PANES = {"screen": "Privacy_ScreenCapture", "accessibility": "Privacy_Accessibility",
-         "microphone": "Privacy_Microphone", "speech": "Privacy_SpeechRecognition", "contacts": "Privacy_Contacts",
-         "automation": "Privacy_Automation", "fulldisk": "Privacy_AllFiles"}
+# Switched on in System Settings (the card guides you there); the others are a one-click macOS prompt.
+GUIDED = {"accessibility", "screen", "fulldisk", "contacts", "automation"}
 
 
 def _menu_target_class():
@@ -174,7 +173,32 @@ def _run_in_terminal(command: str) -> None:
     subprocess.Popen(["osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def _relaunch() -> bool:
+    """Quit and open Plip again (macOS only applies Screen Recording to a fresh process)."""
+    import shlex
+
+    import AppKit
+
+    bundle = str(AppKit.NSBundle.mainBundle().bundlePath() or "")
+    if not bundle.endswith(".app"):
+        return False                                   # started from a terminal: nothing to reopen
+    subprocess.Popen(["/bin/sh", "-c", f"sleep 1; /usr/bin/open {shlex.quote(bundle)}"], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    AppKit.NSApp.terminate_(None)
+    return True
+
+
+def _asked_before(name: str) -> bool:
+    """Has macOS already been asked for this one (so its prompt won't show again)?"""
+    from mcp_vision.native_permissions import native_permission_snapshot
+
+    snapshot = native_permission_snapshot()
+    status = snapshot.get("microphoneStatus" if name == "microphone" else "speechRecognitionStatus")
+    return status in {"denied", "restricted"}
+
+
 def _request_permission(name: str, done) -> None:
+    from mcp_vision.buddy.permission_guide import PANES
     from mcp_vision.native_permissions import request_accessibility, request_screen_recording
 
     try:
@@ -300,6 +324,37 @@ def run_buddy_app() -> None:
             _open_url("https://github.com/hussainn7/mcp-vision#readme")
             return
         settings_window().show(tab)
+
+    # -- permissions: one click, then the card in System Settings shows where -------------------
+    def permission_guide():
+        if state.get("guide") is None:
+            from mcp_vision.buddy.guide_macos import PermissionGuide
+
+            state["guide"] = PermissionGuide(on_done=guide_done)
+        return state["guide"]
+
+    def guide_done(permission: str, granted: bool) -> None:
+        if granted and permission == "screen":
+            state["restart_for_screen"] = True         # macOS applies it to the next launch
+        service.push()
+        if granted and state["settings_window"] is not None:
+            state["settings_window"].front()           # back to Plip, where you left off
+
+    def request_permission(name: str) -> None:
+        if name in GUIDED or (name in {"microphone", "speech"} and _asked_before(name)):
+            permission_guide().start(name)
+        else:
+            _request_permission(name, main(service.push))
+        service.push()
+
+    def permissions() -> dict[str, Any]:
+        guide = state.get("guide")
+        return {**native_permission_snapshot(), "restart": bool(state.get("restart_for_screen")),
+                "guiding": guide.active if guide is not None else ""}
+
+    def restart() -> None:
+        if not _relaunch():
+            menu.set_status("Quit Plip and start it again to finish turning on Screen Recording")
 
     def post_settings(messages):
         if state["settings_window"] is not None:
@@ -463,9 +518,8 @@ def run_buddy_app() -> None:
         post=post_settings,
         platform=Platform(
             copy=_copy, open_url=_open_url, run_in_terminal=_run_in_terminal,
-            request_permission=lambda name: _request_permission(name, main(service.push)),
-            permissions=native_permission_snapshot, say=test_voice,
-            quit=lambda: AppKit.NSApp.terminate_(None), open_settings=open_settings),
+            request_permission=request_permission, permissions=permissions, say=test_voice,
+            quit=lambda: AppKit.NSApp.terminate_(None), open_settings=open_settings, restart=restart),
         history=history,
         on_refresh=refresh_engines,
         memory=memory,

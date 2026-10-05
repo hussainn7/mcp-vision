@@ -220,7 +220,8 @@ def test_settings_snapshot_shape(service):
     snapshot = calls["posted"][-1]["state"]
     assert calls["refresh"] == 1
     assert snapshot["engines"] == ENGINES and snapshot["depth"] == "balanced" and snapshot["walkthroughs"] is True
-    assert snapshot["permissions"] == {"screen": True, "accessibility": False, "microphone": None, "speech": None}
+    assert snapshot["permissions"] == {"screen": True, "accessibility": False, "microphone": None, "speech": None,
+                                       "restart": False, "guiding": ""}
     assert snapshot["voice"]["tts"] == "say" and snapshot["voice"]["stt"] == "apple"
     assert snapshot["keys"]["ANTHROPIC_API_KEY"] is False and snapshot["history"] == []
 

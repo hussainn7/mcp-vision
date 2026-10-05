@@ -50,5 +50,12 @@ class SettingsWindow:
         AppKit.NSApp.activateIgnoringOtherApps_(True)
         self.window.makeKeyAndOrderFront_(None)
 
+    def front(self) -> None:
+        """Bring the window back in front (after System Settings), on whatever it was showing."""
+        import AppKit
+
+        AppKit.NSApp.activateIgnoringOtherApps_(True)
+        self.window.makeKeyAndOrderFront_(None)
+
     def post(self, messages: list[dict[str, Any]]) -> None:
         self.surface.post(messages)

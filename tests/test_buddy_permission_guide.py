@@ -98,3 +98,23 @@ def test_the_app_to_drag_is_the_bundle_around_the_process():
     assert bundle_for("/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal") == \
         "/System/Applications/Utilities/Terminal.app"
     assert bundle_for("/opt/homebrew/bin/python3.12") == ""                  # not in an app: nothing to drag
+
+
+def test_settings_shows_which_card_is_up_and_when_a_restart_finishes_it(tmp_path):
+    from mcp_vision.buddy.settings import BuddySettings
+    from mcp_vision.buddy.settings_service import Platform, SettingsService
+
+    def service(**platform):
+        return SettingsService(engines=lambda: [], settings=lambda: BuddySettings(_env_file=None), reload=lambda: None,
+                               post=lambda messages: None, prefs_path=tmp_path / "prefs.json",
+                               platform=Platform(**platform))
+
+    snapshot = service(permissions=lambda: {"screenRecording": True, "restart": True,
+                                            "guiding": "accessibility"}).snapshot()
+    assert snapshot["permissions"]["restart"] is True and snapshot["permissions"]["guiding"] == "accessibility"
+    assert service().snapshot()["permissions"]["restart"] is False
+    restarted, granted = [], []
+    plip = service(restart=lambda: restarted.append(True), request_permission=granted.append)
+    plip.handle({"cmd": "restart-app"})
+    plip.handle({"cmd": "grant", "permission": "accessibility"})
+    assert restarted == [True] and granted == ["accessibility"]

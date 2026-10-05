@@ -1,8 +1,36 @@
 import { motion } from 'motion/react'
-import { AudioLines, Contact, Download, Hand, MessageSquareText, Mic, MonitorUp, ShieldCheck, WandSparkles } from 'lucide-react'
+import { AudioLines, Contact, Download, Hand, LoaderCircle, MessageSquareText, Mic, MonitorUp, RotateCw, ShieldCheck, WandSparkles } from 'lucide-react'
 import { send, type ParakeetModel, type SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Button, Card, Empty, Header, KeyField, Pill, Section, Segmented } from './ui'
+
+/** One permission's button: Allow, then "finish in System Settings" while the card is up there, then Granted. */
+export function PermissionAction({ id, value, guiding }: { id: string; value: boolean | null | undefined; guiding?: string }) {
+  if (value === true) return <Pill tone="good">Granted</Pill>
+  if (guiding === id)
+    return (
+      <span className="flex items-center gap-2">
+        <span className="flex items-center gap-1.5 text-[12px] text-white/55"><LoaderCircle className="size-3.5 animate-spin text-plip-300" /> Finish in System Settings</span>
+        <Button size="sm" variant="quiet" onClick={() => send('grant', { permission: id })}>Show me again</Button>
+      </span>
+    )
+  return <Button variant="brand" onClick={() => send('grant', { permission: id })}>Allow</Button>
+}
+
+/** Screen Recording only reaches a fresh Plip: one click to restart. */
+export function RestartBanner({ state }: { state: SettingsState }) {
+  if (!state.permissions.restart) return null
+  return (
+    <Card className="mb-5 flex items-center gap-4 border-plip-400/30 bg-plip-400/[0.07]">
+      <span className="grid size-9 place-items-center rounded-xl bg-plip-400/15 text-plip-200"><RotateCw className="size-4" /></span>
+      <div className="flex-1">
+        <div className="text-[13.5px] font-semibold">One restart to finish</div>
+        <div className="text-[12px] text-white/50">macOS turns on Screen Recording for Plip the next time it starts.</div>
+      </div>
+      <Button variant="primary" onClick={() => send('restart-app')}>Restart Plip</Button>
+    </Card>
+  )
+}
 
 export function VoiceTab({ state }: { state: SettingsState }) {
   return (
@@ -103,7 +131,8 @@ export function PermissionsTab({ state }: { state: SettingsState }) {
   ] as const
   return (
     <div>
-      <Header eyebrow="Privacy first" title="Permissions" subtitle="macOS asks once for each. Plip only looks when you ask, and never sends anything you didn’t trigger." action={<Button variant="quiet" onClick={() => send('refresh')}>Check again</Button>} />
+      <Header eyebrow="Privacy first" title="Permissions" subtitle="One click each: Plip opens the right page in System Settings and shows you exactly what to switch on. It only looks when you ask." action={<Button variant="quiet" onClick={() => send('refresh')}>Check again</Button>} />
+      <RestartBanner state={state} />
       <Section title="Needed">
         <Card className="divide-y divide-white/[0.05] p-0">
           {core.map(({ key, icon: Icon, title, why }) => {
@@ -115,11 +144,7 @@ export function PermissionsTab({ state }: { state: SettingsState }) {
                   <div className="text-[13.5px] font-semibold">{title}</div>
                   <div className="text-[12px] text-white/40">{why}</div>
                 </div>
-                {value === true ? <Pill tone="good">Granted</Pill> : (
-                  <Button variant={value === false ? 'primary' : 'ghost'} onClick={() => send('grant', { permission: key })}>
-                    {value === false ? 'Open Settings' : 'Allow'}
-                  </Button>
-                )}
+                <PermissionAction id={key} value={value} guiding={state.permissions.guiding} />
               </div>
             )
           })}
@@ -134,7 +159,9 @@ export function PermissionsTab({ state }: { state: SettingsState }) {
                 <div className="text-[13.5px] font-semibold">{title}</div>
                 <div className="text-[12px] text-white/40">{why}</div>
               </div>
-              <Button variant="ghost" onClick={() => send('grant', { permission: key })}>Open Settings</Button>
+              {state.permissions.guiding === key ? <PermissionAction id={key} value={null} guiding={key} /> : (
+                <Button variant="ghost" onClick={() => send('grant', { permission: key })}>Set up</Button>
+              )}
             </div>
           ))}
         </Card>
