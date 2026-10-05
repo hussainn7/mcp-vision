@@ -578,7 +578,10 @@ class ClaudeCodeBrain(CLIBrain):
                 "--strict-mcp-config", "--safe-mode", "--no-session-persistence", "--effort", self._effort(detailed)]
         if self.model:
             argv += ["--model", self.model]
-        env = {"DISABLE_AUTOUPDATER": "1"}
+        # Every turn's screen, map and history are new, so what Claude Code writes to the prompt cache is
+        # never read back; only the system prompt is. On a subscription it caches for an hour, and hour-long
+        # writes cost twice the input price (five-minute ones 1.25x). Five minutes is about 30% cheaper.
+        env = {"DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}
         return Invocation(argv, stdin=(json.dumps(message) + "\n").encode(), env=env)
 
     def parser(self):

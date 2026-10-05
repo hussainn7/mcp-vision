@@ -285,6 +285,7 @@ def test_claude_code_brain_streams_images_through_stdin(tmp_path):
         assert "--safe-mode" in argv and "--no-session-persistence" in argv
         assert argv[argv.index("--effort") + 1] == "low"
         assert "CLAUDECODE" not in os.environ
+        assert os.environ["CLAUDE_CODE_PROMPT_CACHE_TTL"] == "5m"      # never re-read: no hour-long cache writes
         message = json.loads(stdin_text.strip().splitlines()[0])
         content = message["message"]["content"]
         assert content[0]["type"] == "image" and content[0]["source"]["media_type"] == "image/jpeg"
