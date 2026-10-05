@@ -97,7 +97,7 @@
     cursor: default;
   }
   /* Windows that are just floating chrome stay fully transparent. */
-  body[data-surface="island"], body[data-surface="mascot"] {
+  body[data-surface="island"], body[data-surface="mascot"], body[data-surface="guide"] {
     background: transparent !important;
   }
   ::selection { background: rgb(34 211 238 / 0.3); }

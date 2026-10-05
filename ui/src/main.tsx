@@ -3,12 +3,13 @@ import { createRoot } from 'react-dom/client'
 import { isNative, onMockCommand, send, settings, type SettingsState } from './bridge'
 import { loadDemoSettings } from './demo'
 import './styles.css'
+import { Guide } from './views/Guide'
 import { Island } from './views/Island'
 import { MascotView } from './views/MascotView'
 import { Settings } from './views/settings'
 import { Showcase } from './views/Showcase'
 
-type Surface = 'island' | 'mascot' | 'settings' | 'showcase'
+type Surface = 'island' | 'mascot' | 'settings' | 'showcase' | 'guide'
 
 const surface = (window.__PLIP_SURFACE__ || location.hash.slice(1).split('?')[0] || (isNative() ? 'island' : 'showcase')) as Surface
 document.body.dataset.surface = surface
@@ -59,6 +60,7 @@ const views: Record<Surface, React.ReactNode> = {
   mascot: <MascotView />,
   settings: <Settings />,
   showcase: <Showcase />,
+  guide: <Guide />,
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode>{views[surface] ?? <Showcase />}</StrictMode>)

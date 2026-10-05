@@ -121,6 +121,34 @@ export interface MemoryPanel {
   handles: string[]
 }
 
+/** The permission card docked to System Settings (see permission_guide.py). */
+export interface GuideState {
+  permission: string
+  name: string
+  app: string
+  icon: string
+  title: string
+  hint: string
+  draggable: boolean
+  granted: boolean
+  shown?: number
+  panel: { width: number; height: number }
+  row: { x: number; y: number; width: number; height: number }
+}
+
+export const defaultGuide: GuideState = {
+  permission: 'accessibility',
+  name: 'Accessibility',
+  app: 'Plip',
+  icon: '',
+  title: 'Drag Plip into the list above',
+  hint: 'That turns on Accessibility. Already listed? Just switch it on.',
+  draggable: true,
+  granted: false,
+  panel: { width: 560, height: 150 },
+  row: { x: 36, y: 56, width: 488, height: 44 },
+}
+
 /** NVIDIA Parakeet Unified 0.6B: an opt-in on-device recognizer, downloaded once. */
 export interface ParakeetModel {
   state: 'missing' | 'downloading' | 'ready' | 'failed'
@@ -161,7 +189,11 @@ export interface SettingsState {
   version: string
   engines: Engine[]
   depth: 'fast' | 'balanced' | 'deep'
-  permissions: { screen: boolean | null; accessibility: boolean | null; microphone: boolean | null; speech: boolean | null }
+  permissions: {
+    screen: boolean | null; accessibility: boolean | null; microphone: boolean | null; speech: boolean | null
+    restart?: boolean        // Screen Recording came on: macOS applies it after a restart
+    guiding?: string         // the permission whose System Settings card is up
+  }
   voice: {
     tts: 'elevenlabs' | 'say' | 'off'; stt: 'assemblyai' | 'apple' | 'parakeet'; elevenlabs: boolean; assemblyai: boolean
     parakeet?: ParakeetModel | null
@@ -251,6 +283,7 @@ export class Store<T extends object> {
 export const island = new Store<IslandState>(defaultIsland)
 export const mascot = new Store<MascotState>(defaultMascot)
 export const settings = new Store<SettingsState>(defaultSettings)
+export const guide = new Store<GuideState>(defaultGuide)
 
 export function useStore<T extends object>(store: Store<T>): T {
   return useSyncExternalStore(store.subscribe, store.get, store.get)
@@ -262,6 +295,7 @@ export type Inbound =
   | { type: 'island'; state: Partial<IslandState> }
   | { type: 'mascot'; state: Partial<MascotState> }
   | { type: 'settings'; state: Partial<SettingsState> }
+  | { type: 'guide'; state: Partial<GuideState> }
   | { type: 'append'; field: 'answer' | 'transcript'; text: string }
   | { type: 'step'; step: Step }
   | { type: 'reset' }
@@ -276,6 +310,9 @@ export function receive(message: Inbound) {
       break
     case 'settings':
       settings.set(message.state)
+      break
+    case 'guide':
+      guide.set(message.state)
       break
     case 'append':
       island.set((current) => ({ [message.field]: current[message.field] + message.text }))

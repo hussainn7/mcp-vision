@@ -163,6 +163,17 @@ await test('settings: voice picks parakeet, downloads with progress, cancels, re
   await page.close()
 })
 
+await test('guide: the permission card says what to drag, closes, and shows the check', async () => {
+  const { page, take } = await open('guide', { width: 560, height: 150 })
+  await page.getByText('Drag Plip into the list above').waitFor()
+  assert.ok(await page.getByText('drag me up').isVisible())
+  await page.getByRole('button', { name: 'Close' }).click()
+  assert.ok(await take('guide-close'))
+  await page.evaluate(() => window.__plip({ type: 'guide', state: { granted: true } }))
+  await page.getByText('Accessibility is on').waitFor()
+  await page.close()
+})
+
 await test('settings: every tab renders without errors', async () => {
   for (const tab of ['home', 'skills', 'memory', 'brain', 'voice', 'permissions', 'usage', 'history', 'about']) {
     const { page } = await open(`settings?tab=${tab}`)
