@@ -7,10 +7,15 @@ import { Button, Input } from './ui'
 export function ReportIssue({ state, open, onClose }: { state: SettingsState; open: boolean; onClose: () => void }) {
   const [message, setMessage] = useState('')
   const [contact, setContact] = useState('')
+  const [sending, setSending] = useState(false)
 
   useEffect(() => {
     if (open) settings.set({ report: '' })
   }, [open])
+
+  useEffect(() => {
+    if (state.report) setSending(false)
+  }, [state.report])
 
   const sent = state.report === 'sent'
   return (
@@ -51,7 +56,7 @@ export function ReportIssue({ state, open, onClose }: { state: SettingsState; op
                 {state.report === 'failed' && <div className="mt-2 text-[12px] text-coral">Couldn't send. Check your internet and try again.</div>}
                 <div className="mt-4 flex justify-end gap-2">
                   <Button variant="quiet" onClick={onClose}>Cancel</Button>
-                  <Button variant="brand" disabled={!message.trim()} onClick={() => send('report-issue', { message, contact })}>Send report</Button>
+                  <Button variant="brand" disabled={!message.trim() || sending} onClick={() => { setSending(true); settings.set({ report: '' }); send('report-issue', { message, contact }) }}>{sending ? 'Sending…' : 'Send report'}</Button>
                 </div>
               </>
             )}
