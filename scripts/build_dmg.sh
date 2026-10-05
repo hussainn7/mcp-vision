@@ -18,9 +18,10 @@ echo "==> Settings UI"
 (cd ui && npm ci --no-audit --no-fund >/dev/null && npm run -s build)
 
 echo "==> Icon"
+mkdir -p build
 "$PY" - <<'PY'
 from PIL import Image
-Image.open("assets/plip-icon.png").save("outputs/Plip.icns", format="ICNS")
+Image.open("assets/plip-icon.png").save("build/Plip.icns", format="ICNS")
 PY
 
 echo "==> Plip.app"

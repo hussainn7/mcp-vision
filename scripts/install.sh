@@ -1,57 +1,37 @@
 #!/usr/bin/env bash
-# curl -fsSL https://raw.githubusercontent.com/hussainn7/mcp-vision/main/scripts/install.sh | bash
-# Always uses Python >= 3.12 (macOS system python3 is often 3.9 — that will fail).
+# The `plip` command from source, for people who'd rather not use the app:
+#   curl -fsSL https://raw.githubusercontent.com/hussainn7/mcp-vision/main/scripts/install.sh | bash
+# Most people want the DMG instead (Releases on GitHub). Uses Python 3.12 (macOS's own python3 is too old).
 set -euo pipefail
 
-REPO="${MCP_VISION_REPO:-https://github.com/hussainn7/mcp-vision.git}"
-HOST="${MCP_VISION_HOST:-cursor}"
-PY="${MCP_VISION_PYTHON:-3.12}"
+REPO="${PLIP_REPO:-https://github.com/hussainn7/mcp-vision.git}"
+PY="${PLIP_PYTHON:-3.12}"
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-echo "==> mcp-vision install (Python ${PY}+ required)"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "==> installing uv"
   curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
-
 if ! command -v uv >/dev/null 2>&1; then
-  echo "Could not install uv. Install Python 3.12 then:"
-  echo "  brew install python@3.12"
+  echo "Couldn't install uv. Install Python 3.12 (brew install python@3.12), then:"
   echo "  python3.12 -m pip install \"git+${REPO}\""
   exit 1
 fi
 
-echo "==> ensuring Python ${PY}"
+echo "==> Python ${PY}"
 uv python install "$PY" >/dev/null
-
-echo "==> installing mcp-vision"
+echo "==> installing plip"
 uv tool install --force --python "$PY" "git+${REPO}"
-
-export PATH="$HOME/.local/bin:$PATH"
 hash -r 2>/dev/null || true
-
-echo "==> playwright chromium"
-uv tool run --from playwright playwright install chromium 2>/dev/null \
-  || "$HOME/.local/share/uv/tools/mcp-vision-runtime/bin/python" -m playwright install chromium 2>/dev/null \
-  || true
-
-echo "==> wiring ${HOST}"
-mcp-vision setup --host "$HOST" --skip-playwright \
-  || mcp-vision install --host "$HOST" --allow-browser-writes
 
 echo
 echo "Done."
-if ! command -v mcp-vision >/dev/null 2>&1; then
-  echo "Add to your shell config, then reopen the terminal:"
+if ! command -v plip >/dev/null 2>&1; then
+  echo "Add this to your shell config, then reopen the terminal:"
   echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
-echo "Meet Plip, your AI buddy in the notch:"
-echo "  plip                       # opens Settings on first run; pick the Claude / ChatGPT / Cursor / Gemini plan you have"
-echo "  plip doctor                # checks brains, keys and permissions"
+echo "  plip          # opens Settings on first run; pick the Claude / ChatGPT / Cursor / Gemini plan you have"
+echo "  plip doctor   # checks brains, keys and permissions"
 echo "Then hold Control+Option and talk."
-echo
-echo "MCP server for Cursor / Claude: restart them so MCP picks it up, then try"
-echo "  mcp-vision connect"

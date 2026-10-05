@@ -7,7 +7,7 @@ import mcp_vision
 
 VERSION = mcp_vision.__version__
 hidden = collect_submodules("mcp_vision")
-for framework in ("AppKit", "Foundation", "Quartz", "Vision", "Speech", "AVFoundation", "WebKit",
+for framework in ("AppKit", "Foundation", "Quartz", "Speech", "AVFoundation", "WebKit",
                   "ApplicationServices", "CoreText", "PyObjCTools"):
     hidden += collect_submodules(framework)
 
@@ -26,7 +26,7 @@ coll = COLLECT(exe, a.binaries, a.datas, name="Plip")
 app = BUNDLE(
     coll,
     name="Plip.app",
-    icon=os.path.join(SPECPATH, "..", "outputs", "Plip.icns"),
+    icon=os.path.join(SPECPATH, "..", "build", "Plip.icns"),
     bundle_identifier="org.mcpvision.plip",
     version=VERSION,
     info_plist={

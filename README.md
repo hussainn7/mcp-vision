@@ -146,41 +146,19 @@ engines (through real subprocesses) and a full `plip` CLI run against a fake Cla
 Code. The macOS layer is three WKWebViews (island, mascot, dashboard) rendering one
 React bundle, plus an event tap and audio glue. See [docs/BUDDY.md](docs/BUDDY.md).
 
-## MCP server (for Cursor, Claude Desktop, Claude Code)
-
-The original browser/desktop runtime still ships, and it is independent of the buddy:
-
-```bash
-mcp-vision setup --host cursor               # or claude-desktop, antigravity
-claude mcp add --transport stdio mcp-vision -- mcp-vision serve --browser live --driver native --allow-browser-writes
-```
-
-- `serve --browser live` drives the Chrome you already have open, with no
-  automation banner.
-- With `TYPESAFE_API_KEY` set, routine actions are picked by Jev's bounded
-  fast policy. Consequential actions always escalate.
-- Buy, send and book actions still need *Allow once*.
-
-More: [docs/RUNTIME.md](docs/RUNTIME.md), [docs/STATE_RUNTIME.md](docs/STATE_RUNTIME.md),
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
-
-The previous Option-Space popup (Ask / Guide / Act with form filling) is still
-available as `mcp-vision ui`, or as an app with `scripts/build_macos_app.py --entry ui`.
-
 ## Development
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-PYTHONPATH=src:. python -m pytest
+ruff check . && python -m pytest
 
 cd ui && npm install && npm run build      # React 19 + Tailwind 4 + Motion → src/mcp_vision/buddy/web/index.html
 npm run dev                                # open #showcase for the fake-desktop demo, #settings, #island
 npm run e2e                                # clicks through the island and dashboard in Chromium
 ```
 
-The CI sequence, including real Chromium contracts, is in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+More in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
@@ -188,4 +166,4 @@ MIT
 
 ## Analytics
 
-mcp-vision sends one anonymous ping per day (random install id, version, OS) so we can count active users. No screens, files, or prompts are ever sent. Opt out with `MCP_VISION_NO_ANALYTICS=1` or `DO_NOT_TRACK=1`.
+Plip sends one anonymous ping per day (random install id, version, OS) so we can count active users. No screens, files, or prompts are ever sent. Opt out with `MCP_VISION_NO_ANALYTICS=1` or `DO_NOT_TRACK=1`.

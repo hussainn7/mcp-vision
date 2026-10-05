@@ -1,6 +1,6 @@
 # Plip
 
-`plip` (also `mcp-vision buddy`) is a voice companion that lives in the MacBook
+`plip` is a voice companion that lives in the MacBook
 notch. You hold Control+Option and talk. The notch island shows what it heard and
 what it is doing. It looks at your screens, answers out loud, sends a small Plip
 out of the notch to point at things, and does tasks on the Mac with your OK.
