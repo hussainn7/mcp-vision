@@ -23,6 +23,9 @@ if (!isNative()) {
         engines: current.engines.map((engine) => ({ ...engine, selected: engine.id === command.id })),
       }))
     }
+    if (command.cmd === 'finish-onboarding') settings.set({ onboarded: true })
+    if (command.cmd === 'quick-connect') settings.set({ connect: 'A Terminal window opened to sign in. Finish there, then come back.' })
+    if (command.cmd === 'report-issue') settings.set({ report: 'sent' })
     if (command.cmd === 'set-depth') settings.set({ depth: command.depth as 'fast' | 'balanced' | 'deep' })
     if (command.cmd === 'set-walkthroughs') settings.set({ walkthroughs: Boolean(command.enabled) })
     if (command.cmd === 'set-voice') {

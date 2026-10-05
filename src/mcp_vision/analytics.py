@@ -36,25 +36,32 @@ def _install_state() -> tuple[str, float, "os.PathLike[str]"]:
         return uuid.uuid4().hex, 0.0, path
 
 
+def _post(event: str, distinct_id: str, properties: dict) -> bool:
+    body = json.dumps({"api_key": POSTHOG_KEY, "event": event, "distinct_id": distinct_id,
+                       "properties": {"version": __version__, "os": platform.system(),
+                                      "os_version": platform.mac_ver()[0] or platform.release(),
+                                      "$process_person_profile": False, **properties}}).encode()
+    req = Request(f"{POSTHOG_HOST}/capture/", data=body, headers={"Content-Type": "application/json"})
+    return urlopen(req, timeout=5).status == 200
+
+
+def report_issue(message: str, contact: str = "", engine: str = "") -> bool:
+    """Sent only when the user presses Send in Report an issue, so it ignores the usage opt-out."""
+    if not POSTHOG_KEY.startswith("phc_"):
+        return False
+    try:
+        install_id, _, _ = _install_state()
+        return _post("issue_reported", install_id, {"message": message, "contact": contact, "engine": engine})
+    except Exception:
+        return False
+
+
 def _send(command: str) -> None:
     try:
         install_id, last, path = _install_state()
         if time.time() - last < _DAY:
             return
-        body = json.dumps({
-            "api_key": POSTHOG_KEY,
-            "event": "active",
-            "distinct_id": install_id,
-            "properties": {
-                "version": __version__,
-                "os": platform.system(),
-                "python": platform.python_version(),
-                "command": command,
-                "$process_person_profile": False,
-            },
-        }).encode()
-        req = Request(f"{POSTHOG_HOST}/capture/", data=body, headers={"Content-Type": "application/json"})
-        urlopen(req, timeout=3).read()
+        _post("active", install_id, {"command": command, "python": platform.python_version()})
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"id": install_id, "last": time.time()}))
     except Exception:

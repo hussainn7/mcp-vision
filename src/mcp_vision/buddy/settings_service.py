@@ -20,6 +20,8 @@ DEPTHS = {"fast", "balanced", "deep"}
 SKILL_IDS = ("apps", "files", "system", "writing", "planning", "travel", "memory")
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
+CLAUDE_INSTALL_AND_LOGIN = ("curl -fsSL https://claude.ai/install.sh | bash && "
+                            "\"$HOME/.local/bin/claude\" auth login")
 
 
 @dataclass
@@ -48,6 +50,8 @@ class SettingsService:
     memory: Any = None                                     # buddy.memory.Memory
     run_import: Callable[[str], None] = lambda source: None   # background import (Contacts, Mail, ...)
     action_log: Any = None                                 # buddy.actions.ActionLog (for stats)
+    connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
+    report_note: str = ""                                  # "sent" | "failed" after Report an issue
 
     @property
     def prefs(self) -> Prefs:
@@ -79,6 +83,9 @@ class SettingsService:
             "skills": {skill: bool(prefs.skills.get(skill, True)) for skill in SKILL_IDS},
             "companion": prefs.companion,
             "stats": self._stats(),
+            "onboarded": prefs.onboarded,
+            "connect": self.connect_note,
+            "report": self.report_note,
         }
 
     def _stats(self) -> dict:
@@ -143,6 +150,44 @@ class SettingsService:
             changes["stt"] = command["stt"]
         if changes:
             self._update_prefs(**changes)
+
+    def _cmd_finish_onboarding(self, _command):
+        prefs = self.prefs
+        prefs.onboarded = True
+        prefs.save(self.prefs_path)
+        self.push()
+
+    def _cmd_quick_connect(self, _command):
+        """One button: use a ready AI, else sign in to an installed one, else install Claude and sign in."""
+        engines = self.engines()
+        subs = [engine for engine in engines if engine.get("kind") == "subscription"]
+        ready = next((engine for engine in engines if engine.get("status") == "ready"), None)
+        logged_out = next((engine for engine in subs if engine.get("login")), None)
+        if ready:
+            self.connect_note = f"Connected to {ready['label']}."
+            self._update_prefs(engine=ready["id"])
+            return
+        if logged_out:
+            self.connect_note = (f"A Terminal window opened to sign in to {logged_out['label']}. "
+                                 "Finish there, then come back.")
+            self.platform.run_in_terminal(logged_out["login"])
+        else:
+            self.connect_note = ("A Terminal window opened to install Claude and sign in with your Claude plan. "
+                                 "Finish there, then come back.")
+            self.platform.run_in_terminal(CLAUDE_INSTALL_AND_LOGIN)
+        self.push()
+        self.on_refresh()
+
+    def _cmd_report_issue(self, command):
+        from mcp_vision.analytics import report_issue
+
+        message = str(command.get("message") or "").strip()[:5000]
+        contact = str(command.get("contact") or "").strip()[:200]
+        if not message:
+            return
+        engine = next((item["label"] for item in self.engines() if item.get("selected")), "")
+        self.report_note = "sent" if report_issue(message, contact=contact, engine=engine) else "failed"
+        self.push()
 
     def _cmd_engine_login(self, command):
         engine = next((item for item in self.engines() if item["id"] == command.get("id")), None)

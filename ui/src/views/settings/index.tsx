@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  AudioLines, BookUser, BrainCircuit, Clock3, House, Info, ShieldCheck, WandSparkles,
+  AudioLines, BookUser, Bug, BrainCircuit, Clock3, House, Info, ShieldCheck, WandSparkles,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
@@ -10,6 +10,8 @@ import { AboutTab, HistoryTab, PermissionsTab, VoiceTab } from './basics'
 import { BrainTab } from './brain'
 import { HomeTab } from './home'
 import { MemoryTab } from './memory'
+import { Onboarding } from './onboarding'
+import { ReportIssue } from './report'
 import { SkillsTab } from './skills'
 
 export type Tab = 'home' | 'brain' | 'skills' | 'memory' | 'voice' | 'permissions' | 'history' | 'about'
@@ -47,6 +49,7 @@ function tabFromHash(): Tab | null {
 export function Settings() {
   const state = useStore(settings)
   const [tab, setTab] = useState<Tab>(() => tabFromHash() || 'home')
+  const [reporting, setReporting] = useState(false)
 
   useEffect(() => {
     const onHash = () => {
@@ -101,7 +104,13 @@ export function Settings() {
             </div>
           ))}
         </nav>
-        <div className="mt-auto space-y-2.5 rounded-xl bg-white/[0.03] p-3 hairline">
+        <button
+          onClick={() => setReporting(true)}
+          className="mb-2 mt-auto flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium text-white/50 transition hover:bg-white/[0.04] hover:text-white/80"
+        >
+          <Bug className="size-4" /> Report an issue
+        </button>
+        <div className="space-y-2.5 rounded-xl bg-white/[0.03] p-3 hairline">
           <div className="flex items-center gap-2 text-[11.5px]">
             <span className={cn('size-1.5 rounded-full', ready ? 'bg-mint shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-sun')} />
             <span className="text-white/60">{ready ? `Ready · ${engine?.label}` : 'Needs a brain'}</span>
@@ -135,6 +144,8 @@ export function Settings() {
           </motion.div>
         </AnimatePresence>
       </main>
+      {state.onboarded === false && <Onboarding state={state} />}
+      <ReportIssue state={state} open={reporting} onClose={() => setReporting(false)} />
     </div>
   )
 }

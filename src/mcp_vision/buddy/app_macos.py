@@ -498,8 +498,7 @@ def run_buddy_app() -> None:
     rebuild(probe=True)
 
     if not prefs.onboarded:
-        prefs.onboarded = True
-        prefs.save()
+        # The Settings window shows the welcome walkthrough until it calls finish-onboarding.
         AppHelper.callLater(0.8, lambda: open_settings("home"))
 
     log.info("plip running (hotkey=%s, web=%s)", controller.hotkey_mode, web)
