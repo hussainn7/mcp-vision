@@ -17,14 +17,14 @@ from mcp_vision import __version__
 from mcp_vision.paths import state_dir
 
 # Public PostHog project key (write-only, safe to ship). Paste yours here.
-POSTHOG_KEY = os.environ.get("MCP_VISION_POSTHOG_KEY", "phc_REPLACE_ME")
+POSTHOG_KEY = os.environ.get("MCP_VISION_POSTHOG_KEY", "phc_vmiczR8czTXAXAcrHWGEpdkUq9X4aMjxwaxG7mFBhGcU")
 POSTHOG_HOST = os.environ.get("MCP_VISION_POSTHOG_HOST", "https://us.i.posthog.com")
 _DAY = 24 * 60 * 60
 
 
 def _disabled() -> bool:
     off = os.environ.get("MCP_VISION_NO_ANALYTICS") or os.environ.get("DO_NOT_TRACK")
-    return bool(off and off != "0") or POSTHOG_KEY.endswith("REPLACE_ME")
+    return bool(off and off != "0") or not POSTHOG_KEY.startswith("phc_")
 
 
 def _install_state() -> tuple[str, float, "os.PathLike[str]"]:
