@@ -135,6 +135,9 @@ export interface SettingsState {
   skills: Record<string, boolean>
   companion: 'notch' | 'cursor' | 'hidden'
   stats: { actionsWeek: number; answers: number; minutesSaved: number }
+  onboarded: boolean
+  connect: string
+  report: '' | 'sent' | 'failed'
 }
 
 export const defaultIsland: IslandState = {
@@ -173,6 +176,9 @@ export const defaultSettings: SettingsState = {
   skills: {},
   companion: 'notch',
   stats: { actionsWeek: 0, answers: 0, minutesSaved: 0 },
+  onboarded: true,
+  connect: '',
+  report: '',
 }
 
 // -- tiny external store ------------------------------------------------------

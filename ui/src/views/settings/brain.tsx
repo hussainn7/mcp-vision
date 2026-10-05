@@ -2,6 +2,7 @@ import { ArrowRight, Check, Copy, Gauge, Lock, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { send, type Engine, type SettingsState } from '../../bridge'
 import { cn } from '../../components/bits'
+import { ConnectAI } from './connect'
 import { Button, Card, Header, KeyField, Pill, Section, Segmented, Toggle } from './ui'
 
 const ENGINE_GLYPH: Record<string, { bg: string; text: string; glyph: string }> = {
@@ -80,7 +81,8 @@ export function BrainTab({ state }: { state: SettingsState }) {
         title="Use the AI you already pay for"
         subtitle="Plip thinks with your Claude, ChatGPT, Cursor or Gemini plan through their official command-line apps, with their tools switched off. No extra bill. Or paste an API key."
       />
-      <Section title="Your subscriptions">
+      <div className="mb-6"><ConnectAI state={state} /></div>
+      <Section title="Or pick one yourself">
         <div className="grid grid-cols-2 gap-3">{plans.map((engine) => <EngineCard key={engine.id} engine={engine} />)}</div>
       </Section>
       <Section title="API keys">

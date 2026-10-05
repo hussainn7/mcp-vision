@@ -28,7 +28,7 @@ export function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) =>
   const known = (state.memory?.facts.length ?? 0) > 0
   const steps = [
     { label: 'Let Plip see and hear', done: permsReady, tab: 'permissions' as Tab, detail: 'Screen, Accessibility, Microphone' },
-    { label: 'Pick a brain', done: brainReady, tab: 'brain' as Tab, detail: engine ? `${engine.label} · ${engine.via}` : 'Use your Claude, ChatGPT, Cursor or Gemini plan' },
+    { label: 'Connect your AI', done: brainReady, tab: 'brain' as Tab, detail: engine ? `${engine.label} · ${engine.via}` : 'Use your Claude, ChatGPT, Cursor or Gemini plan' },
     { label: 'Tell Plip about you', done: known, tab: 'memory' as Tab, detail: known ? `${state.memory!.facts.length} things saved` : 'Import from Contacts, your browser, or ChatGPT' },
   ]
   const progress = steps.filter((step) => step.done).length / steps.length
