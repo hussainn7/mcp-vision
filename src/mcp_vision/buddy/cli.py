@@ -1,4 +1,4 @@
-"""`plip` / `mcp-vision buddy`: run Plip, or ask it one question headlessly."""
+"""`plip`: run Plip, or ask it one question headlessly."""
 from __future__ import annotations
 
 import asyncio
@@ -25,7 +25,7 @@ def run() -> None:
     from mcp_vision.buddy.factory import SetupError
 
     if sys.platform != "darwin":
-        raise click.ClickException("The buddy overlay needs macOS. Try: mcp-vision buddy ask --image shot.png \"...\"")
+        raise click.ClickException("The buddy overlay needs macOS. Try: plip ask --image shot.png \"...\"")
     try:
         from mcp_vision.buddy.app_macos import run_buddy_app
         run_buddy_app()
@@ -217,7 +217,7 @@ def setup(env_path: str | None) -> None:
         click.echo("Nothing saved.")
         return
     write_env(target, values)
-    click.echo(f"Saved {', '.join(values)}. Next: mcp-vision buddy doctor, then mcp-vision buddy")
+    click.echo(f"Saved {', '.join(values)}. Next: plip doctor, then plip")
 
 
 @buddy.command()

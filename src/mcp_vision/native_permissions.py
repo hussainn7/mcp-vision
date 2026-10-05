@@ -11,7 +11,7 @@ def native_permission_snapshot() -> dict[str, Any]:
     snapshot: dict[str, Any] = {
         "platform": sys.platform,
         "pid": os.getpid(),
-        "process": "MCP-Vision" if sys.platform == "darwin" else os.path.basename(sys.executable),
+        "process": "Plip" if sys.platform == "darwin" else os.path.basename(sys.executable),
         "bundleId": None,
         "bundlePath": None,
         "executablePath": sys.executable,
@@ -30,7 +30,7 @@ def native_permission_snapshot() -> dict[str, Any]:
 
         bundle = NSBundle.mainBundle()
         snapshot.update({
-            "process": str(bundle.objectForInfoDictionaryKey_("CFBundleName") or "MCP-Vision"),
+            "process": str(bundle.objectForInfoDictionaryKey_("CFBundleName") or "Plip"),
             "bundleId": str(bundle.bundleIdentifier() or "") or None,
             "bundlePath": str(bundle.bundlePath() or "") or None,
             "executablePath": str(bundle.executablePath() or sys.executable),

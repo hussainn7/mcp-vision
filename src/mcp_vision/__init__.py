@@ -1,4 +1,4 @@
-"""mcp-vision: a voice buddy that points at your screen, plus an MCP computer-use runtime."""
+"""Plip: a voice buddy in your MacBook's notch that sees your screen and points at things."""
 
 __version__ = "0.7.1"
 

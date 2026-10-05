@@ -435,5 +435,5 @@ def make_listener(settings: Any, callbacks: ListenerCallbacks) -> Listener:
             return AssemblyAIListener(key, callbacks)
         except ImportError as exc:
             if choice == "assemblyai":
-                raise RuntimeError("AssemblyAI needs the voice extra: pip install 'mcp-vision-runtime[voice]'") from exc
+                raise RuntimeError("AssemblyAI needs the websockets package: reinstall Plip") from exc
     return AppleListener(callbacks)

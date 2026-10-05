@@ -43,7 +43,7 @@ class AppleSpeechSession:
             import AVFoundation
             import Speech
         except ImportError:
-            self.status_callback("Speech support is not installed. Reinstall MCP-Vision on macOS.", generation)
+            self.status_callback("Speech support is not installed. Reinstall Plip.", generation)
             self.pending_final = ("", False)
             return generation
 
