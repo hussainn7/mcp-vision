@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  AudioLines, BookUser, Bug, BrainCircuit, Clock3, House, Info, ShieldCheck, WandSparkles,
+  AudioLines, BookUser, Bug, ChartColumn, BrainCircuit, Clock3, House, Info, ShieldCheck, WandSparkles,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
@@ -13,8 +13,9 @@ import { MemoryTab } from './memory'
 import { Onboarding } from './onboarding'
 import { ReportIssue } from './report'
 import { SkillsTab } from './skills'
+import { UsageTab } from './usage'
 
-export type Tab = 'home' | 'brain' | 'skills' | 'memory' | 'voice' | 'permissions' | 'history' | 'about'
+export type Tab = 'home' | 'brain' | 'skills' | 'memory' | 'voice' | 'permissions' | 'usage' | 'history' | 'about'
 
 const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] }[] = [
   { title: '', tabs: [{ id: 'home', label: 'Home', icon: House }] },
@@ -36,6 +37,7 @@ const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: React.Compo
   {
     title: 'More',
     tabs: [
+      { id: 'usage', label: 'Usage', icon: ChartColumn },
       { id: 'history', label: 'History', icon: Clock3 },
       { id: 'about', label: 'About', icon: Info },
     ],
@@ -139,6 +141,7 @@ export function Settings() {
             {tab === 'memory' && <MemoryTab state={state} />}
             {tab === 'voice' && <VoiceTab state={state} />}
             {tab === 'permissions' && <PermissionsTab state={state} />}
+            {tab === 'usage' && <UsageTab state={state} />}
             {tab === 'history' && <HistoryTab state={state} />}
             {tab === 'about' && <AboutTab state={state} />}
           </motion.div>

@@ -1,4 +1,4 @@
-import { defaultIsland, island, mascot, settings, type IslandState, type MascotState, type SettingsState } from './bridge'
+import { defaultIsland, island, mascot, settings, type IslandState, type MascotState, type SettingsState, type UsagePeriod, type UsageState } from './bridge'
 
 export interface Frame {
   name: string
@@ -181,6 +181,48 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
   ],
 }
 
+// A believable month of use for the Usage tab: busier mid-week and late afternoon, mostly Claude Code.
+function demoPeriod(days: number): UsagePeriod {
+  const wave = (n: number) => (Math.sin(n * 12.9898) * 43758.5453) % 1
+  const today = new Date(2026, 9, 2)
+  const perDay = Array.from({ length: days }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(today.getDate() - (days - 1 - index))
+    const weekday = date.getDay()
+    const requests = Math.max(0, Math.round((weekday === 0 || weekday === 6 ? 3 : 9) + Math.abs(wave(index + days)) * 9 + index * 0.15))
+    const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    return { day, requests, cost: +(requests * 0.061).toFixed(4) }
+  })
+  const requests = perDay.reduce((sum, day) => sum + day.requests, 0)
+  const shape = [1, 0, 0, 0, 0, 0, 0, 1, 2, 4, 6, 6, 4, 5, 6, 7, 9, 12, 8, 5, 3, 2, 2, 1]
+  const weight = shape.reduce((sum, value) => sum + value, 0)
+  const perHour = shape.map((value) => Math.round((value / weight) * requests))
+  const cost = perDay.reduce((sum, day) => sum + day.cost, 0)
+  const share = (part: number) => Math.round(requests * part)
+  return {
+    requests, turns: Math.round(requests * 2.3), actions: Math.round(requests * 1.9), tasks: share(0.31),
+    tokensIn: requests * 9200, tokensOut: requests * 310, cacheRead: requests * 6100,
+    cost: +cost.toFixed(2), estimatedShare: 0.04, perDay, perHour, busiestHour: 17,
+    outcomes: { done: share(0.46), answered: share(0.33), unverified: share(0.04), paused: share(0.03), waiting: share(0.06),
+                failed: share(0.05), stopped: share(0.03) },
+    engines: [
+      { label: 'Claude', model: 'claude-opus-5-5', requests: share(0.86), cost: +(cost * 0.9).toFixed(2), lane: 'Claude plan (Pro/Max)' },
+      { label: 'ChatGPT', model: 'gpt-5', requests: share(0.11), cost: +(cost * 0.08).toFixed(2), lane: 'ChatGPT plan' },
+      { label: 'Claude API', model: 'claude-sonnet-5-5', requests: share(0.03), cost: +(cost * 0.02).toFixed(2), lane: 'API key' },
+    ],
+    lanes: [{ lane: 'Claude plan (Pro/Max)', requests: share(0.86) }, { lane: 'ChatGPT plan', requests: share(0.11) },
+            { lane: 'API key', requests: share(0.03) }],
+    topActions: [{ name: 'search_files', count: share(0.42) }, { name: 'open_app', count: share(0.31) }, { name: 'open_url', count: share(0.24) },
+                 { name: 'set_timer', count: share(0.12) }, { name: 'create_note', count: share(0.08) }],
+  }
+}
+
+function demoUsage(): UsageState {
+  const all = demoPeriod(42)
+  return { periods: { '7': demoPeriod(7), '30': demoPeriod(30), all }, since: new Date(2026, 7, 22).getTime() / 1000,
+           billed: +(all.cost * 0.02).toFixed(2) }
+}
+
 export function loadDemoSettings() {
-  settings.set(DEMO_SETTINGS)
+  settings.set({ ...DEMO_SETTINGS, usage: demoUsage() })
 }

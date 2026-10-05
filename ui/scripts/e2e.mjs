@@ -131,8 +131,24 @@ await test('settings: skills and companion style', async () => {
 
 })
 
+await test('settings: usage tab switches periods and clears', async () => {
+  const { page, take } = await open('settings?tab=usage')
+  await page.getByText('How it ended').waitFor()
+  assert.ok(await page.getByText('Requests per day').isVisible())
+  assert.ok(await page.getByText('What your plan is worth').first().isVisible())
+  const month = await page.locator('text=Requests').first().locator('xpath=..').textContent()
+  await page.getByRole('button', { name: '7 days' }).click()
+  assert.notEqual(await page.locator('text=Requests').first().locator('xpath=..').textContent(), month)
+  for (const label of ['Finished', 'Needed you', "Couldn't confirm", "Didn't work", 'You stopped it']) {
+    assert.ok(await page.locator('li', { hasText: label }).first().isVisible(), label)       // the legend rows
+  }
+  await page.getByRole('button', { name: 'Clear usage' }).click()
+  assert.ok(await take('clear-usage'))
+  await page.close()
+})
+
 await test('settings: every tab renders without errors', async () => {
-  for (const tab of ['home', 'skills', 'memory', 'brain', 'voice', 'permissions', 'history', 'about']) {
+  for (const tab of ['home', 'skills', 'memory', 'brain', 'voice', 'permissions', 'usage', 'history', 'about']) {
     const { page } = await open(`settings?tab=${tab}`)
     assert.ok((await page.locator('h1').first().textContent()).length > 3, tab)
     await page.close()

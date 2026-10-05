@@ -28,7 +28,7 @@ async function shot(name, hash, { width, height, wait = 1400, setup } = {}) {
 for (const frame of ['idle', 'listening', 'thinking', 'answering', 'walkthrough', 'plan', 'results', 'confirm', 'mini', 'peek', 'error']) {
   await shot(`desktop-${frame}`, `showcase?frame=${frame}`, { width: 1440, height: 900, wait: 1800 })
 }
-for (const tab of ['home', 'skills', 'memory', 'brain', 'voice', 'permissions', 'history', 'about']) {
+for (const tab of ['home', 'skills', 'memory', 'brain', 'voice', 'permissions', 'usage', 'history', 'about']) {
   await shot(`settings-${tab}`, `settings?tab=${tab}`, { width: 980, height: 680 })
 }
 

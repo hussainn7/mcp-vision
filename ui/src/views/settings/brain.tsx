@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { send, type Engine, type SettingsState } from '../../bridge'
 import { cn } from '../../components/bits'
 import { ConnectAI } from './connect'
+import { money } from './usage'
 import { Button, Card, Header, KeyField, Pill, Section, Segmented, Toggle } from './ui'
 
 const ENGINE_GLYPH: Record<string, { bg: string; text: string; glyph: string }> = {
@@ -82,6 +83,13 @@ export function BrainTab({ state }: { state: SettingsState }) {
         subtitle="Plip thinks with your Claude, ChatGPT, Cursor or Gemini plan through their official command-line apps, with their tools switched off. No extra bill. Or paste an API key."
       />
       <div className="mb-6"><ConnectAI state={state} /></div>
+      {state.usage && state.usage.periods['30'].requests > 0 && (
+        <a href="#settings?tab=usage" className="card card-hover mb-6 flex items-center gap-3 px-4 py-3 text-[12.5px] text-white/60">
+          <span className="text-gradient text-[15px] font-semibold">{money(state.usage.periods['30'].cost)}</span>
+          <span>worth of {state.usage.periods['30'].requests} requests at API prices in the last 30 days{state.usage.billed > 0 ? '' : ', covered by your plan'}.</span>
+          <span className="ml-auto inline-flex items-center gap-1 font-semibold text-white/80">See usage <ArrowRight className="size-3.5" /></span>
+        </a>
+      )}
       <Section title="Or pick one yourself">
         <div className="grid grid-cols-2 gap-3">{plans.map((engine) => <EngineCard key={engine.id} engine={engine} />)}</div>
       </Section>

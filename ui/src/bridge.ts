@@ -121,6 +121,33 @@ export interface MemoryPanel {
   handles: string[]
 }
 
+export type Outcome = 'done' | 'answered' | 'unverified' | 'paused' | 'waiting' | 'failed' | 'stopped'
+
+export interface UsagePeriod {
+  requests: number
+  turns: number
+  actions: number
+  tasks: number
+  tokensIn: number
+  tokensOut: number
+  cacheRead: number
+  cost: number
+  estimatedShare: number
+  perDay: { day: string; requests: number; cost: number }[]
+  perHour: number[]
+  busiestHour: number | null
+  outcomes: Record<Outcome, number>
+  engines: { label: string; model: string; requests: number; cost: number; lane: string }[]
+  lanes: { lane: string; requests: number }[]
+  topActions: { name: string; count: number }[]
+}
+
+export interface UsageState {
+  periods: Record<'7' | '30' | 'all', UsagePeriod>
+  since: number | null
+  billed: number
+}
+
 export interface SettingsState {
   version: string
   engines: Engine[]
@@ -135,6 +162,7 @@ export interface SettingsState {
   skills: Record<string, boolean>
   companion: 'notch' | 'cursor' | 'hidden'
   stats: { actionsWeek: number; answers: number; minutesSaved: number }
+  usage: UsageState | null
   onboarded: boolean
   connect: string
   report: '' | 'sent' | 'failed'
@@ -176,6 +204,7 @@ export const defaultSettings: SettingsState = {
   skills: {},
   companion: 'notch',
   stats: { actionsWeek: 0, answers: 0, minutesSaved: 0 },
+  usage: null,
   onboarded: true,
   connect: '',
   report: '',
