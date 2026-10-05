@@ -50,3 +50,71 @@ def test_the_signature_changes_with_what_is_on_screen():
     assert one.signature() == ScreenContext(app="Safari", controls=[Control("Buy", "AXButton", 10.2, 9.9)]).signature()
     assert one.signature() != ScreenContext(app="Safari", controls=[Control("Buy", "AXButton", 10, 80)]).signature()
     assert one.signature() != ScreenContext(app="Notes", controls=[Control("Buy", "AXButton", 10, 10)]).signature()
+
+
+def test_the_screenshot_is_taken_at_key_release_while_speech_is_still_finishing():
+    import threading
+
+    from mcp_vision.buddy.controller import BuddyController
+
+    order = []
+
+    class Companion:
+        def interrupt(self, token=None):
+            pass
+
+        def prefetch(self):
+            order.append("screenshot")
+
+    class Listener:
+        def start(self):
+            order.append("listening")
+
+        def release(self):
+            order.append("speech finishing")
+
+        def cancel(self):
+            pass
+
+    class Quiet:
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    controller = BuddyController(companion=Companion(), overlay=Quiet(), loop=loop, listener=Listener(),
+                                 call_later=lambda delay, fn: None, on_main=lambda fn, *args: None, presenter=Quiet())
+    controller.on_press()
+    controller.on_release()
+    loop.call_soon_threadsafe(loop.stop)
+    assert order == ["listening", "screenshot", "speech finishing"]
+
+
+def test_sentence_two_is_synthesized_while_sentence_one_plays():
+    import threading
+
+    from mcp_vision.buddy.speech_out import QueueSpeaker
+
+    prepared_two = threading.Event()
+    log = []
+
+    class Voice:
+        name = "test"
+
+        def prepare(self, text):
+            log.append(("prepare", text))
+            if text == "Two.":
+                prepared_two.set()
+            return text
+
+        def play(self, prepared, stop):
+            if prepared == "One.":
+                assert prepared_two.wait(2), "sentence two wasn't ready while one was playing"
+            log.append(("play", prepared))
+
+    speaker = QueueSpeaker(Voice())
+    speaker.speak("One.")
+    speaker.speak("Two.")
+    asyncio.run(asyncio.wait_for(speaker.drain(), 5))
+    assert log.index(("prepare", "Two.")) < log.index(("play", "One."))
+    assert [entry for entry in log if entry[0] == "play"] == [("play", "One."), ("play", "Two.")]
