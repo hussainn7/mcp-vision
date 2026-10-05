@@ -21,7 +21,7 @@ export function Guide() {
         initial={{ opacity: 0, y: 14, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-        className="absolute overflow-hidden rounded-[22px] bg-[#0b0f1c]/[0.97] text-white hairline shadow-[0_22px_50px_-14px_rgba(0,0,0,0.8),0_0_0_1px_rgba(111,158,245,0.12)]"
+        className="absolute overflow-hidden rounded-[22px] bg-[#0b0f1c] text-white hairline shadow-[0_22px_50px_-14px_rgba(0,0,0,0.8),0_0_0_1px_rgba(111,158,245,0.12)]"
         style={CARD}
       >
         <div className="pointer-events-none absolute -right-16 -top-20 size-48 rounded-full bg-plip-400/15 blur-3xl" />

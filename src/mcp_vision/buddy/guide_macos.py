@@ -29,7 +29,17 @@ def responsible_app() -> tuple[str, str]:
     if bundle.endswith(".app"):
         return "Plip", bundle
     app = bundle_for(_pid_path(_responsible_pid(os.getpid()) or 0))
-    return (os.path.basename(app)[:-4], app) if app else ("Plip", "")
+    if not app:
+        return "Plip", ""
+    try:
+        import plistlib
+
+        with open(os.path.join(app, "Contents", "Info.plist"), "rb") as handle:
+            info = plistlib.load(handle)
+        name = str(info.get("CFBundleDisplayName") or info.get("CFBundleName") or "")
+    except Exception:
+        name = ""
+    return name or os.path.basename(app)[:-4], app
 
 
 def _responsible_pid(pid: int) -> int | None:
