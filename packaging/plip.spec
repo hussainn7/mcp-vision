@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 import os
 
 import mcp_vision
+from mcp_vision.identity import BUNDLE_ID
 
 VERSION = mcp_vision.__version__
 hidden = collect_submodules("mcp_vision")
@@ -27,7 +28,7 @@ app = BUNDLE(
     coll,
     name="Plip.app",
     icon=os.path.join(SPECPATH, "..", "build", "Plip.icns"),
-    bundle_identifier="org.mcpvision.plip",
+    bundle_identifier=BUNDLE_ID,
     version=VERSION,
     info_plist={
         "CFBundleDisplayName": "Plip",
