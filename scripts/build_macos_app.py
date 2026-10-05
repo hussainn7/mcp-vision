@@ -52,7 +52,7 @@ info = {
 plist_data = plistlib.dumps(info)
 (app / 'Contents' / 'Info.plist').write_bytes(plist_data)
 
-icon_source = root / 'dist' / 'logoW.png'
+icon_source = root / 'assets' / 'plip-icon.png'
 cropped_icon = root / 'outputs' / 'MCPVision.icon.png'
 if icon_source.is_file():
     with Image.open(icon_source).convert('RGBA') as source_image:

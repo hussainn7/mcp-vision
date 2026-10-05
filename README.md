@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/plip-icon-256.png" width="128" alt="Plip"></p>
+
 # Plip
 
 **Personal staff that lives in your MacBook's notch.** Hold **Control+Option** and
