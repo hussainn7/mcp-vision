@@ -50,6 +50,7 @@ class SettingsService:
     memory: Any = None                                     # buddy.memory.Memory
     run_import: Callable[[str], None] = lambda source: None   # background import (Contacts, Mail, ...)
     action_log: Any = None                                 # buddy.actions.ActionLog (for stats)
+    usage: Any = None                                      # buddy.usage.UsageLog (the Usage tab)
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
     report_note: str = ""                                  # "sent" | "failed" after Report an issue
 
@@ -83,6 +84,7 @@ class SettingsService:
             "skills": {skill: bool(prefs.skills.get(skill, True)) for skill in SKILL_IDS},
             "companion": prefs.companion,
             "stats": self._stats(),
+            "usage": self._usage(),
             "onboarded": prefs.onboarded,
             "connect": self.connect_note,
             "report": self.report_note,
@@ -94,6 +96,13 @@ class SettingsService:
         answered = len(self.history.items())
         return {"actionsWeek": len(week), "answers": answered,
                 "minutesSaved": round(len(week) * 0.75 + answered * 1.5)}
+
+    def _usage(self) -> dict | None:
+        if self.usage is None:
+            return None
+        from mcp_vision.buddy.usage import summary
+
+        return summary(self.usage.rows())
 
     def push(self) -> None:
         self.post([{"type": "settings", "state": self.snapshot()}])
@@ -211,6 +220,11 @@ class SettingsService:
 
     def _cmd_test_voice(self, _command):
         self.platform.say("Hey, I'm Plip. Hold control and option, and ask me anything.")
+
+    def _cmd_clear_usage(self, _command):
+        if self.usage is not None:
+            self.usage.clear()
+            self.push()
 
     def _cmd_clear_history(self, _command):
         self.history.clear()

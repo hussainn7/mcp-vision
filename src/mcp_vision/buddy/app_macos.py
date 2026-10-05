@@ -319,6 +319,8 @@ def run_buddy_app() -> None:
         if result.state == "done" and result.spoken:
             badge = getattr(controller.companion, "brain", None)
             history.add(transcript, result.spoken, engine=getattr(badge, "label", ""))
+        if state["settings_window"] is not None:
+            AppHelper.callAfter(service.push)     # an open History / Usage tab shows it right away
 
     def update_setup_error() -> None:
         controller.setup_error = state["brain_error"] or state["listener_error"]
@@ -451,6 +453,7 @@ def run_buddy_app() -> None:
         memory=memory,
         run_import=run_import,
         action_log=ActionLog(),
+        usage=usage_log,
     )
 
     def handle_command(command: dict[str, Any]) -> None:

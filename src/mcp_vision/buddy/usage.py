@@ -14,7 +14,10 @@ is there to show what the plan is worth.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
+import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -140,6 +143,11 @@ def image_tokens(width: int, height: int) -> int:
     return min(1600, max(1, round(width * height / 750)))
 
 
+# Which credential paid for the request, for the "which plan paid" bars.
+LANES = {"claude-code": "Claude plan (Pro/Max)", "codex": "ChatGPT plan", "cursor": "Cursor plan",
+         "gemini": "Google account", "claude": "API key"}
+
+
 # -- the log -----------------------------------------------------------------------------------
 
 OUTCOMES = ("done", "answered", "unverified", "paused", "waiting", "failed", "stopped")
@@ -206,5 +214,74 @@ class UsageLog:
             pass
 
 
-__all__ = ["OUTCOMES", "PRICES", "Request", "Usage", "UsageLog", "estimate", "from_report", "image_tokens",
-           "rates_for", "text_tokens"]
+# -- what the Usage tab draws ------------------------------------------------------------------
+
+def summary(rows: list[dict[str, Any]], *, now: float | None = None) -> dict[str, Any]:
+    """Totals for the last 7 days, 30 days and all time."""
+    now = time.time() if now is None else now
+    periods = {}
+    for key, days in (("7", 7), ("30", 30), ("all", None)):
+        since = 0.0 if days is None else now - days * 86400
+        periods[key] = _period([row for row in rows if row["at"] >= since], days, now)
+    return {"periods": periods, "since": min((row["at"] for row in rows), default=None),
+            "billed": round(sum(float(row.get("cost") or 0.0) for row in rows if row.get("engine") == "claude"), 4)}
+
+
+def _tokens_in(row: dict[str, Any]) -> int:
+    return int(row.get("input") or 0) + int(row.get("cache_read") or 0) + int(row.get("cache_write") or 0)
+
+
+def _day(at: float) -> str:
+    return _dt.datetime.fromtimestamp(at).strftime("%Y-%m-%d")
+
+
+def _period(rows: list[dict[str, Any]], days: int | None, now: float) -> dict[str, Any]:
+    requests = len(rows)
+    # one bar per day: the last 7 or 30 days, or every day since the first request (at most 90)
+    span = days or max(1, min(90, int((now - min((row["at"] for row in rows), default=now)) // 86400) + 1))
+    today = _dt.datetime.fromtimestamp(now).date()
+    by_day = Counter(_day(row["at"]) for row in rows)
+    cost_by_day: Counter[str] = Counter()
+    for row in rows:
+        cost_by_day[_day(row["at"])] += float(row.get("cost") or 0.0)
+    per_day = []
+    for back in range(span - 1, -1, -1):
+        day = (today - _dt.timedelta(days=back)).strftime("%Y-%m-%d")
+        per_day.append({"day": day, "requests": by_day.get(day, 0), "cost": round(cost_by_day.get(day, 0.0), 4)})
+    per_hour = [0] * 24
+    for row in rows:
+        per_hour[_dt.datetime.fromtimestamp(row["at"]).hour] += 1
+    outcomes = Counter(str(row.get("outcome") or "answered") for row in rows)
+    engines: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (str(row.get("label") or row.get("engine") or "Brain"), str(row.get("model") or ""))
+        entry = engines.setdefault(key, {"label": key[0], "model": key[1], "requests": 0, "cost": 0.0,
+                                         "lane": LANES.get(str(row.get("engine") or ""), "Other")})
+        entry["requests"] += 1
+        entry["cost"] += float(row.get("cost") or 0.0)
+    lanes = Counter(LANES.get(str(row.get("engine") or ""), "Other") for row in rows)
+    names = Counter(str(name) for row in rows for name in (row.get("actions") or []) if name)
+    estimated = sum(1 for row in rows if row.get("estimated"))
+    return {
+        "requests": requests,
+        "turns": sum(int(row.get("turns") or 0) for row in rows),
+        "actions": sum(names.values()),
+        "tasks": sum(1 for row in rows if row.get("goal")),
+        "tokensIn": sum(_tokens_in(row) for row in rows),
+        "tokensOut": sum(int(row.get("output") or 0) for row in rows),
+        "cacheRead": sum(int(row.get("cache_read") or 0) for row in rows),
+        "cost": round(sum(float(row.get("cost") or 0.0) for row in rows), 4),
+        "estimatedShare": round(estimated / requests, 2) if requests else 0.0,
+        "perDay": per_day,
+        "perHour": per_hour,
+        "busiestHour": max(range(24), key=lambda hour: per_hour[hour]) if requests else None,
+        "outcomes": {name: outcomes.get(name, 0) for name in OUTCOMES},
+        "engines": sorted(({**entry, "cost": round(entry["cost"], 4)} for entry in engines.values()),
+                          key=lambda entry: -entry["requests"])[:6],
+        "lanes": [{"lane": lane, "requests": count} for lane, count in lanes.most_common()],
+        "topActions": [{"name": name, "count": count} for name, count in names.most_common(8)],
+    }
+
+
+__all__ = ["LANES", "OUTCOMES", "PRICES", "Request", "Usage", "UsageLog", "estimate", "from_report", "image_tokens",
+           "rates_for", "summary", "text_tokens"]

@@ -56,7 +56,7 @@ from buddy_fakes import Capturer, Events, FakeHost, Pointer, ScriptedBrain, Spea
 from mcp_vision.buddy.actions import ActionContext, ActionEngine  # noqa: E402
 from mcp_vision.buddy.actions.host import FileHit  # noqa: E402
 from mcp_vision.buddy.companion import Companion  # noqa: E402
-from mcp_vision.buddy.usage import OUTCOMES, UsageLog  # noqa: E402
+from mcp_vision.buddy.usage import OUTCOMES, Request, UsageLog  # noqa: E402
 
 
 def buddy(brain, log, host=None, **kw):
@@ -143,3 +143,59 @@ def test_the_log_survives_junk_and_clears(tmp_path):
     log.clear()
     assert log.rows() == [] and not path.exists()
     assert json.loads(json.dumps(log.rows())) == []
+
+
+# -- what the Usage tab draws ----------------------------------------------------------------
+
+def test_summary_counts_days_hours_outcomes_brains_and_plans():
+    import datetime as dt
+
+    from mcp_vision.buddy.usage import summary
+
+    now = dt.datetime(2026, 10, 5, 22, 30).timestamp()
+    hour = 3600
+    rows = [
+        {"at": now - 1 * hour, "engine": "claude-code", "label": "Claude", "model": "claude-opus-5-5", "input": 10,
+         "cache_read": 1000, "output": 5, "cost": 0.02, "turns": 3, "goal": True, "outcome": "done",
+         "actions": ["search_files", "open_file"]},
+        {"at": now - 2 * hour, "engine": "claude-code", "label": "Claude", "model": "claude-opus-5-5", "input": 20,
+         "output": 5, "cost": 0.01, "turns": 1, "outcome": "answered", "actions": []},
+        {"at": now - 3 * 86400, "engine": "codex", "label": "ChatGPT", "model": "gpt-5", "input": 100, "output": 50,
+         "cost": 0.0, "turns": 1, "outcome": "stopped", "estimated": True, "actions": ["search_files"]},
+        {"at": now - 20 * 86400, "engine": "claude", "label": "Claude API", "model": "claude-opus-5-5", "input": 5,
+         "output": 1, "cost": 0.5, "turns": 2, "outcome": "failed", "actions": []},
+    ]
+    report = summary(rows, now=now)
+    week, month, ever = (report["periods"][key] for key in ("7", "30", "all"))
+    assert (week["requests"], month["requests"], ever["requests"]) == (3, 4, 4)
+    assert week["turns"] == 5 and week["tasks"] == 1 and week["actions"] == 3
+    assert week["tokensIn"] == 1130 and week["tokensOut"] == 60 and week["cacheRead"] == 1000
+    assert week["cost"] == 0.03 and week["estimatedShare"] == 0.33
+    assert len(week["perDay"]) == 7 and week["perDay"][-1] == {"day": "2026-10-05", "requests": 2, "cost": 0.03}
+    assert len(month["perDay"]) == 30 and len(ever["perDay"]) == 21           # all time: since the first request
+    assert week["perHour"][21] == 1 and week["perHour"][20] == 1 and week["busiestHour"] in (20, 21, 22)
+    assert week["outcomes"] == {"done": 1, "answered": 1, "unverified": 0, "paused": 0, "waiting": 0, "failed": 0,
+                                "stopped": 1}
+    assert week["engines"][0] == {"label": "Claude", "model": "claude-opus-5-5", "requests": 2, "cost": 0.03,
+                                  "lane": "Claude plan (Pro/Max)"}
+    assert {lane["lane"] for lane in ever["lanes"]} == {"Claude plan (Pro/Max)", "ChatGPT plan", "API key"}
+    assert week["topActions"][0] == {"name": "search_files", "count": 2}
+    assert report["billed"] == 0.5 and report["since"] == rows[-1]["at"]       # only the API key is billed
+    assert summary([], now=now)["periods"]["all"]["busiestHour"] is None
+
+
+def test_settings_show_usage_and_clear_it(tmp_path):
+    from mcp_vision.buddy.settings import BuddySettings
+    from mcp_vision.buddy.settings_service import SettingsService
+    from mcp_vision.buddy.store import History
+
+    log = UsageLog(tmp_path / "usage.jsonl")
+    log.add(Request(at=1759700000.0, engine="claude-code", label="Claude", input=10, output=2, turns=1))
+    posted = []
+    svc = SettingsService(engines=lambda: [], settings=lambda: BuddySettings(_env_file=None), reload=lambda: None,
+                          post=posted.extend, prefs_path=tmp_path / "prefs.json",
+                          history=History(path=tmp_path / "history.jsonl"), usage=log)
+    svc.handle({"cmd": "settings-ready"})
+    assert posted[-1]["state"]["usage"]["periods"]["all"]["requests"] == 1
+    svc.handle({"cmd": "clear-usage"})
+    assert log.rows() == [] and posted[-1]["state"]["usage"]["periods"]["all"]["requests"] == 0
