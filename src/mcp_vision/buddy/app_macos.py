@@ -48,22 +48,31 @@ def _menu_target_class():
 
 
 def _plip_icon():
-    """Menu bar glyph: Plip's round face with two eyes (template image)."""
+    """Menu bar glyph: the app icon's hood silhouette with its pill eye cut out (template image)."""
     import AppKit
 
     size = 18.0
     image = AppKit.NSImage.alloc().initWithSize_(AppKit.NSMakeSize(size, size))
     image.lockFocus()
+    # Same curves as the UI mascot (64-unit box, y down), scaled into 18 pt with y flipped.
+    scale = size / 64.0
+
+    def point(x, y):
+        return AppKit.NSMakePoint(x * scale, size - y * scale)
+
+    hood = AppKit.NSBezierPath.bezierPath()
+    hood.moveToPoint_(point(15, 60))
+    for c1, c2, end in (((9, 57), (8, 52), (8.2, 46)), ((8.5, 30), (22, 4), (37, 4.1)),
+                        ((42, 4), (45.5, 6.5), (47.3, 9.4)), ((51, 14), (54.5, 21), (55.5, 27.1)),
+                        ((56.5, 34), (52, 40), (45.9, 43.5)), ((40, 47), (31, 48.5), (25.9, 50.6)),
+                        ((22, 53), (19, 61), (15, 60))):
+        hood.curveToPoint_controlPoint1_controlPoint2_(point(*end), point(*c1), point(*c2))
+    hood.closePath()
     AppKit.NSColor.blackColor().setFill()
-    face = AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-        AppKit.NSMakeRect(2.5, 2.0, 13.0, 12.0), 5.0, 5.0)
-    face.fill()
-    antenna = AppKit.NSBezierPath.bezierPathWithOvalInRect_(AppKit.NSMakeRect(7.5, 14.6, 3.0, 3.0))
-    antenna.fill()
+    hood.fill()
     AppKit.NSGraphicsContext.currentContext().setCompositingOperation_(AppKit.NSCompositingOperationClear)
-    for x in (5.8, 10.2):
-        AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-            AppKit.NSMakeRect(x, 6.0, 2.0, 4.0), 1.0, 1.0).fill()
+    eye = AppKit.NSMakeRect(40.0 * scale, size - 31.5 * scale, 6.6 * scale, 12.0 * scale)
+    AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(eye, 3.3 * scale, 3.3 * scale).fill()
     image.unlockFocus()
     image.setTemplate_(True)
     return image
