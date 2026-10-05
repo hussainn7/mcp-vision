@@ -88,6 +88,18 @@ Then hold **Control+Option**, talk, and let go.
 Paste them in the dashboard, or see [.env.example](.env.example). `plip doctor` checks
 brains, keys and permissions from the terminal.
 
+**Listening on your Mac with Parakeet.** Under **Voice → Listening**, pick Parakeet for
+NVIDIA's Parakeet Unified 0.6B instead of Apple's recognizer: it catches more of what you
+say, with punctuation, and nothing leaves your Mac. It's a one-time 663 MB download
+(pinned, checksummed, resumable); Apple's keeps listening until it's done.
+
+**Usage.** The **Usage** tab shows every request from this Mac: per day, when you ask, how
+it ended, which brain and plan, and what it would cost at API prices (what your plan is
+worth). It stays on your Mac.
+
+**Permissions in one click.** **Allow** opens the exact page in System Settings with a small
+card docked under it: drag Plip into the list and it's on.
+
 ### Try it from the terminal (any OS)
 
 ```bash
