@@ -461,3 +461,93 @@ def test_no_first_answer_in_time_names_the_network_problem(tmp_path):
         asyncio.run(collect(CodexBrain(binary, first_output_timeout=0.8), TURNS))
     assert "Reconnecting" in str(caught.value)
     assert _friendly_error(caught.value).startswith("I can't reach my brain")
+
+
+# -- what each brain says it used ----------------------------------------------------------
+
+def test_claude_code_reports_tokens_cost_and_the_model_that_answered(tmp_path):
+    binary = fake_cli(tmp_path, "claude", """
+        out({"type": "stream_event", "event": {"type": "content_block_delta",
+                                               "delta": {"type": "text_delta", "text": "Hi."}}})
+        out({"type": "result", "subtype": "success", "is_error": False, "result": "Hi.", "total_cost_usd": 0.0123,
+             "usage": {"input_tokens": 12, "output_tokens": 30, "cache_read_input_tokens": 4000,
+                       "cache_creation_input_tokens": 900},
+             "modelUsage": {"claude-opus-5-5[1m]": {"canonicalModel": "claude-opus-5-5[1m]", "inputTokens": 12}}})
+    """)
+    brain = ClaudeCodeBrain(binary)
+    assert asyncio.run(collect(brain, TURNS)) == "Hi."
+    used = brain.last_usage
+    assert (used.input, used.output, used.cache_read, used.cache_write) == (12, 30, 4000, 900)
+    assert used.model == "claude-opus-5-5" and used.cost == 0.0123 and not used.estimated
+
+
+def test_codex_cursor_and_gemini_report_their_own_spellings(tmp_path):
+    codex = fake_cli(tmp_path, "codex", """
+        out({"type": "item.completed", "item": {"id": "1", "type": "agent_message", "text": "Yes."}})
+        out({"type": "turn.completed", "usage": {"input_tokens": 1000, "cached_input_tokens": 600, "output_tokens": 9}})
+        out({"type": "turn.completed", "usage": {"input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 1}})
+    """)
+    brain = CodexBrain(codex, model="gpt-5")
+    asyncio.run(collect(brain, TURNS))
+    assert (brain.last_usage.input, brain.last_usage.cache_read, brain.last_usage.output) == (500, 600, 10)
+    assert brain.last_usage.model == "gpt-5"                      # the CLI didn't say; the brain's own setting
+
+    cursor = fake_cli(tmp_path, "cursor-agent", """
+        out({"type": "assistant", "timestamp_ms": 1, "message": {"content": [{"type": "text", "text": "Ok."}]}})
+        out({"type": "result", "subtype": "success", "result": "Ok.", "model": "sonnet-5",
+             "usage": {"inputTokens": 50, "outputTokens": 4, "cacheReadTokens": 20, "cacheWriteTokens": 2}})
+    """)
+    brain = CursorBrain(cursor)
+    asyncio.run(collect(brain, TURNS))
+    assert (brain.last_usage.input, brain.last_usage.cache_write, brain.last_usage.model) == (50, 2, "sonnet-5")
+
+    gemini = fake_cli(tmp_path, "gemini", """
+        out({"type": "message", "role": "assistant", "content": "Sure.", "delta": True})
+        out({"type": "result", "status": "success", "stats": {"input": 700, "cached": 200, "output_tokens": 5,
+             "thoughts": 3, "models": {"gemini-2.5-pro": {}}}})
+    """)
+    brain = GeminiBrain(gemini)
+    asyncio.run(collect(brain, TURNS))
+    assert (brain.last_usage.input, brain.last_usage.cache_read, brain.last_usage.output) == (500, 200, 8)
+    assert brain.last_usage.model == "gemini-2.5-pro"
+
+
+def test_a_brain_that_reports_nothing_leaves_no_usage(tmp_path):
+    binary = fake_cli(tmp_path, "claude", """
+        out({"type": "result", "subtype": "success", "is_error": False, "result": "Plain."})
+    """)
+    brain = ClaudeCodeBrain(binary)
+    brain.last_usage = "left over from the last call"
+    assert asyncio.run(collect(brain, TURNS)) == "Plain."
+    assert brain.last_usage is None
+
+
+def test_the_api_brain_reports_the_final_messages_usage():
+    from types import SimpleNamespace
+
+    from mcp_vision.buddy.brain_claude import ClaudeBrain
+
+    final = SimpleNamespace(stop_reason="end_turn", model="claude-opus-5-5",
+                            usage=SimpleNamespace(input_tokens=20, output_tokens=7, cache_read_input_tokens=3000,
+                                                  cache_creation_input_tokens=None))
+
+    class Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def __aiter__(self):
+            async def events():
+                yield SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta", text="Hi."))
+            return events()
+
+        async def get_final_message(self):
+            return final
+
+    client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(stream=lambda **body: Stream())))
+    brain = ClaudeBrain(client=client)
+    assert asyncio.run(collect(brain, [Turn("user", "hi")])) == "Hi."
+    used = brain.last_usage
+    assert (used.input, used.output, used.cache_read, used.cache_write, used.model) == (20, 7, 3000, 0, "claude-opus-5-5")

@@ -27,6 +27,7 @@ from typing import Any
 
 from mcp_vision.buddy.conversation import Turn
 from mcp_vision.buddy.prompt import screen_label
+from mcp_vision.buddy.usage import Usage, from_report
 
 # GUI apps launched from Finder get a bare PATH; look where installers put CLIs.
 SEARCH_DIRS = ("~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin", "~/.npm-global/bin",
@@ -395,6 +396,7 @@ class StreamParser:
         self.error = ""
         self.final = ""
         self.notice = ""            # latest transient problem (e.g. "Reconnecting...")
+        self.usage: Usage | None = None   # token counts from the CLI's final event, when it reports them
 
     def feed(self, line: str) -> list[str]:
         line = line.strip()
@@ -426,6 +428,7 @@ class CLIBrain:
     label = "CLI"
     vision = True
     effort_map: dict[str, str] = {}
+    last_usage: Usage | None = None     # what the last stream() used, as the CLI reported it
 
     def __init__(self, binary: str, *, model: str = "", effort: str = "low", timeout: float = 120.0,
                  first_output_timeout: float = 45.0, spawn: Callable[..., Any] | None = None):
@@ -456,6 +459,7 @@ class CLIBrain:
         workdir = tempfile.mkdtemp(prefix="plip-")
         process = None
         errors: asyncio.Future | None = None
+        self.last_usage = None
         try:
             call = self.invocation(system=system, turns=turns, workdir=workdir, detailed=detailed)
             env = child_env(self.binary)
@@ -492,6 +496,9 @@ class CLIBrain:
                     yield text
             code = await process.wait()
             stderr = (await errors).decode("utf-8", "replace")
+            self.last_usage = parser.usage
+            if self.last_usage is not None and not self.last_usage.model:
+                self.last_usage.model = self.model or ""
             for text in parser.finish():
                 yield text
             if parser.error and not parser.produced:
@@ -542,6 +549,12 @@ class ClaudeCodeParser(StreamParser):
                 self.error = str(event.get("result") or event.get("subtype") or "error")
             elif not self.final:
                 self.final = str(event.get("result") or "")
+            models = event.get("modelUsage") or {}
+            model = next((str(info.get("canonicalModel") or name).split("[")[0] for name, info in models.items()
+                          if isinstance(info, dict)), "")
+            cost = event.get("total_cost_usd")
+            self.usage = from_report(event.get("usage"), model=model,
+                                     cost=float(cost) if isinstance(cost, (int, float)) else None)
         return []
 
 
@@ -590,6 +603,10 @@ class CodexParser(StreamParser):
                 if text.startswith(previous) and len(text) > len(previous):
                     self._sent[key] = text
                     return [text[len(previous):]]
+        elif kind == "turn.completed":
+            usage = from_report(event.get("usage"), cached_in_input=True)
+            if usage is not None:
+                self.usage = usage if self.usage is None else self.usage + usage
         elif kind == "error" and str(event.get("message", "")).startswith("Reconnecting"):
             self.notice = str(event["message"])            # Codex retries on its own; not fatal yet
         elif kind in {"turn.failed", "thread.failed", "error"}:
@@ -641,6 +658,7 @@ class CursorParser(StreamParser):
                 self.error = str(event.get("result") or event.get("error") or "error")
             elif not self.final:
                 self.final = str(event.get("result") or "")
+            self.usage = from_report(event.get("usage"), model=str(event.get("model") or ""))
         return []
 
 
@@ -674,6 +692,10 @@ class GeminiParser(StreamParser):
         if kind == "result" and event.get("status") not in {None, "success"}:
             error = event.get("error") or {}
             self.error = str(error.get("message") if isinstance(error, dict) else error or "failed")
+        if kind == "result" and isinstance(event.get("stats"), dict):
+            stats = event["stats"]
+            models = stats.get("models") if isinstance(stats.get("models"), dict) else {}
+            self.usage = from_report(stats, model=next(iter(models), ""), cached_in_input=True)
         return []
 
 

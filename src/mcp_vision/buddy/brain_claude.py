@@ -7,6 +7,7 @@ from typing import Any
 
 from mcp_vision.buddy.conversation import Turn
 from mcp_vision.buddy.prompt import screen_label
+from mcp_vision.buddy.usage import Usage, from_report
 
 DEFAULT_MODEL = "claude-opus-5-5"
 # Conversational, latency-sensitive turns do well at low effort; raise it in
@@ -29,6 +30,7 @@ class ClaudeBrain:
     label = "Claude API"
     kind = "api"
     vision = True
+    last_usage: Usage | None = None     # what the last stream() used, from the final message
 
     def __init__(self, *, api_key: str | None = None, model: str = DEFAULT_MODEL,
                  effort: str = DEFAULT_EFFORT, max_tokens: int = 16000, client: Any = None,
@@ -71,10 +73,21 @@ class ClaudeBrain:
                 if event.type == "content_block_delta" and getattr(event.delta, "type", "") == "text_delta":
                     yield event.delta.text
             final = await stream.get_final_message()
+        self.last_usage = _usage(final, self.model)
         if final.stop_reason == "refusal":
             yield " Sorry, I can't help with that one."
         elif final.stop_reason == "max_tokens":
             yield " That's as far as I can go in one breath. Ask me to keep going."
+
+
+def _usage(final: Any, model: str) -> Usage | None:
+    """The final message's token counts (fallback turns bill at the model that answered)."""
+    usage = getattr(final, "usage", None)
+    if usage is None:
+        return None
+    raw = {key: getattr(usage, key, 0) or 0 for key in
+           ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
+    return from_report(raw, model=str(getattr(final, "model", "") or model))
 
 
 def _message(turn: Turn) -> dict[str, Any]:
