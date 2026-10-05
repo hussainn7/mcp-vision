@@ -25,7 +25,14 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Tests (no model, no network, no display)
-        run: python -m pytest
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -rfE 2>&1 | tee "$RUNNER_TEMP/pytest.log"
+          status=${PIPESTATUS[0]}
+          # Logs need a GitHub login; annotations don't, so every failure shows on the run's page.
+          grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/pytest.log" | head -20 | sed 's/^/::error title=pytest::/'
+          exit $status
       - name: Build the wheel
         run: python -m build --wheel
       - name: Installed wheel, from outside the checkout
