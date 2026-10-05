@@ -6,6 +6,7 @@ of estimating; text-only engines (no image input) use it to point at all.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -32,6 +33,11 @@ class ScreenContext:
     @property
     def empty(self) -> bool:
         return not (self.app or self.window or self.selection or self.controls)
+
+    def signature(self) -> str:
+        """Changes when what's on screen changes (app, window, controls and where they are)."""
+        parts = [self.app, self.window, *(f"{c.label}|{c.role}|{round(c.x)}|{round(c.y)}" for c in self.controls)]
+        return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
 
     def describe(self, shots: list[Screenshot]) -> str:
         """Compact text block for the user turn; coordinates in screenshot pixels."""

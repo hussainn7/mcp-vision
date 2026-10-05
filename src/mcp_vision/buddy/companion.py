@@ -180,7 +180,8 @@ class Companion:
                  observer: Observer | None = None, watcher: Watcher | None = None,
                  walkthroughs: bool = True, guide_timeout: float = 90.0, max_guide_turns: int = 10,
                  actions: Any = None, notes: Callable[[], str] | None = None, max_followups: int = 3,
-                 capture_timeout: float = 6.0, usage: Any = None, usage_kind: str = "voice"):
+                 capture_timeout: float = 6.0, usage: Any = None, usage_kind: str = "voice",
+                 settle_interval: float = 0.15):
         self.brain = brain
         self.capturer = capturer
         self.speaker = speaker or _NullSpeaker()
@@ -201,6 +202,7 @@ class Companion:
         self.notes = notes
         self.capture_timeout = capture_timeout
         self.max_followups = max_followups
+        self.settle_interval = settle_interval
         self.usage = usage                      # buddy.usage.UsageLog, or None to keep no record
         self.usage_kind = usage_kind
         self._meter: _Meter | None = None
@@ -321,7 +323,7 @@ class Companion:
         while result.state == "done" and (result.reports or result.look_after) and followups < self.max_followups:
             if result.look_after:
                 self.emit("step", id="wait", label="Waiting for it to load", status="active")
-                await asyncio.sleep(result.look_after)
+                await self._settle(result.look_after)
             prompt = (LOOK_FOLLOWUP if result.look_after else ACTION_FOLLOWUP).format(
                 reports="\n".join(f"- {report}" for report in result.reports) or "- (nothing else)")
             followup = await self._turn(prompt, guide=True, screen=bool(result.look_after))
@@ -389,6 +391,32 @@ class Companion:
         return result
 
     # -- timers and other late announcements (called from worker threads) ------------------
+    async def _settle(self, limit: float) -> bool:
+        """Wait until the screen map stops changing (an app opened, a page loaded), at most ``limit`` seconds.
+
+        Re-reads the Accessibility map locally: no screenshot, no tokens. True when it watched the
+        screen settle; without a map to read it waits a moment and returns False.
+        """
+        if self.context is None:
+            await asyncio.sleep(min(limit, 1.5))
+            return False
+        started = self.clock()
+        last, quiet = None, 0
+        while self.clock() - started < limit:
+            try:
+                seen = await asyncio.to_thread(self.context.snapshot)
+            except Exception:
+                seen = None
+            signature = seen.signature() if seen is not None and not seen.empty else None
+            if signature is None and self.clock() - started > 1.5:
+                return False                          # no Accessibility map here: a short wait is all we can do
+            quiet = quiet + 1 if signature is not None and signature == last else 0
+            if quiet >= 2:
+                return True
+            last = signature
+            await asyncio.sleep(self.settle_interval)
+        return False
+
     def _schedule(self, delay: float, fn: Callable[[], None]) -> None:
         loop = self._loop
         if loop is not None:
