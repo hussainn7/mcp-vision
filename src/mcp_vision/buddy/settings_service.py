@@ -52,6 +52,7 @@ class SettingsService:
     action_log: Any = None                                 # buddy.actions.ActionLog (for stats)
     usage: Any = None                                      # buddy.usage.UsageLog (the Usage tab)
     parakeet: Any = None                                   # buddy.parakeet.ParakeetModel (the opt-in download)
+    account: Any = None                                    # buddy.account.Account (sign in before Plip works)
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
     report_note: str = ""                                  # "sent" | "failed" after a bug report or feature request
 
@@ -90,6 +91,8 @@ class SettingsService:
             "onboarded": prefs.onboarded,
             "connect": self.connect_note,
             "report": self.report_note,
+            "account": self.account.snapshot() if self.account is not None
+            else {"available": False, "required": False},
         }
 
     def _stats(self) -> dict:
@@ -195,6 +198,26 @@ class SettingsService:
         prefs.onboarded = done
         prefs.save(self.prefs_path)
         self.push()
+
+    # -- the account: sign in with Google once, in the browser ----------------------------------------
+    def _cmd_account_sign_in(self, command):
+        if self.account is not None:
+            self.account.start(str(command.get("provider") or "google"))
+            self.push()
+
+    def _cmd_account_open(self, _command):
+        if self.account is not None and self.account.status == "waiting" and self.account.link:
+            self.platform.open_url(self.account.link)
+
+    def _cmd_account_cancel(self, _command):
+        if self.account is not None:
+            self.account.cancel()
+            self.push()
+
+    def _cmd_account_sign_out(self, _command):
+        if self.account is not None:
+            self.account.sign_out()                    # its on_change stops Plip until they sign in again
+            self.push()
 
     def _cmd_quick_connect(self, _command):
         """One button: use a ready AI, else sign in to an installed one, else install Claude and sign in."""

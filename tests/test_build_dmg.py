@@ -67,3 +67,27 @@ def test_only_a_clean_python_gets_bundled(tmp_path):
     assert build_dmg.extra_packages(site) == []
     (site / "pandas").mkdir()                    # someone's base interpreter with packages installed into it
     assert build_dmg.extra_packages(site) == ["pandas"]
+
+
+def test_a_release_carries_the_sign_in_project_but_never_a_secret_key(monkeypatch):
+    from mcp_vision.buddy import settings as settings_module
+
+    assert build_dmg.release_env() == "" and build_dmg.release_env("https://abc.supabase.co", "") == ""
+    assert build_dmg.release_env("https://abc.supabase.co", "sb_publishable_x") == \
+        "PLIP_SUPABASE_URL=https://abc.supabase.co\nPLIP_SUPABASE_KEY=sb_publishable_x\n"
+    assert build_dmg.secret_key("sb_secret_abc") and build_dmg.secret_key("eyJ...service_role...")
+    assert not build_dmg.secret_key("sb_publishable_x")
+    monkeypatch.setenv("PLIP_SUPABASE_URL", "https://abc.supabase.co")
+    monkeypatch.setenv("PLIP_SUPABASE_KEY", "sb_publishable_x")
+    configured = settings_module.BuddySettings(_env_file=None)
+    assert (configured.supabase_url, configured.supabase_key) == ("https://abc.supabase.co", "sb_publishable_x")
+
+
+def test_only_the_app_bundle_reads_its_plip_env(monkeypatch, tmp_path):
+    from mcp_vision.buddy import settings as settings_module
+
+    bundled = tmp_path / "Plip.app" / "Contents" / "Resources" / "python"
+    monkeypatch.setattr(settings_module.sys, "prefix", str(bundled))
+    assert settings_module.release_env() == bundled.parent / "plip.env"
+    monkeypatch.setattr(settings_module.sys, "prefix", str(tmp_path / ".venv"))
+    assert settings_module.release_env() is None

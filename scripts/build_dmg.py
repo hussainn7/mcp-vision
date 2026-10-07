@@ -172,7 +172,20 @@ def make_icns(png: Path, target: Path) -> None:
     shutil.rmtree(iconset)
 
 
-def build_app(dist: Path, sign: str = "-") -> Path:
+def release_env(supabase_url: str = "", supabase_key: str = "") -> str:
+    """``Contents/Resources/plip.env``: the sign-in project, so a shared DMG asks people to sign in. Supabase
+    anon/publishable keys are public by design (row-level security); they still stay out of git."""
+    if not (supabase_url and supabase_key):
+        return ""
+    return f"PLIP_SUPABASE_URL={supabase_url}\nPLIP_SUPABASE_KEY={supabase_key}\n"
+
+
+def secret_key(key: str) -> bool:
+    """A Supabase secret / service_role key: it would ship to everyone who downloads the app."""
+    return key.startswith("sb_secret_") or "service_role" in key
+
+
+def build_app(dist: Path, sign: str = "-", env: str = "") -> Path:
     app = dist / "Plip.app"
     shutil.rmtree(app, ignore_errors=True)
     macos, resources = app / "Contents" / "MacOS", app / "Contents" / "Resources"
@@ -205,6 +218,8 @@ def build_app(dist: Path, sign: str = "-") -> Path:
     print("3/5 icon, Info.plist, launcher")
     make_icns(ICON, resources / "Plip.icns")
     (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info_plist(version())))
+    if env:
+        (resources / "plip.env").write_text(env)
     source = dist / "PlipLauncher.m"
     source.write_text(LAUNCHER.replace("PYVERSION", PY))
     run("clang", "-O2", "-fobjc-arc", "-arch", "arm64", "-mmacosx-version-min=13.0", source, "-o", macos / "Plip",
@@ -330,6 +345,10 @@ def main() -> None:
     parser.add_argument("--sign", default="-", help='codesign identity (default: ad hoc). "Developer ID Application: …"')
     parser.add_argument("--notarize", default="", help="notarytool keychain profile; needs a Developer ID --sign")
     parser.add_argument("--app-only", action="store_true", help="build dist/Plip.app, skip the DMG")
+    parser.add_argument("--supabase-url", default="", help="sign-in project URL (default: PLIP_SUPABASE_URL); "
+                        "without it and --supabase-key, Plip doesn't ask anyone to sign in")
+    parser.add_argument("--supabase-key", default="", help="the project's anon or publishable key (default: "
+                        "PLIP_SUPABASE_KEY)")
     args = parser.parse_args()
     if sys.platform != "darwin" or os.uname().machine != "arm64":
         raise SystemExit("Build on an Apple-silicon Mac (the bundled Python is arm64).")
@@ -343,9 +362,20 @@ def main() -> None:
     problems = release_problems(sign, profile, identities, profile_ok)
     if problems:
         raise SystemExit("Can't make a release yet:\n  - " + "\n  - ".join(problems))
+    from mcp_vision.buddy.settings import load_settings
+
+    configured = load_settings()
+    supabase_url = (args.supabase_url or configured.supabase_url or "").strip().rstrip("/")
+    supabase_key = (args.supabase_key or configured.supabase_key or "").strip()
+    if secret_key(supabase_key):
+        raise SystemExit("That's a Supabase secret key. Use the anon or publishable key: the app ships it to everyone.")
+    signs_in = bool(supabase_url and supabase_key)
+    print(f"   sign-in: {'Google, through ' + supabase_url if signs_in else 'none (no Supabase project configured)'}")
+    if not signs_in and sign != "-":
+        print("   note: this release won't ask anyone to sign in. Set PLIP_SUPABASE_URL and PLIP_SUPABASE_KEY.")
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
-    app = build_app(dist, sign)
+    app = build_app(dist, sign, release_env(supabase_url, supabase_key))
     size = sum(path.stat().st_size for path in app.rglob("*") if path.is_file() and not path.is_symlink())
     print(f"   {app} ({size / 1e6:.0f} MB)")
     if profile:

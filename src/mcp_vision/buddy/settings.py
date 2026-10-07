@@ -1,17 +1,27 @@
 """Buddy configuration from the environment or a local ``.env`` file."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def release_env() -> Path | None:
+    """``Plip.app/Contents/Resources/plip.env``: what a release build carries (the sign-in project), nothing secret."""
+    home = Path(sys.prefix)
+    if home.name == "python" and home.parent.name == "Resources" and home.parent.parent.name == "Contents":
+        return home.parent / "plip.env"
+    return None
+
+
 def _env_files() -> tuple[Path, ...]:
-    """Existing dotenv files, lowest priority first: checkout, user config, current directory."""
+    """Existing dotenv files, lowest priority first: the app bundle, checkout, user config, current directory."""
     from mcp_vision.buddy.store import config_dir
 
-    candidates = (Path(__file__).resolve().parents[3] / ".env", config_dir() / ".env", Path.cwd() / ".env")
+    candidates = tuple(path for path in (release_env(), Path(__file__).resolve().parents[3] / ".env",
+                                         config_dir() / ".env", Path.cwd() / ".env") if path is not None)
     seen, found = set(), []
     for path in candidates:
         if path.is_file() and path.resolve() not in seen:
@@ -63,6 +73,12 @@ class BuddySettings(BaseSettings):
 
     # overlay
     always_visible: bool = True         # False: the buddy only appears while it is working
+
+    # sign-in (buddy/account.py): a Supabase project's URL and its public anon/publishable key. None: no sign-in.
+    supabase_url: str | None = Field(default=None, validation_alias=AliasChoices(
+        "PLIP_SUPABASE_URL", "BUDDY_SUPABASE_URL"))
+    supabase_key: str | None = Field(default=None, validation_alias=AliasChoices(
+        "PLIP_SUPABASE_KEY", "BUDDY_SUPABASE_KEY"))
 
 
 def load_settings(**overrides) -> BuddySettings:

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="5 1 54 63"><defs>
+<linearGradient id="plip-body" x1="0.7" y1="0" x2="0.2" y2="1"><stop offset="0" stop-color="#a9c9fb"/><stop offset="0.45" stop-color="#4f7ff0"/><stop offset="1" stop-color="#2c58e6"/></linearGradient>
+<radialGradient id="plip-face" cx="0.62" cy="0.5" r="0.62"><stop offset="0" stop-color="#ffffff"/><stop offset="0.55" stop-color="#e8effc"/><stop offset="1" stop-color="#a9c6f6"/></radialGradient>
+</defs>
+<path d="M15 60 C9 57 8 52 8.2 46 C8.5 30 22 4 37 4.1 C42 4 45.5 6.5 47.3 9.4 C51 14 54.5 21 55.5 27.1 C56.5 34 52 40 45.9 43.5 C40 47 31 48.5 25.9 50.6 C22 53 19 61 15 60 Z" fill="url(#plip-body)"/>
+<path d="M25.9 50.6 C23.5 46 22.5 40 24 33 C25.5 25 27.5 18 31.5 14.5 C36 10.5 42 9.5 47.3 9.4 C51 14 54.5 21 55.5 27.1 C56.5 34 52 40 45.9 43.5 C40 47 31 48.5 25.9 50.6 Z" fill="url(#plip-face)"/>
+<rect x="40.35" y="19.95" width="5.9" height="10.9" rx="2.95" fill="#161b22"/></svg>
