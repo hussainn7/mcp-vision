@@ -43,7 +43,7 @@ export function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) =>
           <span className="grid size-9 shrink-0 place-items-center rounded-xl brand-gradient text-slate-950"><ArrowDownToLine className="size-4" /></span>
           <div className="min-w-0 flex-1">
             <div className="text-[13.5px] font-semibold tracking-tight">Plip {update.version} is out</div>
-            <div className="text-[12px] text-white/45">You have {state.update.current}. Download it, then drag it into Applications to replace this one.</div>
+            <div className="text-[12px] text-white/45">You have {state.update.current}. Download it, quit Plip, then drag the new one into Applications.</div>
           </div>
           <Button variant="quiet" onClick={() => send('open-url', { url: update.page })}>What’s new</Button>
           <Button variant="brand" onClick={() => send('update-download')}>Download</Button>

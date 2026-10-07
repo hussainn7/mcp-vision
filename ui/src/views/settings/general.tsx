@@ -73,7 +73,7 @@ export function GeneralTab({ state, composer: initial = null }: { state: Setting
           <Row
             title={<>Plip <span className="font-mono text-[12px] font-normal text-white/40">v{state.version}</span></>}
             detail={state.update.available
-              ? `Version ${state.update.available.version} is out. Download it, then drag it into Applications to replace this one.`
+              ? `Version ${state.update.available.version} is out. Download it, quit Plip, then drag the new one into Applications.`
               : 'Open source and private by default. Your memory, history and keys never leave this Mac.'}
             action={state.update.available
               ? <Button variant="brand" onClick={() => send('update-download')}>Download {state.update.available.version}</Button>
