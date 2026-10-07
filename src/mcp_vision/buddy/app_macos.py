@@ -392,9 +392,12 @@ def run_buddy_app() -> None:
                          daemon=True, name="plip-update-check").start()
 
     def watch_updates() -> None:
+        from mcp_vision.analytics import ping
+
         while True:                                   # GitHub is asked at most once a day (Updates.check)
             AppHelper.callAfter(show_update, updates.check())
             time.sleep(6 * 60 * 60)
+            ping("app")                               # Plip stays open for days: still one anonymous ping a day
 
     # -- the account: Plip starts working once they're signed in, and stops if they sign out ------------
     def account_changed() -> None:
