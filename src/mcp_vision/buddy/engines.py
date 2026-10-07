@@ -566,12 +566,19 @@ def _tail(text: str, limit: int = 240) -> str:
 # Claude Code ----------------------------------------------------------------------------
 
 class ClaudeCodeParser(StreamParser):
+    retried = False
+
     def handle(self, event):
         kind = event.get("type")
         if kind == "stream_event":
             inner = event.get("event") or {}
             delta = inner.get("delta") or {}
-            if inner.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+            if inner.get("type") == "message_start" and self.produced:
+                # The CLI retried mid-reply: what it streams now starts over, and replaying it would run
+                # the reply's [DO:] steps and say its sentences a second time. Keep the first attempt.
+                self.notice, self.retried = "retried mid-reply", True
+            elif inner.get("type") == "content_block_delta" and delta.get("type") == "text_delta" \
+                    and not self.retried:
                 return [delta.get("text", "")]
         elif kind == "assistant" and not self.produced:
             # Without partial messages we still get whole assistant messages.

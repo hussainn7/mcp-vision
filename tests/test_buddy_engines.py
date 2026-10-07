@@ -230,6 +230,20 @@ def test_claude_code_parser_streams_deltas_and_reports_errors():
                         {"type": "result", "subtype": "success", "result": "Hi."}]) == ["Hi."]
 
 
+def test_a_cli_retry_mid_reply_doesnt_run_the_reply_twice():
+    def delta(text):
+        return {"type": "stream_event", "event": {"type": "content_block_delta",
+                                                  "delta": {"type": "text_delta", "text": text}}}
+    start = {"type": "stream_event", "event": {"type": "message_start", "message": {}}}
+    parser = ClaudeCodeParser()
+    texts = feed(parser, [start, delta("Typing it. "), delta('[DO:type_text {"text": "hi"}]'),
+                          start, delta("Typing it. "), delta('[DO:type_text {"text": "hi"}]'),
+                          {"type": "result", "subtype": "success", "result": "Typing it."}])
+    assert texts == ["Typing it. ", '[DO:type_text {"text": "hi"}]'] and parser.retried
+    fresh = ClaudeCodeParser()                # the first message_start of a reply is normal
+    assert feed(fresh, [start, delta("Hi.")]) == ["Hi."] and not fresh.retried
+
+
 def test_codex_parser_emits_message_text_once():
     parser = CodexParser()
     events = [{"type": "thread.started", "thread_id": "t"}, {"type": "turn.started"},
