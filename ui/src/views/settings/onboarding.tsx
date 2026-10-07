@@ -7,6 +7,8 @@ import { Keycap, cn } from '../../components/bits'
 import { ConnectAI } from './connect'
 import { Button } from './ui'
 
+export const PRIVACY_URL = 'https://plip.dev/privacy'
+
 const PERMS = [
   { key: 'screen', icon: MonitorUp, title: 'Screen Recording', why: 'So Plip can see what you’re asking about.' },
   { key: 'accessibility', icon: Hand, title: 'Accessibility', why: 'For the ⌃⌥ shortcut and pointing at things.' },

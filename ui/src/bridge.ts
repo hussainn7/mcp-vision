@@ -185,6 +185,16 @@ export interface UsageState {
   billed: number
 }
 
+/** Signing in (with Google, through Supabase) before Plip works. Builds without a sign-in project never ask. */
+export interface AccountState {
+  available: boolean         // this build has sign-in
+  required: boolean          // not signed in yet: the sign-in screen comes first
+  status?: '' | 'waiting' | 'failed'
+  error?: string
+  url?: string               // the sign-in page, while waiting
+  user?: { name: string; email: string; provider: string; since: number | null } | null
+}
+
 export interface SettingsState {
   version: string
   engines: Engine[]
@@ -209,6 +219,7 @@ export interface SettingsState {
   onboarded: boolean
   connect: string
   report: '' | 'sent' | 'failed'     // a bug report or feature request, after Send
+  account: AccountState
 }
 
 export const defaultIsland: IslandState = {
@@ -250,6 +261,7 @@ export const defaultSettings: SettingsState = {
   onboarded: true,
   connect: '',
   report: '',
+  account: { available: false, required: false },
 }
 
 // -- tiny external store ------------------------------------------------------

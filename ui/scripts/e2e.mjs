@@ -201,8 +201,40 @@ await test('guide: the permission card says what to drag, closes, and shows the 
   await page.close()
 })
 
+await test('sign in: google comes first, then plip; sign out brings it back', async () => {
+  const { page, take } = await open('settings?signin')
+  assert.equal(await page.locator('nav').count(), 0)                     // nothing else until they sign in
+  await page.getByRole('button', { name: 'Continue with Google' }).click()
+  assert.deepEqual(await take('account-sign-in'), { cmd: 'account-sign-in', provider: 'google' })
+  await page.getByText('Finish signing in in your browser').waitFor()
+  await page.getByRole('button', { name: 'Open the page again' }).click()
+  assert.ok(await take('account-open'))
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  assert.ok(await take('account-cancel'))
+  await page.getByRole('button', { name: 'Continue with Google' }).click()
+  const account = page.locator('nav').getByRole('button', { name: /Account$/ })
+  await account.waitFor({ timeout: 4000 })                                // the preview "comes back" signed in
+  await account.click()
+  await page.getByText('hussain@plip.dev').waitFor()
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  assert.ok(await take('account-sign-out'))
+  await page.getByRole('button', { name: 'Continue with Google' }).waitFor()
+  await page.close()
+})
+
+await test('sign in: a failed sign-in says why, and a build without sign-in never shows it', async () => {
+  const { page } = await open('settings?signin')
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { account: { available: true, required: true, status: 'failed', error: 'You said no' } } }))
+  await page.getByRole('alert').getByText('You said no').waitFor()
+  await page.getByRole('button', { name: 'Try again with Google' }).waitFor()
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { account: { available: false, required: false } } }))
+  await page.locator('nav').waitFor()
+  assert.equal(await page.locator('nav').getByRole('button', { name: /Account$/ }).count(), 0)
+  await page.close()
+})
+
 await test('settings: every tab renders without errors', async () => {
-  for (const tab of ['home', 'general', 'brain', 'voice', 'permissions', 'memory', 'activity']) {
+  for (const tab of ['home', 'account', 'general', 'brain', 'voice', 'permissions', 'memory', 'activity']) {
     const { page } = await open(`settings?tab=${tab}`)
     assert.ok((await page.locator('h1').first().textContent()).length > 3, tab)
     await page.close()

@@ -223,6 +223,8 @@ function demoUsage(): UsageState {
            billed: +(all.cost * 0.02).toFixed(2) }
 }
 
+export const DEMO_USER = { name: 'Hussain Syed', email: 'hussain@plip.dev', provider: 'google', since: 1789862400 }
+
 export function loadDemoSettings() {
-  settings.set({ ...DEMO_SETTINGS, usage: demoUsage() })
+  settings.set({ ...DEMO_SETTINGS, usage: demoUsage(), account: { available: true, required: false, status: '', user: DEMO_USER } })
 }

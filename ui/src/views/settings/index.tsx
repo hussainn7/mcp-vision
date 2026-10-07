@@ -1,11 +1,12 @@
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  AudioLines, BookUser, Brain, ChartColumn, House, Settings as Gear, ShieldCheck,
+  AudioLines, BookUser, Brain, ChartColumn, CircleUserRound, House, Settings as Gear, ShieldCheck,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Keycap, cn } from '../../components/bits'
+import { AccountTab, Avatar, SignIn } from './account'
 import { HistoryPanel, PermissionsTab, VoiceTab } from './basics'
 import { BrainTab } from './brain'
 import { GeneralTab, type Composer } from './general'
@@ -15,7 +16,7 @@ import { Onboarding } from './onboarding'
 import { Header, Segmented } from './ui'
 import { UsagePanel } from './usage'
 
-export type Tab = 'home' | 'general' | 'brain' | 'voice' | 'permissions' | 'memory' | 'activity'
+export type Tab = 'home' | 'account' | 'general' | 'brain' | 'voice' | 'permissions' | 'memory' | 'activity'
 type Activity = 'usage' | 'history'
 type Icon = React.ComponentType<{ className?: string }>
 
@@ -24,6 +25,7 @@ const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: Icon }[] }[
     title: '',
     tabs: [
       { id: 'home', label: 'Home', icon: House },
+      { id: 'account', label: 'Account', icon: CircleUserRound },
       { id: 'general', label: 'General', icon: Gear },
     ],
   },
@@ -84,6 +86,9 @@ export function Settings() {
   const engine = state.engines.find((item) => item.selected)
   const ready = engine && (engine.status === 'ready' || engine.status === 'unknown')
 
+  if (state.account.required) return <SignIn state={state} />
+  const user = state.account.user
+
   return (
     <div className="relative flex h-full overflow-hidden bg-ink text-white noise">
       <div className="pointer-events-none absolute -left-48 -top-64 size-[560px] rounded-full bg-plip-500/[0.14] blur-[130px] animate-aurora" />
@@ -102,7 +107,7 @@ export function Settings() {
             <div key={group.title || 'top'}>
               {group.title && <div className="mb-1.5 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-white/25">{group.title}</div>}
               <div className="space-y-0.5">
-                {group.tabs.map(({ id, label, icon: Icon }) => (
+                {group.tabs.filter(({ id }) => id !== 'account' || user).map(({ id, label, icon: Icon }) => (
                   <button
                     key={id}
                     onClick={() => setTab(id)}
@@ -116,7 +121,7 @@ export function Settings() {
                         <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full brand-gradient" />
                       </motion.span>
                     )}
-                    <Icon className="relative size-[17px]" />
+                    {id === 'account' && user ? <Avatar user={user} size={18} className="relative" /> : <Icon className="relative size-[17px]" />}
                     <span className="relative">{label}</span>
                   </button>
                 ))}
@@ -148,6 +153,7 @@ export function Settings() {
             className="mx-auto max-w-[860px]"
           >
             {tab === 'home' && <HomeTab state={state} go={setTab} />}
+            {tab === 'account' && <AccountTab state={state} />}
             {tab === 'general' && <GeneralTab state={state} composer={place.composer} />}
             {tab === 'brain' && <BrainTab state={state} />}
             {tab === 'voice' && <VoiceTab state={state} />}
