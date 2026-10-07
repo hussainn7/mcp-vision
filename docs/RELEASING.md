@@ -12,6 +12,9 @@ every binary signed) on a drag-to-Applications disk image. It needs an Apple-sil
 Mac, the Xcode command line tools and `uv`. The DMG window's background comes from
 `cd ui && npm run brand`.
 
+With `PLIP_SUPABASE_URL` and `PLIP_SUPABASE_KEY` set (your environment or `~/.config/mcp-vision/.env`), the app
+asks people to sign in with Google first; it prints which project it baked in.
+
 Without your Apple certificate it is signed **ad hoc**: the first time people open it,
 macOS says it can't check Plip, and they go to System Settings → Privacy & Security →
 **Open Anyway**. The README and the DMG window both say so.
@@ -64,3 +67,7 @@ Add these repository secrets (Settings → Secrets and variables → Actions):
 | `APPLE_ID` | your Apple ID email |
 | `APPLE_TEAM_ID` | your 10-character team ID |
 | `APPLE_APP_PASSWORD` | the app-specific password from step 2 |
+| `PLIP_SUPABASE_URL` | the sign-in project, `https://<project>.supabase.co` ([CONTRIBUTING.md](../CONTRIBUTING.md#sign-in)) |
+| `PLIP_SUPABASE_KEY` | its **publishable** key (`sb_publishable_…`); the build refuses a secret one |
+
+Without the two Supabase secrets the DMG doesn't ask anyone to sign in.

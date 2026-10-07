@@ -180,6 +180,16 @@ def release_env(supabase_url: str = "", supabase_key: str = "") -> str:
     return f"PLIP_SUPABASE_URL={supabase_url}\nPLIP_SUPABASE_KEY={supabase_key}\n"
 
 
+def configured_sign_in() -> tuple[str, str]:
+    """The sign-in project to bake in: what Plip itself reads (environment, then the .env files)."""
+    try:
+        from mcp_vision.buddy.settings import load_settings
+    except ImportError:              # uv run --no-project (the release workflow): no pydantic, secrets come as env vars
+        return os.environ.get("PLIP_SUPABASE_URL", ""), os.environ.get("PLIP_SUPABASE_KEY", "")
+    configured = load_settings()
+    return configured.supabase_url or "", configured.supabase_key or ""
+
+
 def secret_key(key: str) -> bool:
     """A Supabase secret / service_role key: it would ship to everyone who downloads the app."""
     return key.startswith("sb_secret_") or "service_role" in key
@@ -362,11 +372,9 @@ def main() -> None:
     problems = release_problems(sign, profile, identities, profile_ok)
     if problems:
         raise SystemExit("Can't make a release yet:\n  - " + "\n  - ".join(problems))
-    from mcp_vision.buddy.settings import load_settings
-
-    configured = load_settings()
-    supabase_url = (args.supabase_url or configured.supabase_url or "").strip().rstrip("/")
-    supabase_key = (args.supabase_key or configured.supabase_key or "").strip()
+    configured_url, configured_key = configured_sign_in()
+    supabase_url = (args.supabase_url or configured_url).strip().rstrip("/")
+    supabase_key = (args.supabase_key or configured_key).strip()
     if secret_key(supabase_key):
         raise SystemExit("That's a Supabase secret key. Use the anon or publishable key: the app ships it to everyone.")
     signs_in = bool(supabase_url and supabase_key)

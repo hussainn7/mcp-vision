@@ -81,6 +81,8 @@ def test_a_release_carries_the_sign_in_project_but_never_a_secret_key(monkeypatc
     monkeypatch.setenv("PLIP_SUPABASE_KEY", "sb_publishable_x")
     configured = settings_module.BuddySettings(_env_file=None)
     assert (configured.supabase_url, configured.supabase_key) == ("https://abc.supabase.co", "sb_publishable_x")
+    monkeypatch.setitem(__import__("sys").modules, "mcp_vision.buddy.settings", None)   # CI: no pydantic
+    assert build_dmg.configured_sign_in() == ("https://abc.supabase.co", "sb_publishable_x")
 
 
 def test_only_the_app_bundle_reads_its_plip_env(monkeypatch, tmp_path):
