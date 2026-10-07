@@ -97,6 +97,7 @@ class StatusMenu:
         self.brain_item = self._add(menu, "Brain: choosing...", "brain")
         self.visible_item = self._add(menu, "Show Plip by my cursor", "toggle_visible")
         self._add(menu, "Forget this conversation", "clear")
+        self._add(menu, "Report a bug...", "report")
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         self._add(menu, "Quit Plip", "quit", "q")
         self.item.setMenu_(menu)
@@ -573,6 +574,7 @@ def run_buddy_app() -> None:
     menu = StatusMenu({
         "settings": lambda: open_settings("home"), "brain": lambda: open_settings("brain"),
         "toggle_visible": toggle_visible, "clear": clear, "quit": lambda: AppKit.NSApp.terminate_(None),
+        "report": lambda: open_settings("report"),
     })
     menu.set_visible_checked(prefs.buddy)
     controller.status = menu.set_status

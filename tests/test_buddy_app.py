@@ -367,17 +367,42 @@ def test_settings_memory_commands(service):
     assert oct((tmp_path / "memory.json").stat().st_mode & 0o777) == "0o600"
 
 
-def test_settings_skills_and_companion(service):
+def test_settings_companion_style(service):
     svc, calls, tmp_path = service
-    svc.handle({"cmd": "set-skill", "skill": "travel", "enabled": False})
-    svc.handle({"cmd": "set-skill", "skill": "rockets", "enabled": False})
+    svc.handle({"cmd": "set-skill", "skill": "travel", "enabled": False})     # no per-skill switches: all on
     svc.handle({"cmd": "set-companion", "style": "cursor"})
     svc.handle({"cmd": "set-companion", "style": "giant"})
     state = calls["posted"][-1]["state"]
-    assert state["skills"]["travel"] is False and state["skills"]["apps"] is True
+    assert "skills" not in state
     assert state["companion"] == "cursor"
     assert "phone" not in state
-    assert calls["reload"] == 2
+    assert calls["reload"] == 1
+
+
+def test_settings_general_bug_report_feature_request_and_tour(service, monkeypatch):
+    from mcp_vision import analytics
+
+    svc, calls, tmp_path = service
+    sent = []
+    monkeypatch.setattr(analytics, "_install_state", lambda: ("install", 0.0, tmp_path / "analytics.json"))
+    monkeypatch.setattr(analytics, "_post", lambda event, who, props: sent.append((event, props)) or True)
+    svc.handle({"cmd": "report-issue", "message": "  it pointed at the wrong button  ", "contact": "me@x.com"})
+    assert sent[-1] == ("issue_reported", {"message": "it pointed at the wrong button", "engine": ""})
+    assert calls["posted"][-1]["state"]["report"] == "sent"
+    svc.handle({"cmd": "report-reset"})
+    assert calls["posted"][-1]["state"]["report"] == ""
+    svc.handle({"cmd": "request-feature", "message": " read my calendar out loud "})
+    assert sent[-1] == ("feature_request", {"message": "read my calendar out loud"})
+    svc.handle({"cmd": "request-feature", "message": "   "})                     # nothing typed: nothing sent
+    assert len(sent) == 2
+    monkeypatch.setattr(analytics, "_post", lambda *args: False)
+    svc.handle({"cmd": "request-feature", "message": "offline"})
+    assert calls["posted"][-1]["state"]["report"] == "failed"
+
+    svc.handle({"cmd": "finish-onboarding"})
+    assert calls["posted"][-1]["state"]["onboarded"] is True
+    svc.handle({"cmd": "tour-start"})                                          # General → Replay the welcome tour
+    assert calls["posted"][-1]["state"]["onboarded"] is False
 
 
 def test_notch_home_droplet_drips_out_points_and_returns():

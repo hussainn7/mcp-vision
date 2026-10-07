@@ -42,7 +42,7 @@ happens until you say yes.
    Microphone, then click **Connect AI**. Done.
 4. Hold **Control+Option**, ask something, let go.
 
-Something broken? Click **Report an issue** in Plip's sidebar, or
+Something broken? Click **Report a bug** in Plip's menu bar (or **Settings → General**), or
 [open a GitHub issue](https://github.com/hussainn7/mcp-vision/issues).
 
 ## Quick start (from source)
@@ -65,7 +65,7 @@ it and uses your plan:
 
 Plip runs the CLI once per question in an empty scratch folder with its own tools
 switched off, so the model only ever sends back words and Plip's action tags. Plip
-does the actions itself, inside the skills you enable.
+does the actions itself, and anything that buys, sends or deletes asks you first.
 
 ![Plip's dashboard: stats and things to try](docs/img/dashboard-home.jpg)
 
@@ -93,7 +93,7 @@ NVIDIA's Parakeet Unified 0.6B instead of Apple's recognizer: it catches more of
 say, with punctuation, and nothing leaves your Mac. It's a one-time 663 MB download
 (pinned, checksummed, resumable); Apple's keeps listening until it's done.
 
-**Usage.** The **Usage** tab shows every request from this Mac: per day, when you ask, how
+**Activity.** The **Activity** tab's Usage view shows every request from this Mac: per day, when you ask, how
 it ended, which brain and plan, and what it would cost at API prices (what your plan is
 worth). It stays on your Mac.
 

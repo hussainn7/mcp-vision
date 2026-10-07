@@ -17,7 +17,6 @@ from mcp_vision.buddy.store import History, Prefs, config_dir
 
 KEY_NAMES = {"ANTHROPIC_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
 DEPTHS = {"fast", "balanced", "deep"}
-SKILL_IDS = ("apps", "control", "files", "system", "writing", "planning", "travel", "memory")
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
 CLAUDE_INSTALL_AND_LOGIN = ("curl -fsSL https://claude.ai/install.sh | bash && "
@@ -54,7 +53,7 @@ class SettingsService:
     usage: Any = None                                      # buddy.usage.UsageLog (the Usage tab)
     parakeet: Any = None                                   # buddy.parakeet.ParakeetModel (the opt-in download)
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
-    report_note: str = ""                                  # "sent" | "failed" after Report an issue
+    report_note: str = ""                                  # "sent" | "failed" after a bug report or feature request
 
     @property
     def prefs(self) -> Prefs:
@@ -85,7 +84,6 @@ class SettingsService:
             "keys": keys,
             "history": self.history.items()[-50:],
             "memory": self.memory.panel() if self.memory is not None else None,
-            "skills": {skill: bool(prefs.skills.get(skill, True)) for skill in SKILL_IDS},
             "companion": prefs.companion,
             "stats": self._stats(),
             "usage": self._usage(),
@@ -186,8 +184,15 @@ class SettingsService:
             self.push()
 
     def _cmd_finish_onboarding(self, _command):
+        self._save_onboarded(True)
+
+    def _cmd_tour_start(self, _command):
+        """General → Replay the welcome tour: the walkthrough again, everything set up stays."""
+        self._save_onboarded(False)
+
+    def _save_onboarded(self, done: bool) -> None:
         prefs = self.prefs
-        prefs.onboarded = True
+        prefs.onboarded = done
         prefs.save(self.prefs_path)
         self.push()
 
@@ -212,15 +217,28 @@ class SettingsService:
         self.push()
         self.on_refresh()
 
+    # -- General → Support: a bug report or a feature request, only what they typed ------------------
     def _cmd_report_issue(self, command):
         from mcp_vision.analytics import report_issue
 
         message = str(command.get("message") or "").strip()[:5000]
-        contact = str(command.get("contact") or "").strip()[:200]
         if not message:
             return
         engine = next((item["label"] for item in self.engines() if item.get("selected")), "")
-        self.report_note = "sent" if report_issue(message, contact=contact, engine=engine) else "failed"
+        self.report_note = "sent" if report_issue(message, engine=engine) else "failed"
+        self.push()
+
+    def _cmd_request_feature(self, command):
+        from mcp_vision.analytics import request_feature
+
+        message = str(command.get("message") or "").strip()[:5000]
+        if not message:
+            return
+        self.report_note = "sent" if request_feature(message) else "failed"
+        self.push()
+
+    def _cmd_report_reset(self, _command):
+        self.report_note = ""
         self.push()
 
     def _cmd_engine_login(self, command):
@@ -303,13 +321,7 @@ class SettingsService:
 
         self.platform.copy(MEMORY_PROMPT)
 
-    # -- skills, companion style ----------------------------------------------------------
-    def _cmd_set_skill(self, command):
-        if command.get("skill") in SKILL_IDS:
-            skills = dict(self.prefs.skills)
-            skills[command["skill"]] = bool(command.get("enabled"))
-            self._update_prefs(skills=skills)
-
+    # -- companion style ------------------------------------------------------------------
     def _cmd_set_companion(self, command):
         if command.get("style") in {"notch", "cursor", "hidden"}:
             self._update_prefs(companion=command["style"])

@@ -87,10 +87,8 @@ def make_actions(settings: BuddySettings, prefs: Prefs | None = None, *, memory=
     from mcp_vision.buddy.actions.host import default_host
     from mcp_vision.paths import state_dir
 
-    skills = dict(prefs.skills) if prefs is not None else {}
     ctx = ActionContext(host=host or default_host(), memory=memory)
-    return ActionEngine(ctx, enabled=lambda skill: bool(skills.get(skill, True)), log=ActionLog(),
-                        undo_path=state_dir() / "undo.json", source=source)
+    return ActionEngine(ctx, log=ActionLog(), undo_path=state_dir() / "undo.json", source=source)
 
 
 def make_speaker(settings: BuddySettings) -> Speaker | None:

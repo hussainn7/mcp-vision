@@ -120,15 +120,42 @@ await test('settings: memory paste, copy prompt, add and forget facts, import', 
   await page.close()
 })
 
-await test('settings: skills and companion style', async () => {
-  const skills = await open('settings?tab=skills')
-  await skills.page.getByRole('switch', { name: 'Travel' }).click()
-  assert.deepEqual((await skills.take('set-skill')), { cmd: 'set-skill', skill: 'travel', enabled: false })
-  await skills.page.getByRole('button', { name: 'Cursor', exact: true }).click()
-  assert.deepEqual((await skills.take('set-companion')), { cmd: 'set-companion', style: 'cursor' })
-  await skills.page.close()
+await test('settings: general (companion style, walkthroughs, tour)', async () => {
+  const { page, take } = await open('settings?tab=general')
+  await page.getByRole('button', { name: 'Cursor', exact: true }).click()
+  assert.deepEqual((await take('set-companion')), { cmd: 'set-companion', style: 'cursor' })
+  await page.getByRole('switch', { name: 'Guided walkthroughs' }).click()
+  assert.deepEqual((await take('set-walkthroughs')), { cmd: 'set-walkthroughs', enabled: false })
+  await page.getByRole('button', { name: /Replay the welcome tour/ }).click()
+  assert.ok(await take('tour-start'))
+  await page.getByText('Hi, I’m Plip').waitFor()
+  await page.close()
+})
 
+await test('general: report a bug and request a feature, one open at a time', async () => {
+  const { page, take } = await open('settings?tab=report')                 // the menu bar's "Report a bug…"
+  await page.getByLabel('What went wrong').fill('It pointed at the wrong button')
+  await page.getByRole('button', { name: 'Send report' }).click()
+  assert.deepEqual(await take('report-issue'), { cmd: 'report-issue', message: 'It pointed at the wrong button' })
+  await page.getByText('Sent. Thank you').waitFor()
+  await page.getByRole('button', { name: /Request a feature/ }).click()
+  assert.ok(await take('report-reset'))
+  await page.getByRole('button', { name: 'Report another' }).waitFor({ state: 'detached' })   // one open at a time
+  await page.getByLabel('What should Plip do').fill('Read my calendar out loud every morning')
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
+  assert.deepEqual(await take('request-feature'), { cmd: 'request-feature', message: 'Read my calendar out loud every morning' })
+  await page.getByText('Sent. Thank you').waitFor()
+  await page.close()
+})
 
+await test('settings: old links land on the new tabs', async () => {
+  for (const [tab, heading] of [['about', 'How Plip behaves on your Mac'], ['skills', 'How Plip behaves on your Mac'],
+    ['usage', 'What you asked, and what it took'], ['history', 'What you asked, and what it took']]) {
+    const { page } = await open(`settings?tab=${tab}`)
+    assert.equal(await page.locator('h1').first().textContent(), heading, tab)
+    if (tab === 'history') await page.getByText('Your recent questions').waitFor()
+    await page.close()
+  }
 })
 
 await test('settings: usage tab switches periods and clears', async () => {
@@ -175,7 +202,7 @@ await test('guide: the permission card says what to drag, closes, and shows the 
 })
 
 await test('settings: every tab renders without errors', async () => {
-  for (const tab of ['home', 'skills', 'memory', 'brain', 'voice', 'permissions', 'usage', 'history', 'about']) {
+  for (const tab of ['home', 'general', 'brain', 'voice', 'permissions', 'memory', 'activity']) {
     const { page } = await open(`settings?tab=${tab}`)
     assert.ok((await page.locator('h1').first().textContent()).length > 3, tab)
     await page.close()

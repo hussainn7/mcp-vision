@@ -65,6 +65,36 @@ export function Button({ children, onClick, variant = 'primary', className, disa
   )
 }
 
+/** A settings list: rows in one card, split by hairlines. */
+export function Rows({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn('card relative divide-y divide-white/[0.05] overflow-hidden', className)}>{children}</div>
+}
+
+/** One setting: what it is, a line on what it does, and its control (or the whole row is the button). */
+export function Row({ title, detail, action, onClick, open }: {
+  title: React.ReactNode
+  detail?: React.ReactNode
+  action?: React.ReactNode
+  onClick?: () => void
+  open?: boolean
+}) {
+  const body = (
+    <>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13.5px] font-semibold tracking-tight text-white">{title}</div>
+        {detail && <div className="mt-0.5 text-[12px] leading-relaxed text-white/40">{detail}</div>}
+      </div>
+      {action}
+    </>
+  )
+  if (!onClick) return <div className="flex items-center gap-4 px-5 py-3.5">{body}</div>
+  return (
+    <button onClick={onClick} aria-expanded={open} className="group flex w-full items-center gap-4 px-5 py-3.5 text-left transition hover:bg-white/[0.03]">
+      {body}
+    </button>
+  )
+}
+
 export type Tone = 'good' | 'warn' | 'bad' | 'muted' | 'info'
 
 export function Pill({ tone, children, dot = true }: { tone: Tone; children: React.ReactNode; dot?: boolean }) {
@@ -90,7 +120,7 @@ export function Pill({ tone, children, dot = true }: { tone: Tone; children: Rea
 export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
   const group = options.map((option) => option.value).join()
   return (
-    <div className="inline-flex rounded-full bg-black/40 p-1 hairline">
+    <div className="inline-flex shrink-0 whitespace-nowrap rounded-full bg-black/40 p-1 hairline">
       {options.map((option) => (
         <button
           key={option.value}

@@ -1,62 +1,80 @@
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  AudioLines, BookUser, Bug, ChartColumn, BrainCircuit, Clock3, House, Info, ShieldCheck, WandSparkles,
+  AudioLines, BookUser, Brain, ChartColumn, House, Settings as Gear, ShieldCheck,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Keycap, cn } from '../../components/bits'
-import { AboutTab, HistoryTab, PermissionsTab, VoiceTab } from './basics'
+import { HistoryPanel, PermissionsTab, VoiceTab } from './basics'
 import { BrainTab } from './brain'
+import { GeneralTab, type Composer } from './general'
 import { HomeTab } from './home'
 import { MemoryTab } from './memory'
 import { Onboarding } from './onboarding'
-import { ReportIssue } from './report'
-import { SkillsTab } from './skills'
-import { UsageTab } from './usage'
+import { Header, Segmented } from './ui'
+import { UsagePanel } from './usage'
 
-export type Tab = 'home' | 'brain' | 'skills' | 'memory' | 'voice' | 'permissions' | 'usage' | 'history' | 'about'
+export type Tab = 'home' | 'general' | 'brain' | 'voice' | 'permissions' | 'memory' | 'activity'
+type Activity = 'usage' | 'history'
+type Icon = React.ComponentType<{ className?: string }>
 
-const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] }[] = [
-  { title: '', tabs: [{ id: 'home', label: 'Home', icon: House }] },
+const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: Icon }[] }[] = [
   {
-    title: 'Assistant',
+    title: '',
     tabs: [
-      { id: 'skills', label: 'Skills', icon: WandSparkles },
-      { id: 'memory', label: 'Memory', icon: BookUser },
+      { id: 'home', label: 'Home', icon: House },
+      { id: 'general', label: 'General', icon: Gear },
     ],
   },
   {
-    title: 'Setup',
+    title: 'Plip',
     tabs: [
-      { id: 'brain', label: 'Brain', icon: BrainCircuit },
+      { id: 'brain', label: 'Brain', icon: Brain },
       { id: 'voice', label: 'Voice', icon: AudioLines },
       { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
     ],
   },
   {
-    title: 'More',
+    title: 'You',
     tabs: [
-      { id: 'usage', label: 'Usage', icon: ChartColumn },
-      { id: 'history', label: 'History', icon: Clock3 },
-      { id: 'about', label: 'About', icon: Info },
+      { id: 'memory', label: 'Memory', icon: BookUser },
+      { id: 'activity', label: 'Activity', icon: ChartColumn },
     ],
   },
 ]
 
-function tabFromHash(): Tab | null {
-  return new URLSearchParams(location.hash.split('?')[1]).get('tab') as Tab | null
+const TABS = new Set<string>(GROUPS.flatMap((group) => group.tabs.map((item) => item.id)))
+
+/** Where a link lands. Old names still work: the menu bar asks for "report", the notch for "history". */
+interface Place { tab: Tab; activity?: Activity; composer?: Composer }
+
+function placeFromHash(): Place | null {
+  const name = new URLSearchParams(location.hash.split('?')[1]).get('tab')
+  if (!name) return null
+  if (name === 'about' || name === 'skills') return { tab: 'general' }
+  if (name === 'report') return { tab: 'general', composer: 'bug' }
+  if (name === 'usage' || name === 'history') return { tab: 'activity', activity: name }
+  return TABS.has(name) ? { tab: name as Tab } : { tab: 'home' }
 }
 
 export function Settings() {
   const state = useStore(settings)
-  const [tab, setTab] = useState<Tab>(() => tabFromHash() || 'home')
-  const [reporting, setReporting] = useState(false)
+  const [place, setPlace] = useState<Place>(() => placeFromHash() || { tab: 'home' })
+  const [activity, setActivity] = useState<Activity>(() => placeFromHash()?.activity || 'usage')
+  const tab = place.tab
+  const setTab = (next: Tab) => setPlace({ tab: next })
+  const main = useRef<HTMLElement>(null)
+  useEffect(() => {
+    main.current?.scrollTo({ top: 0 })                 // a block: newer WebKit/Chrome return a promise from scrollTo
+  }, [place])
 
   useEffect(() => {
     const onHash = () => {
-      const next = tabFromHash()
-      if (next) setTab(next)
+      const next = placeFromHash()
+      if (!next) return
+      setPlace(next)
+      if (next.activity) setActivity(next.activity)
     }
     window.addEventListener('hashchange', onHash)
     send('settings-ready')
@@ -79,26 +97,26 @@ export function Settings() {
             <div className="font-mono text-[10.5px] text-white/30">v{state.version}</div>
           </div>
         </div>
-        <nav className="space-y-4 overflow-y-auto scrollbar-none">
+        <nav className="space-y-5 overflow-y-auto scrollbar-none">
           {GROUPS.map((group) => (
             <div key={group.title || 'top'}>
-              {group.title && <div className="mb-1 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white/25">{group.title}</div>}
+              {group.title && <div className="mb-1.5 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-white/25">{group.title}</div>}
               <div className="space-y-0.5">
                 {group.tabs.map(({ id, label, icon: Icon }) => (
                   <button
                     key={id}
                     onClick={() => setTab(id)}
                     className={cn(
-                      'relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium transition',
+                      'relative flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-[13.5px] font-medium transition',
                       tab === id ? 'text-white' : 'text-white/50 hover:bg-white/[0.04] hover:text-white/80',
                     )}
                   >
                     {tab === id && (
-                      <motion.span layoutId="nav" className="absolute inset-0 rounded-lg bg-white/[0.07] hairline" transition={{ type: 'spring', stiffness: 500, damping: 38 }}>
+                      <motion.span layoutId="nav" className="absolute inset-0 rounded-[10px] bg-white/[0.08] hairline" transition={{ type: 'spring', stiffness: 500, damping: 38 }}>
                         <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full brand-gradient" />
                       </motion.span>
                     )}
-                    <Icon className="relative size-4" />
+                    <Icon className="relative size-[17px]" />
                     <span className="relative">{label}</span>
                   </button>
                 ))}
@@ -106,13 +124,7 @@ export function Settings() {
             </div>
           ))}
         </nav>
-        <button
-          onClick={() => setReporting(true)}
-          className="mb-2 mt-auto flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium text-white/50 transition hover:bg-white/[0.04] hover:text-white/80"
-        >
-          <Bug className="size-4" /> Report an issue
-        </button>
-        <div className="space-y-2.5 rounded-xl bg-white/[0.03] p-3 hairline">
+        <div className="mt-auto space-y-2.5 rounded-xl bg-white/[0.03] p-3 hairline">
           <div className="flex items-center gap-2 text-[11.5px]">
             <span className={cn('size-1.5 rounded-full', ready ? 'bg-mint shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-sun')} />
             <span className="text-white/60">{ready ? `Ready · ${engine?.label}` : 'Needs a brain'}</span>
@@ -125,10 +137,10 @@ export function Settings() {
         </div>
       </aside>
 
-      <main className="relative z-10 flex-1 overflow-y-auto scrollbar-none px-9 pb-10 pt-8">
+      <main ref={main} className="relative z-10 flex-1 overflow-y-auto scrollbar-none px-9 pb-10 pt-8">
         <AnimatePresence mode="wait">
           <motion.div
-            key={tab}
+            key={tab + (place.composer ?? '')}
             initial={{ opacity: 0, y: 8, filter: 'blur(6px)' }}
             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
             exit={{ opacity: 0, y: -6, filter: 'blur(4px)' }}
@@ -136,19 +148,23 @@ export function Settings() {
             className="mx-auto max-w-[860px]"
           >
             {tab === 'home' && <HomeTab state={state} go={setTab} />}
+            {tab === 'general' && <GeneralTab state={state} composer={place.composer} />}
             {tab === 'brain' && <BrainTab state={state} />}
-            {tab === 'skills' && <SkillsTab state={state} />}
-            {tab === 'memory' && <MemoryTab state={state} />}
             {tab === 'voice' && <VoiceTab state={state} />}
             {tab === 'permissions' && <PermissionsTab state={state} />}
-            {tab === 'usage' && <UsageTab state={state} />}
-            {tab === 'history' && <HistoryTab state={state} />}
-            {tab === 'about' && <AboutTab state={state} />}
+            {tab === 'memory' && <MemoryTab state={state} />}
+            {tab === 'activity' && (
+              <div>
+                <Header eyebrow="Activity" title="What you asked, and what it took"
+                  action={<Segmented value={activity} onChange={setActivity}
+                    options={[{ value: 'usage', label: 'Usage' }, { value: 'history', label: 'History' }]} />} />
+                {activity === 'usage' ? <UsagePanel state={state} /> : <HistoryPanel state={state} />}
+              </div>
+            )}
           </motion.div>
         </AnimatePresence>
       </main>
       {state.onboarded === false && <Onboarding state={state} />}
-      <ReportIssue state={state} open={reporting} onClose={() => setReporting(false)} />
     </div>
   )
 }

@@ -1,7 +1,6 @@
 import { motion } from 'motion/react'
-import { AudioLines, Contact, Download, Hand, LoaderCircle, MessageSquareText, Mic, MonitorUp, RotateCw, ShieldCheck, WandSparkles } from 'lucide-react'
+import { AudioLines, Contact, Download, Hand, LoaderCircle, MessageSquareText, Mic, MonitorUp, RotateCw, WandSparkles } from 'lucide-react'
 import { send, type ParakeetModel, type SettingsState } from '../../bridge'
-import { Mascot } from '../../components/Mascot'
 import { Button, Card, Empty, Header, KeyField, Pill, Section, Segmented } from './ui'
 
 /** One permission's button: Allow, then "finish in System Settings" while the card is up there, then Granted. */
@@ -170,14 +169,18 @@ export function PermissionsTab({ state }: { state: SettingsState }) {
   )
 }
 
-export function HistoryTab({ state }: { state: SettingsState }) {
+/** Activity → History: recent questions and answers. */
+export function HistoryPanel({ state }: { state: SettingsState }) {
   return (
     <div>
-      <Header eyebrow="History" title="Recent questions" subtitle="Kept on this Mac only. Clear it anytime." action={state.history.length ? <Button variant="quiet" onClick={() => send('clear-history')}>Clear history</Button> : undefined} />
       {!state.history.length ? (
         <Empty title="Nothing yet" text="Hold Control + Option and ask Plip something." />
       ) : (
         <div className="space-y-2">
+          <div className="mb-3 flex items-center justify-between gap-6">
+            <p className="text-[12.5px] text-white/45">Your recent questions. Kept on this Mac only.</p>
+            <Button size="sm" variant="quiet" onClick={() => send('clear-history')}>Clear history</Button>
+          </div>
           {state.history.slice().reverse().map((item) => (
             <Card key={item.at + item.question} className="p-4">
               <div className="mb-1 flex items-center justify-between gap-3">
@@ -196,28 +199,3 @@ export function HistoryTab({ state }: { state: SettingsState }) {
   )
 }
 
-export function AboutTab({ state }: { state: SettingsState }) {
-  return (
-    <div className="grid min-h-[520px] place-items-center text-center">
-      <div>
-        <div className="relative mx-auto mb-5 w-fit">
-          <div className="absolute inset-0 -z-10 scale-150 rounded-full bg-plip-400/25 blur-3xl" />
-          <Mascot size={96} mood="happy" />
-        </div>
-        <h1 className="text-gradient text-[30px] font-semibold tracking-[-0.03em]">Plip</h1>
-        <div className="mt-1 font-mono text-[12px] text-white/35">version {state.version}</div>
-        <p className="mx-auto mt-4 max-w-[400px] text-[13.5px] leading-relaxed text-white/50">
-          A little droplet of personal staff for your Mac. It sees what you see, explains it step by step, and does the busywork:
-          files, reminders, flights. Open source, and private by default.
-        </p>
-        <div className="mx-auto mt-4 flex w-fit items-center gap-2 text-[11.5px] text-white/35">
-          <ShieldCheck className="size-3.5 text-mint" /> Your memory, history and keys never leave this Mac.
-        </div>
-        <div className="mt-6 flex justify-center gap-2">
-          <Button variant="ghost" onClick={() => send('open-url', { url: 'https://github.com/hussainn7/mcp-vision' })}>GitHub</Button>
-          <Button variant="ghost" onClick={() => send('quit')}>Quit Plip</Button>
-        </div>
-      </div>
-    </div>
-  )
-}

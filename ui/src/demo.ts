@@ -147,7 +147,6 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
   voice: { tts: 'elevenlabs', stt: 'assemblyai', elevenlabs: true, assemblyai: false,
     parakeet: { state: 'missing', done: 0, total: 663_043_117, error: '', runtime: true } },
   jev: { configured: true, enabled: true, latencyMs: 91 },
-  skills: { travel: true, messages: true },
   companion: 'notch',
   stats: { actionsWeek: 47, answers: 128, minutesSaved: 226 },
   memory: {

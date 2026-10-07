@@ -203,13 +203,12 @@ export interface SettingsState {
   history: HistoryItem[]
   walkthroughs: boolean
   memory: MemoryPanel | null
-  skills: Record<string, boolean>
   companion: 'notch' | 'cursor' | 'hidden'
   stats: { actionsWeek: number; answers: number; minutesSaved: number }
   usage: UsageState | null
   onboarded: boolean
   connect: string
-  report: '' | 'sent' | 'failed'
+  report: '' | 'sent' | 'failed'     // a bug report or feature request, after Send
 }
 
 export const defaultIsland: IslandState = {
@@ -245,7 +244,6 @@ export const defaultSettings: SettingsState = {
   history: [],
   walkthroughs: true,
   memory: null,
-  skills: {},
   companion: 'notch',
   stats: { actionsWeek: 0, answers: 0, minutesSaved: 0 },
   usage: null,

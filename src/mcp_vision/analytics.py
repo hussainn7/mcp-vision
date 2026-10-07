@@ -45,13 +45,22 @@ def _post(event: str, distinct_id: str, properties: dict) -> bool:
     return urlopen(req, timeout=5).status == 200
 
 
-def report_issue(message: str, contact: str = "", engine: str = "") -> bool:
-    """Sent only when the user presses Send in Report an issue, so it ignores the usage opt-out."""
+def report_issue(message: str, engine: str = "") -> bool:
+    """Sent only when the user presses Send report under Report a bug, so it ignores the usage opt-out."""
+    return _report("issue_reported", {"message": message, "engine": engine})
+
+
+def request_feature(message: str) -> bool:
+    """Sent only when the user presses Send under Request a feature: what they typed, nothing else."""
+    return _report("feature_request", {"message": message})
+
+
+def _report(event: str, properties: dict) -> bool:
     if not POSTHOG_KEY.startswith("phc_"):
         return False
     try:
         install_id, _, _ = _install_state()
-        return _post("issue_reported", install_id, {"message": message, "contact": contact, "engine": engine})
+        return _post(event, install_id, properties)
     except Exception:
         return False
 

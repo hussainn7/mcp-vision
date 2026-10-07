@@ -3,7 +3,7 @@ import { CircleCheck, CircleHelp, CircleX, Hand, Square } from 'lucide-react'
 import { useState } from 'react'
 import { send, type Outcome, type SettingsState, type UsagePeriod } from '../../bridge'
 import { cn } from '../../components/bits'
-import { Button, Card, Header, Section, Segmented } from './ui'
+import { Button, Card, Section, Segmented } from './ui'
 
 type Period = '7' | '30' | 'all'
 
@@ -40,20 +40,20 @@ function hourLabel(hour: number): string {
   return hour === 0 ? '12am' : hour < 12 ? `${hour}am` : hour === 12 ? '12pm' : `${hour - 12}pm`
 }
 
-export function UsageTab({ state }: { state: SettingsState }) {
+/** Activity → Usage: what Plip sent to your brain, and what it would cost at API prices. */
+export function UsagePanel({ state }: { state: SettingsState }) {
   const [period, setPeriod] = useState<Period>('30')
   const usage = state.usage
   const data = usage?.periods[period]
+  if (!usage || !data || usage.periods.all.requests === 0) return <Empty />
   return (
     <div>
-      <Header
-        eyebrow="More"
-        title="Usage"
-        subtitle="Everything Plip sent to your brain from this Mac, and what it would cost at pay-per-use API prices. It stays on this Mac."
-        action={<Segmented value={period} onChange={setPeriod}
-          options={[{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: 'all', label: 'All time' }]} />}
-      />
-      {!usage || !data || usage.periods.all.requests === 0 ? <Empty /> : <Body data={data} state={state} />}
+      <div className="mb-5 flex items-center justify-between gap-6">
+        <p className="text-[12.5px] leading-relaxed text-white/45">Everything Plip sent to your brain from this Mac, and what it would cost at pay-per-use API prices. It stays on this Mac.</p>
+        <Segmented value={period} onChange={setPeriod}
+          options={[{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: 'all', label: 'All time' }]} />
+      </div>
+      <Body data={data} state={state} />
     </div>
   )
 }
