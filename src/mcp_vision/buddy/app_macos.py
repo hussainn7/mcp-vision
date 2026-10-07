@@ -293,6 +293,9 @@ def run_buddy_app() -> None:
     state: dict[str, Any] = {"settings": apply_prefs(load_settings(), prefs), "brain_error": "",
                              "listener_error": "", "settings_window": None, "building": False}
     loop = asyncio.new_event_loop()
+    from mcp_vision.buddy import workers
+
+    workers.install(loop)                         # to_thread jobs drain their autorelease pools
     threading.Thread(target=loop.run_forever, daemon=True, name="plip-loop").start()
     history = History()
     registry = EngineRegistry(lambda: state["settings"])

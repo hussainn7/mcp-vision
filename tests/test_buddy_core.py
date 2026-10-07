@@ -532,3 +532,30 @@ def test_cancelled_turn_does_not_reset_overlay_and_stale_token_is_dropped():
     assert result.state == "cancelled" and stale.state == "cancelled"
     after_cancel = pointer.events[pointer.events.index(("release",)):]
     assert ("state", "idle") not in after_cancel   # the new press owns the overlay
+
+
+def test_worker_jobs_drain_their_autorelease_pool():
+    # a long-lived worker thread never drains on its own: every AX walk on it used to leak for good
+    from mcp_vision.buddy import workers
+
+    drained = []
+
+    class Pool:
+        def __enter__(self):
+            drained.append("open")
+
+        def __exit__(self, *exc):
+            drained.append("drained")
+
+    original, workers._pool = workers._pool, Pool
+    try:
+        loop = asyncio.new_event_loop()
+        workers.install(loop)
+        assert loop.run_until_complete(asyncio.to_thread(lambda: 2 + 2)) == 4
+        loop.close()
+        with workers.PooledExecutor(max_workers=1) as pool:
+            assert pool.submit(lambda x: x * 3, 5).result() == 15
+    finally:
+        workers._pool = original
+    assert drained == ["open", "drained", "open", "drained"]
+    assert isinstance(Companion(brain=FakeBrain([]), capturer=capturer())._pool, workers.PooledExecutor)
