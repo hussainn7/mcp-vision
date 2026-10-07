@@ -291,6 +291,13 @@ def run_buddy_app() -> None:
 
     memory = Memory()
     usage_log = UsageLog()                # the Usage tab: one row per request
+    from mcp_vision.buddy.account import Account
+
+    # Sign in once with Google before Plip works (only in builds with a sign-in project).
+    account = Account(state["settings"].supabase_url, state["settings"].supabase_key, open_url=_open_url,
+                      on_change=lambda: AppHelper.callAfter(account_changed),
+                      on_signed_in=lambda: AppHelper.callAfter(signed_in))
+    state["signed_in"] = not account.required
 
     def main(fn):
         return lambda *args: AppHelper.callAfter(fn, *args)
@@ -353,6 +360,19 @@ def run_buddy_app() -> None:
         return {**native_permission_snapshot(), "restart": bool(state.get("restart_for_screen")),
                 "guiding": guide.active if guide is not None else ""}
 
+    # -- the account: Plip starts working once they're signed in, and stops if they sign out ------------
+    def account_changed() -> None:
+        signed = not account.required
+        if signed != state["signed_in"]:
+            state["signed_in"] = signed
+            update_setup_error()                       # ⌃⌥ follows: "I need a little setup first" while signed out
+        service.push()
+
+    def signed_in() -> None:
+        account_changed()
+        if state["settings_window"] is not None:
+            state["settings_window"].front()           # back from the browser, on to the walkthrough
+
     def restart() -> None:
         if not _relaunch():
             menu.set_status("Quit Plip and start it again to finish turning on Screen Recording")
@@ -367,7 +387,8 @@ def run_buddy_app() -> None:
         call_later=lambda delay, fn: AppHelper.callLater(delay, fn),
         on_main=lambda fn, *args: AppHelper.callAfter(fn, *args),
         on_result=lambda transcript, result: record(transcript, result),
-        on_setup_needed=lambda _message: None if state["building"] else open_settings("brain"),
+        on_setup_needed=lambda _message: None if state["building"] else open_settings(
+            "home" if account.required else "brain"),
         setup_error="Plip is still waking up. Try again in a second.",
     )
 
@@ -379,7 +400,7 @@ def run_buddy_app() -> None:
             AppHelper.callAfter(service.push)     # an open History / Usage tab shows it right away
 
     def update_setup_error() -> None:
-        controller.setup_error = state["brain_error"] or state["listener_error"]
+        controller.setup_error = account.blocker or state["brain_error"] or state["listener_error"]
         if controller.setup_error:
             menu.set_status("Needs setup: " + controller.setup_error)
         elif controller.hotkey_mode == "none":
@@ -528,6 +549,7 @@ def run_buddy_app() -> None:
         action_log=ActionLog(),
         usage=usage_log,
         parakeet=parakeet,
+        account=account,
     )
 
     def handle_command(command: dict[str, Any]) -> None:
@@ -585,9 +607,10 @@ def run_buddy_app() -> None:
     controller.hotkey_mode = hotkeys.start()
     _request_startup_permissions()
     rebuild(probe=True)
+    threading.Thread(target=account.refresh, daemon=True, name="plip-account").start()   # renew the sign-in once
 
-    if not prefs.onboarded:
-        # The Settings window shows the welcome walkthrough until it calls finish-onboarding.
+    if account.required or not prefs.onboarded:
+        # Sign-in first, then the welcome walkthrough until it calls finish-onboarding.
         AppHelper.callLater(0.8, lambda: open_settings("home"))
 
     log.info("plip running (hotkey=%s, web=%s)", controller.hotkey_mode, web)

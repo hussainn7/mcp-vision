@@ -38,9 +38,11 @@ happens until you say yes.
 1. Open the `.dmg` and drag **Plip** into **Applications**.
 2. Open Plip from Applications. If macOS says it can't check it for malicious software,
    go to System Settings → Privacy & Security and click **Open Anyway** (only the first time).
-3. A short welcome walks you through it: allow Screen Recording, Accessibility and
+3. Sign in with Google once: your account is your name and email, nothing you do with Plip
+   ([what it holds](#your-account)).
+4. A short welcome walks you through it: allow Screen Recording, Accessibility and
    Microphone, then click **Connect AI**. Done.
-4. Hold **Control+Option**, ask something, let go.
+5. Hold **Control+Option**, ask something, let go.
 
 Something broken? Click **Report a bug** in Plip's menu bar (or **Settings → General**), or
 [open a GitHub issue](https://github.com/hussainn7/mcp-vision/issues).
@@ -175,6 +177,24 @@ More in [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 MIT
+
+## Your account
+
+The download asks you to sign in with Google once, before anything else. Sign-in goes through Supabase Auth,
+Plip's account server: Google tells it your name, email address and profile picture, and it keeps your account
+(name, email, the link to your Google profile picture, when you joined and when you last signed in). That's how
+we know who uses Plip.
+
+- On this Mac, `~/.config/mcp-vision/account.json` (readable only by you) keeps your name, email and the sign-in
+  session. Plip doesn't download or keep your picture.
+- Each time Plip starts, it renews the session with Supabase once. If your account was removed, Plip signs out.
+- What you ask Plip, your screen, memory and history are never sent to the account server or tied to your account.
+- **Settings → Account → Sign out** forgets the account on this Mac and ends the session. To have the account
+  itself deleted, email team@plip.dev from the address you signed in with (the full policy is at
+  [plip.dev/privacy](https://plip.dev/privacy)).
+
+Running from source without a sign-in project (the default) never asks you to sign in and never contacts the
+account server. The code is [`src/mcp_vision/buddy/account.py`](src/mcp_vision/buddy/account.py).
 
 ## Analytics
 
