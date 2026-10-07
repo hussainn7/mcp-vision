@@ -12,6 +12,7 @@ import os
 import stat
 import sys
 import textwrap
+import time
 
 import pytest
 
@@ -286,6 +287,7 @@ def test_claude_code_brain_streams_images_through_stdin(tmp_path):
         assert argv[argv.index("--effort") + 1] == "low"
         assert "CLAUDECODE" not in os.environ
         assert os.environ["CLAUDE_CODE_PROMPT_CACHE_TTL"] == "5m"      # never re-read: no hour-long cache writes
+        assert os.environ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"    # no telemetry flush before exit
         message = json.loads(stdin_text.strip().splitlines()[0])
         content = message["message"]["content"]
         assert content[0]["type"] == "image" and content[0]["source"]["media_type"] == "image/jpeg"
@@ -462,6 +464,21 @@ def test_no_first_answer_in_time_names_the_network_problem(tmp_path):
         asyncio.run(collect(CodexBrain(binary, first_output_timeout=0.8), TURNS))
     assert "Reconnecting" in str(caught.value)
     assert _friendly_error(caught.value).startswith("I can't reach my brain")
+
+
+def test_the_turn_ends_at_the_answer_not_when_the_cli_gets_round_to_exiting(tmp_path):
+    binary = fake_cli(tmp_path, "claude", """
+        import time
+        out({"type": "stream_event", "event": {"type": "content_block_delta",
+                                               "delta": {"type": "text_delta", "text": "Top right."}}})
+        out({"type": "result", "subtype": "success", "is_error": False, "result": "Top right.",
+             "usage": {"input_tokens": 10, "output_tokens": 3}})
+        time.sleep(30)                    # still flushing its own traffic, stdout open
+    """)
+    brain = ClaudeCodeBrain(binary)
+    started = time.monotonic()
+    assert asyncio.run(collect(brain, TURNS)) == "Top right."
+    assert time.monotonic() - started < 2.5 and brain.last_usage.output == 3
 
 
 # -- what each brain says it used ----------------------------------------------------------

@@ -397,6 +397,7 @@ class StreamParser:
         self.final = ""
         self.notice = ""            # latest transient problem (e.g. "Reconnecting...")
         self.usage: Usage | None = None   # token counts from the CLI's final event, when it reports them
+        self.ended = False          # the CLI's last event is in: stop reading, don't wait for it to exit
 
     def feed(self, line: str) -> list[str]:
         line = line.strip()
@@ -507,8 +508,14 @@ class CLIBrain:
                     break
                 for text in parser.feed(raw.decode("utf-8", "replace")):
                     yield text
-            code = await process.wait()
-            stderr = (await errors).decode("utf-8", "replace")
+                if parser.ended:
+                    break
+            try:
+                # Once the answer's in, a CLI still flushing its own traffic isn't worth waiting for.
+                code = await asyncio.wait_for(process.wait(), 0.3 if parser.ended else None)
+                stderr = (await errors).decode("utf-8", "replace")
+            except asyncio.TimeoutError:
+                code, stderr = 0, ""                 # still going after its last event: the cleanup kills it
             self.last_usage = parser.usage
             if self.last_usage is not None and not self.last_usage.model:
                 self.last_usage.model = self.model or ""
@@ -572,6 +579,7 @@ class ClaudeCodeParser(StreamParser):
             self.final = "".join(block.get("text", "") for block in message.get("content", [])
                                  if block.get("type") == "text") or self.final
         elif kind == "result":
+            self.ended = True
             if event.get("is_error") or event.get("subtype", "success") != "success":
                 self.error = str(event.get("result") or event.get("subtype") or "error")
             elif not self.final:
@@ -608,7 +616,10 @@ class ClaudeCodeBrain(CLIBrain):
         # Every turn's screen, map and history are new, so what Claude Code writes to the prompt cache is
         # never read back; only the system prompt is. On a subscription it caches for an hour, and hour-long
         # writes cost twice the input price (five-minute ones 1.25x). Five minutes is about 30% cheaper.
-        env = {"DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}
+        # No nonessential traffic: the CLI otherwise spends ~0.45 s after every answer flushing its own
+        # telemetry before it exits (and ~0.25 s more starting up), right where Plip waits for the next step.
+        env = {"DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_PROMPT_CACHE_TTL": "5m",
+               "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
         return Invocation(argv, stdin=(json.dumps(message) + "\n").encode(), env=env)
 
     def parser(self):
