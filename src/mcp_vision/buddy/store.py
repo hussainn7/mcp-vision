@@ -24,6 +24,7 @@ class Prefs:
     tts: str = ""                    # "" = follow settings/env
     stt: str = ""
     onboarded: bool = False
+    update_check: bool = True        # once a day, ask GitHub whether a newer Plip is out
 
     @classmethod
     def load(cls, path: Path | None = None) -> Prefs:

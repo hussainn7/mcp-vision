@@ -233,6 +233,26 @@ await test('sign in: a failed sign-in says why, and a build without sign-in neve
   await page.close()
 })
 
+await test('update: a newer plip shows on home and general, download and the switch send their commands', async () => {
+  const { page, take } = await open('settings?tab=home')
+  assert.equal(await page.getByText(/is out$/).count(), 0)                // nothing new: no banner
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { update: { enabled: true, current: '0.8.0',
+    available: { version: '0.9.0', url: 'https://github.com/hussainn7/plip-oss/releases/download/v0.9.0/Plip-0.9.0.dmg',
+      page: 'https://github.com/hussainn7/plip-oss/releases/tag/v0.9.0' } } } }))
+  await page.getByText('Plip 0.9.0 is out').waitFor()
+  await page.getByRole('button', { name: 'Download', exact: true }).click()
+  assert.ok(await take('update-download'))
+  await page.getByRole('button', { name: 'What’s new' }).click()
+  assert.deepEqual(await take('open-url'), { cmd: 'open-url', url: 'https://github.com/hussainn7/plip-oss/releases/tag/v0.9.0' })
+  await page.locator('nav').getByRole('button', { name: 'General' }).click()
+  await page.getByRole('button', { name: 'Download 0.9.0' }).click()
+  assert.ok(await take('update-download'))
+  await page.getByRole('switch', { name: 'Tell me about new versions' }).click()
+  assert.deepEqual(await take('set-update-check'), { cmd: 'set-update-check', enabled: false })
+  await page.getByRole('button', { name: /GitHub/ }).waitFor()               // off: back to the plain about row
+  await page.close()
+})
+
 await test('settings: every tab renders without errors', async () => {
   for (const tab of ['home', 'account', 'general', 'brain', 'voice', 'permissions', 'memory', 'activity']) {
     const { page } = await open(`settings?tab=${tab}`)

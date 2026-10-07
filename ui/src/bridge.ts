@@ -195,6 +195,13 @@ export interface AccountState {
   user?: { name: string; email: string; provider: string; since: number | null } | null
 }
 
+/** A newer Plip on GitHub (asked once a day, unless they turned it off). */
+export interface UpdateState {
+  enabled: boolean
+  current: string
+  available: { version: string; url: string; page: string } | null
+}
+
 export interface SettingsState {
   version: string
   engines: Engine[]
@@ -220,6 +227,7 @@ export interface SettingsState {
   connect: string
   report: '' | 'sent' | 'failed'     // a bug report or feature request, after Send
   account: AccountState
+  update: UpdateState
 }
 
 export const defaultIsland: IslandState = {
@@ -262,6 +270,7 @@ export const defaultSettings: SettingsState = {
   connect: '',
   report: '',
   account: { available: false, required: false },
+  update: { enabled: true, current: '0.8.0', available: null },
 }
 
 // -- tiny external store ------------------------------------------------------

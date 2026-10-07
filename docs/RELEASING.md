@@ -25,6 +25,11 @@ macOS says it can't check Plip, and they go to System Settings → Privacy & Sec
 2. Commit, then `git tag v0.8.0 && git push origin v0.8.0`.
 3. GitHub Actions (`.github/workflows/release.yml`) builds the DMG on a Mac and attaches it to
    the release. The README links to `releases/latest`, so the download link never changes.
+4. Everyone on a Plip that has the update check (`src/mcp_vision/buddy/updates.py`, after 0.8.0) hears about it
+   within a day: the notch says so once, and the menu bar, Home and Settings → General offer **Download**, which
+   opens the new DMG. It reads GitHub's latest release, so drafts and pre-releases (`v1.0-rc1`) never show up,
+   and a release without a DMG yet points at its page. Copies from 0.8.0 or before don't check, so tell those
+   people another way once.
 
 ## Verified by Apple (no warning)
 

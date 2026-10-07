@@ -13,6 +13,7 @@ import asyncio
 import os
 import subprocess
 import threading
+import time
 from typing import Any
 
 from mcp_vision.buddy.controller import BuddyController
@@ -94,6 +95,8 @@ class StatusMenu:
         self._add(menu, "Hold ⌃⌥ and ask anything", None).setEnabled_(False)
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         self._add(menu, "Open Plip...", "settings", ",")
+        self.update_item = self._add(menu, "Download the new Plip...", "update")
+        self.update_item.setHidden_(True)
         self.brain_item = self._add(menu, "Brain: choosing...", "brain")
         self.visible_item = self._add(menu, "Show Plip by my cursor", "toggle_visible")
         self._add(menu, "Forget this conversation", "clear")
@@ -118,6 +121,12 @@ class StatusMenu:
 
     def set_brain(self, text: str) -> None:
         self.brain_item.setTitle_(f"Brain: {text}"[:60])
+
+    def set_update(self, version: str | None) -> None:
+        """A newer Plip is out: one click downloads it. Hidden when there's nothing new."""
+        if version:
+            self.update_item.setTitle_(f"Download Plip {version}...")
+        self.update_item.setHidden_(not version)
 
     def set_visible_checked(self, checked: bool) -> None:
         import AppKit
@@ -360,6 +369,33 @@ def run_buddy_app() -> None:
         return {**native_permission_snapshot(), "restart": bool(state.get("restart_for_screen")),
                 "guiding": guide.active if guide is not None else ""}
 
+    # -- a newer Plip: the menu bar and Settings offer it, the notch says so once -----------------------
+    from mcp_vision.buddy.updates import Updates
+
+    updates = Updates(enabled=lambda: Prefs.load().update_check,
+                      on_found=lambda release: AppHelper.callAfter(tell_update, release))
+
+    def show_update(found) -> None:
+        menu.set_update(found["version"] if found else None)
+        service.push()
+
+    def tell_update(release, tries: int = 0) -> None:
+        if controller.state != "idle" or presenter.phase != "idle":     # never over a question in progress
+            if tries < 30:
+                AppHelper.callLater(60.0, lambda: tell_update(release, tries + 1))
+            return
+        presenter("notice", {"text": f"Plip {release['version']} is out. Download it from the menu bar "
+                                     "or Settings → General."})
+
+    def check_updates(force: bool = False) -> None:
+        threading.Thread(target=lambda: AppHelper.callAfter(show_update, updates.check(force=force)),
+                         daemon=True, name="plip-update-check").start()
+
+    def watch_updates() -> None:
+        while True:                                   # GitHub is asked at most once a day (Updates.check)
+            AppHelper.callAfter(show_update, updates.check())
+            time.sleep(6 * 60 * 60)
+
     # -- the account: Plip starts working once they're signed in, and stops if they sign out ------------
     def account_changed() -> None:
         signed = not account.required
@@ -550,6 +586,8 @@ def run_buddy_app() -> None:
         usage=usage_log,
         parakeet=parakeet,
         account=account,
+        updates=updates,
+        check_updates=lambda: check_updates(force=True),
     )
 
     def handle_command(command: dict[str, Any]) -> None:
@@ -597,6 +635,7 @@ def run_buddy_app() -> None:
         "settings": lambda: open_settings("home"), "brain": lambda: open_settings("brain"),
         "toggle_visible": toggle_visible, "clear": clear, "quit": lambda: AppKit.NSApp.terminate_(None),
         "report": lambda: open_settings("report"),
+        "update": lambda: service.handle({"cmd": "update-download"}),
     })
     menu.set_visible_checked(prefs.buddy)
     controller.status = menu.set_status
@@ -608,6 +647,7 @@ def run_buddy_app() -> None:
     _request_startup_permissions()
     rebuild(probe=True)
     threading.Thread(target=account.refresh, daemon=True, name="plip-account").start()   # renew the sign-in once
+    threading.Thread(target=watch_updates, daemon=True, name="plip-updates").start()      # a newer Plip?
 
     if account.required or not prefs.onboarded:
         # Sign-in first, then the welcome walkthrough until it calls finish-onboarding.

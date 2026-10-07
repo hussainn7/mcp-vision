@@ -40,6 +40,8 @@ if (!isNative()) {
         if (settings.get().account.status === 'waiting') account({ status: '', url: '', required: false, user: DEMO_USER })
       }, 1600)
     }
+    if (command.cmd === 'set-update-check')
+      settings.set((current) => ({ update: { ...current.update, enabled: Boolean(command.enabled), available: command.enabled ? current.update.available : null } }))
     if (command.cmd === 'account-cancel') account({ status: '', url: '' })
     if (command.cmd === 'account-sign-out') account({ status: '', required: true, user: null })
     if (command.cmd === 'set-depth') settings.set({ depth: command.depth as 'fast' | 'balanced' | 'deep' })

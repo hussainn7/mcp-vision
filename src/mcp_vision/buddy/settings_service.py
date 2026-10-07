@@ -53,6 +53,8 @@ class SettingsService:
     usage: Any = None                                      # buddy.usage.UsageLog (the Usage tab)
     parakeet: Any = None                                   # buddy.parakeet.ParakeetModel (the opt-in download)
     account: Any = None                                    # buddy.account.Account (sign in before Plip works)
+    updates: Any = None                                    # buddy.updates.Updates (a newer Plip is out)
+    check_updates: Callable[[], None] = lambda: None       # ask GitHub now, in the background
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
     report_note: str = ""                                  # "sent" | "failed" after a bug report or feature request
 
@@ -93,6 +95,8 @@ class SettingsService:
             "report": self.report_note,
             "account": self.account.snapshot() if self.account is not None
             else {"available": False, "required": False},
+            "update": self.updates.snapshot() if self.updates is not None
+            else {"enabled": prefs.update_check, "current": __version__, "available": None},
         }
 
     def _stats(self) -> dict:
@@ -218,6 +222,21 @@ class SettingsService:
         if self.account is not None:
             self.account.sign_out()                    # its on_change stops Plip until they sign in again
             self.push()
+
+    # -- a newer Plip: download it, or stop asking ----------------------------------------------
+    def _cmd_update_download(self, _command):
+        from mcp_vision.buddy.updates import RELEASES
+
+        found = self.updates.available if self.updates is not None else None
+        if found and found["url"].startswith(RELEASES):
+            self.platform.open_url(found["url"])
+
+    def _cmd_set_update_check(self, command):
+        prefs = self.prefs
+        prefs.update_check = bool(command.get("enabled"))
+        prefs.save(self.prefs_path)
+        self.check_updates()                           # on: ask now; off: the menu bar item goes away
+        self.push()
 
     def _cmd_quick_connect(self, _command):
         """One button: use a ready AI, else sign in to an installed one, else install Claude and sign in."""

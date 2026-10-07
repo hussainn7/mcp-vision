@@ -72,8 +72,17 @@ export function GeneralTab({ state, composer: initial = null }: { state: Setting
         <Rows>
           <Row
             title={<>Plip <span className="font-mono text-[12px] font-normal text-white/40">v{state.version}</span></>}
-            detail="Open source and private by default. Your memory, history and keys never leave this Mac."
-            action={<Button variant="ghost" onClick={() => send('open-url', { url: REPO_URL })}>GitHub <ArrowUpRight className="size-3.5" /></Button>}
+            detail={state.update.available
+              ? `Version ${state.update.available.version} is out. Download it, then drag it into Applications to replace this one.`
+              : 'Open source and private by default. Your memory, history and keys never leave this Mac.'}
+            action={state.update.available
+              ? <Button variant="brand" onClick={() => send('update-download')}>Download {state.update.available.version}</Button>
+              : <Button variant="ghost" onClick={() => send('open-url', { url: REPO_URL })}>GitHub <ArrowUpRight className="size-3.5" /></Button>}
+          />
+          <Row
+            title="Tell me about new versions"
+            detail="Once a day Plip asks GitHub whether a newer version is out. Nothing about you is sent."
+            action={<Toggle label="Tell me about new versions" checked={state.update.enabled} onChange={(enabled) => send('set-update-check', { enabled })} />}
           />
           <Row title="Quit Plip" detail="Plip stops listening until you open it again." action={<Button variant="ghost" onClick={() => send('quit')}>Quit</Button>} />
         </Rows>

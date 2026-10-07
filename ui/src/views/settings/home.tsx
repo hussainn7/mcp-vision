@@ -1,10 +1,10 @@
 import { motion } from 'motion/react'
-import { CalendarClock, Check, ChevronRight, Clock3, FolderSearch, Plane, Type, TrendingUp, WandSparkles, Zap } from 'lucide-react'
-import type { SettingsState } from '../../bridge'
+import { ArrowDownToLine, CalendarClock, Check, ChevronRight, Clock3, FolderSearch, Plane, Type, TrendingUp, WandSparkles, Zap } from 'lucide-react'
+import { send, type SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Keycap, cn } from '../../components/bits'
 import type { Tab } from './index'
-import { Card, Section, Stat } from './ui'
+import { Button, Card, Section, Stat } from './ui'
 
 const TRY = [
   { icon: FolderSearch, text: 'Find my lease PDF', hint: 'Spotlight search', tint: 'from-sky-300 to-cyan-400' },
@@ -34,8 +34,21 @@ export function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) =>
   const progress = steps.filter((step) => step.done).length / steps.length
   const first = state.memory?.profile['name.first']
 
+  const update = state.update.available
+
   return (
     <div>
+      {update && (
+        <Card className="mb-6 flex items-center gap-4 glow-ring">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl brand-gradient text-slate-950"><ArrowDownToLine className="size-4" /></span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13.5px] font-semibold tracking-tight">Plip {update.version} is out</div>
+            <div className="text-[12px] text-white/45">You have {state.update.current}. Download it, then drag it into Applications to replace this one.</div>
+          </div>
+          <Button variant="quiet" onClick={() => send('open-url', { url: update.page })}>What’s new</Button>
+          <Button variant="brand" onClick={() => send('update-download')}>Download</Button>
+        </Card>
+      )}
       <div className="relative mb-7 flex items-center gap-6">
         <div className="relative">
           <div className="absolute inset-0 -z-10 scale-[1.7] rounded-full bg-plip-400/25 blur-3xl" />

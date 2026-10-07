@@ -178,6 +178,13 @@ More in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 MIT
 
+## Updates
+
+Once a day Plip asks GitHub whether a newer release is out (one request to api.github.com, nothing about you in
+it). When there is one, the notch says so once, and the menu bar, Home and **Settings → General** offer
+**Download**: it opens the new DMG, and you drag Plip into Applications to replace the old one. Your settings,
+memory and sign-in stay. Turn it off in **Settings → General → Tell me about new versions**.
+
 ## Your account
 
 The download asks you to sign in with Google once, before anything else. Sign-in goes through Supabase Auth,
