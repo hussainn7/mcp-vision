@@ -77,6 +77,10 @@ def test_a_release_carries_the_sign_in_project_but_never_a_secret_key(monkeypatc
         "PLIP_SUPABASE_URL=https://abc.supabase.co\nPLIP_SUPABASE_KEY=sb_publishable_x\n"
     assert build_dmg.secret_key("sb_secret_abc") and build_dmg.secret_key("eyJ...service_role...")
     assert not build_dmg.secret_key("sb_publishable_x")
+    assert build_dmg.sign_in_problem("", "") == "" == build_dmg.sign_in_problem("https://abc.supabase.co", "sb_publishable_x")
+    assert "PLIP_SUPABASE_URL isn't set" in build_dmg.sign_in_problem("", "sb_publishable_x")    # misnamed secret
+    assert "PLIP_SUPABASE_KEY isn't set" in build_dmg.sign_in_problem("https://abc.supabase.co", "")
+    assert "secret key" in build_dmg.sign_in_problem("https://abc.supabase.co", "sb_secret_abc")
     monkeypatch.setenv("PLIP_SUPABASE_URL", "https://abc.supabase.co")
     monkeypatch.setenv("PLIP_SUPABASE_KEY", "sb_publishable_x")
     configured = settings_module.BuddySettings(_env_file=None)

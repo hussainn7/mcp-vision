@@ -195,6 +195,16 @@ def secret_key(key: str) -> bool:
     return key.startswith("sb_secret_") or "service_role" in key
 
 
+def sign_in_problem(url: str, key: str) -> str:
+    """Why this sign-in config can't ship ("" when it can: both set, or neither for a build without sign-in)."""
+    if secret_key(key):
+        return "That's a Supabase secret key. Use the anon or publishable key: the app ships it to everyone."
+    if bool(url) != bool(key):                     # e.g. a misnamed CI secret: it would ship with no sign-in
+        missing = "PLIP_SUPABASE_URL" if key else "PLIP_SUPABASE_KEY"
+        return f"{missing} isn't set, but the other half of the sign-in project is. Set both, or neither."
+    return ""
+
+
 def build_app(dist: Path, sign: str = "-", env: str = "") -> Path:
     app = dist / "Plip.app"
     shutil.rmtree(app, ignore_errors=True)
@@ -375,8 +385,8 @@ def main() -> None:
     configured_url, configured_key = configured_sign_in()
     supabase_url = (args.supabase_url or configured_url).strip().rstrip("/")
     supabase_key = (args.supabase_key or configured_key).strip()
-    if secret_key(supabase_key):
-        raise SystemExit("That's a Supabase secret key. Use the anon or publishable key: the app ships it to everyone.")
+    if problem := sign_in_problem(supabase_url, supabase_key):
+        raise SystemExit(problem)
     signs_in = bool(supabase_url and supabase_key)
     print(f"   sign-in: {'Google, through ' + supabase_url if signs_in else 'none (no Supabase project configured)'}")
     if not signs_in and sign != "-":
