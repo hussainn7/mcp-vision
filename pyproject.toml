@@ -1,6 +1,6 @@
 [project]
 name = "mcp-vision-runtime"
-version = "0.8.0"
+version = "0.9.0"
 description = "Plip: an AI buddy in your MacBook's notch. Talk, it sees your screen, answers aloud and points, on your Claude, ChatGPT, Cursor or Gemini plan."
 authors = [{name = "Hussain"}]
 license = "MIT"

@@ -253,7 +253,7 @@ export const defaultIsland: IslandState = {
 export const defaultMascot: MascotState = { mood: 'idle', level: 0, lean: 0, look: { x: 0, y: 0 }, label: '' }
 
 export const defaultSettings: SettingsState = {
-  version: '0.8.0',
+  version: '0.9.0',
   engines: [],
   depth: 'balanced',
   permissions: { screen: null, accessibility: null, microphone: null, speech: null },
@@ -270,7 +270,7 @@ export const defaultSettings: SettingsState = {
   connect: '',
   report: '',
   account: { available: false, required: false },
-  update: { enabled: true, current: '0.8.0', available: null },
+  update: { enabled: true, current: '0.9.0', available: null },
 }
 
 // -- tiny external store ------------------------------------------------------
