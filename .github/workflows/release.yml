@@ -32,6 +32,18 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_SIGN_ID: ${{ secrets.APPLE_SIGN_ID }}
         run: |
+          # A pasted secret can carry a stray space or newline, and Apple answers that with a 401.
+          APPLE_ID=$(printf '%s' "$APPLE_ID" | tr -d '[:space:]')
+          APPLE_TEAM_ID=$(printf '%s' "$APPLE_TEAM_ID" | tr -d '[:space:]')
+          APPLE_APP_PASSWORD=$(printf '%s' "$APPLE_APP_PASSWORD" | tr -d '[:space:]')
+          APPLE_SIGN_ID=$(printf '%s' "$APPLE_SIGN_ID" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          # Say what's off without printing a secret: empty (an environment secret, not a repository one?) or the wrong shape.
+          check() { if [ -z "$2" ]; then echo "::error::$1 is empty: add it under Settings > Secrets and variables > Actions > Repository secrets"; return 1;
+                    elif printf '%s' "$2" | grep -Eq "$3"; then echo "$1: set, looks right"; else echo "::warning::$1 is set but doesn't look like $4"; fi; }
+          check APPLE_ID "$APPLE_ID" '^[^@]+@[^@]+\.[^@]+$' "an email address"
+          check APPLE_TEAM_ID "$APPLE_TEAM_ID" '^[A-Z0-9]{10}$' "a 10-character team ID"
+          check APPLE_APP_PASSWORD "$APPLE_APP_PASSWORD" '^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$' "an app-specific password (abcd-efgh-ijkl-mnop)"
+          check APPLE_SIGN_ID "$APPLE_SIGN_ID" '^Developer ID Application: .+ \([A-Z0-9]{10}\)$' "Developer ID Application: Name (TEAMID)"
           echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p ci build.keychain
           security default-keychain -s build.keychain
