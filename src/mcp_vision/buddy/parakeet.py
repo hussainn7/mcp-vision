@@ -8,12 +8,16 @@ resumable, into Plip's own folder.
 
 sherpa-onnx runs it on the CPU. Push-to-talk works like the other listeners: the microphone is
 buffered while you hold Control + Option, the live transcript comes from re-reading what's there
-so far (one read at a time, at most every 0.6 s), and the final one from the whole utterance when
-you let go. It only needs the microphone, not Speech Recognition, so it works from a Terminal too.
+so far (at most every 0.6 s), and the final one from the whole utterance when you let go. Both read
+it in pieces of 10 s at most, cut where it's quietest: a piece read once isn't read again, and the
+model's scratch memory stays small however long you talk. The model (about 1.2 GB loaded) loads
+when you press, while you talk, and is let go after 5 minutes unused. It only needs the microphone,
+not Speech Recognition, so it works from a Terminal too.
 """
 from __future__ import annotations
 
 import array
+import gc
 import hashlib
 import importlib.util
 import os
@@ -22,7 +26,8 @@ import shutil
 import threading
 import time
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -66,7 +71,13 @@ MODEL = ModelSpec(
 )
 CHUNK = 1 << 20                      # bytes per read while downloading
 MIN_AUDIO = 0.25                     # seconds: shorter than this is a tap, not speech
+MIN_PIECE = 0.02                     # seconds: a sliver reads as nothing (the model throws under ~5 ms)
 PARTIAL_EVERY = 0.6                  # seconds between live transcripts, at the least
+PIECE = 10.0                         # seconds read at once, at most: the model's scratch memory grows with it
+PIECE_SEARCH = 4.0                   # a piece ends at the quietest frame in its last 4 s
+PIECE_FRAME = 0.03                   # seconds per frame there
+IDLE_UNLOAD = 300.0                  # seconds unused before the loaded model (about 1.2 GB) is let go
+_SCALE = 1 / 32768                   # int16 -> -1..1
 _GLUED_MONEY = re.compile(r"(?<=[A-Za-z])(?=[$€£]\d)")
 
 
@@ -283,6 +294,8 @@ class ParakeetModel:
 
 _RECOGNIZER: dict[str, Any] = {}
 _RECOGNIZER_LOCK = threading.Lock()
+_IN_USE = threading.Condition()                       # held to start a read of the model, or to let it go
+_USE = {"reads": 0, "presses": 0}                     # reads running now (loads too), presses so far (any listener)
 
 
 def recognizer(directory: Path | None = None, threads: int | None = None):
@@ -307,17 +320,78 @@ def forget_recognizer() -> None:
         _RECOGNIZER.clear()
 
 
-def transcribe(model: Any, pcm16: bytes) -> str:
-    """16 kHz mono int16 audio -> text, with Parakeet's own punctuation and capitals."""
+@contextmanager
+def _reading() -> Iterator[None]:
+    """Around every use of the model, so letting it go waits for the reads in flight."""
+    with _IN_USE:
+        _USE["reads"] += 1
+    try:
+        yield
+    finally:
+        with _IN_USE:
+            _USE["reads"] -= 1
+            _IN_USE.notify_all()
+
+
+def pieces(pcm16: bytes, max_s: float = PIECE, search_s: float = PIECE_SEARCH,
+           frame_s: float = PIECE_FRAME) -> list[tuple[int, int]]:
+    """Where to cut audio so no piece is longer than ``max_s``: (start, end) byte offsets covering all of it.
+
+    Each cut is the middle of the quietest ``frame_s`` frame in the last ``search_s`` of a piece, so it falls
+    between words. A cut only looks at the audio before it, so while the audio grows only the last piece
+    changes: that's what lets the live transcript keep the pieces it already read.
+    """
     samples = array.array("h")
     samples.frombytes(pcm16[: len(pcm16) // 2 * 2])
-    if len(samples) < SAMPLE_RATE * MIN_AUDIO:
+    longest, search, frame = (int(seconds * SAMPLE_RATE) for seconds in (max_s, search_s, frame_s))
+    spans, start = [], 0
+    while len(samples) - start > longest:
+        cut = _quietest(samples, start + longest - search, start + longest, frame)
+        spans.append((start * 2, cut * 2))
+        start = cut
+    spans.append((start * 2, len(pcm16)))
+    return spans
+
+
+def _quietest(samples: array.array, lo: int, hi: int, frame: int) -> int:
+    """The middle of the quietest whole frame between ``lo`` and ``hi``."""
+    quiet = min(range(lo, hi - frame + 1, frame), key=lambda at: sum(map(abs, samples[at:at + frame])))
+    return quiet + frame // 2
+
+
+def _read(model: Any, pcm16: bytes) -> str:
+    """One piece -> its text."""
+    samples = array.array("h")
+    samples.frombytes(pcm16[: len(pcm16) // 2 * 2])
+    if len(samples) < SAMPLE_RATE * MIN_PIECE:
         return ""
     stream = model.create_stream()
-    stream.accept_waveform(SAMPLE_RATE, [sample / 32768.0 for sample in samples])
+    stream.accept_waveform(SAMPLE_RATE, array.array("f", map(_SCALE.__mul__, samples)))   # 4 bytes a sample
     model.decode_stream(stream)
-    text = " ".join(str(stream.result.text).split())
+    return " ".join(str(stream.result.text).split())
+
+
+def _hear(load: Callable[[], Any], pcm16: bytes, texts: dict[tuple[int, int], str],
+          wanted: Callable[[], bool] = lambda: True) -> str | None:
+    """The text of the whole thing, a piece at a time. Pieces already in ``texts`` (span -> text) aren't read
+    again and the rest are added. None when ``wanted()`` turns false before a piece: nobody needs it now."""
+    if len(pcm16) // 2 < SAMPLE_RATE * MIN_AUDIO:
+        return ""                                     # a tap on the keys, not speech
+    spans = pieces(pcm16)
+    with _reading():
+        model = load()
+        for start, end in spans:
+            if not wanted():
+                return None
+            if (start, end) not in texts:
+                texts[start, end] = _read(model, pcm16[start:end])
+    text = " ".join(texts[span] for span in spans if texts[span])
     return _GLUED_MONEY.sub(" ", text)                # "at least$150,000" -> "at least $150,000"
+
+
+def transcribe(model: Any, pcm16: bytes) -> str:
+    """16 kHz mono int16 audio -> text, with Parakeet's own punctuation and capitals."""
+    return _hear(lambda: model, pcm16, {}) or ""
 
 
 class ParakeetListener:
@@ -326,38 +400,41 @@ class ParakeetListener:
     name = "parakeet"
 
     def __init__(self, callbacks: ListenerCallbacks, *, model: Callable[[], Any] = recognizer,
+                 unload: Callable[[], None] = forget_recognizer,
                  mic_factory: Callable[[Callable[[bytes], None]], Any] = MicStream,
-                 partial_every: float = PARTIAL_EVERY):
+                 partial_every: float = PARTIAL_EVERY, idle_unload: float = IDLE_UNLOAD):
         self.callbacks = callbacks
         self._model = model
+        self._unload = unload
         self._mic_factory = mic_factory
         self.partial_every = partial_every
+        self.idle_unload = idle_unload
         self._lock = threading.Lock()
-        self._decoding = threading.Lock()                 # one read of the model at a time
         self._generation = 0
         self._audio = bytearray()
+        self._texts: dict[tuple[int, int], str] = {}     # this press's pieces read so far
         self._mic = None
-        threading.Thread(target=self._warm, daemon=True, name="plip-parakeet-load").start()
-
-    def _warm(self) -> None:
-        """Load the model now, so the first press doesn't wait for it."""
-        try:
-            self._model()
-        except Exception:
-            pass                                          # start() reports it if it still can't load
+        self._idle_timer: threading.Timer | None = None
 
     def start(self) -> None:
-        self.cancel()
-        with self._lock:
-            generation = self._generation
-            self._audio = bytearray()
+        generation = self._reset()
+        self._keep_loaded()
         try:
             self._mic = self._mic_factory(lambda chunk: self._on_audio(chunk, generation))
             self._mic.start()
         except Exception as exc:
             self.callbacks.error(f"microphone unavailable: {exc}")
             return
+        threading.Thread(target=self._load, daemon=True, name="plip-parakeet-load").start()
         threading.Thread(target=self._live, args=(generation,), daemon=True, name="plip-parakeet-live").start()
+
+    def _load(self) -> None:
+        """Load the model while they talk (about a second), so letting go doesn't wait for it."""
+        try:
+            with _reading():
+                self._model()
+        except Exception:
+            pass                                          # the final read reports it if it still can't load
 
     def _on_audio(self, chunk: bytes, generation: int) -> None:
         with self._lock:
@@ -366,61 +443,102 @@ class ParakeetListener:
             self._audio.extend(chunk)
         self.callbacks.level(pcm16_level(chunk))
 
-    def _snapshot(self, generation: int) -> bytes | None:
+    def _snapshot(self, generation: int) -> tuple[bytes, dict[tuple[int, int], str]] | None:
         with self._lock:
-            return bytes(self._audio) if generation == self._generation else None
+            return (bytes(self._audio), self._texts) if generation == self._generation else None
+
+    def _listening(self, generation: int) -> bool:
+        return generation == self._generation and self._mic is not None
 
     def _live(self, generation: int) -> None:
-        """While the keys are held: the transcript so far, re-read now and then (never two reads at once)."""
+        """While the keys are held: the transcript so far, re-read now and then (just its newest piece)."""
         heard = 0
         wait = self.partial_every
         while True:
             time.sleep(wait)
-            audio = self._snapshot(generation)
-            if audio is None or self._mic is None:
+            snapshot = self._snapshot(generation)
+            if snapshot is None or self._mic is None:
                 return
+            audio, texts = snapshot
             if len(audio) == heard:
                 continue
             heard = len(audio)
             started = time.monotonic()
             try:
-                with self._decoding:
-                    text = transcribe(self._model(), audio)
+                text = _hear(self._model, audio, texts, lambda: self._listening(generation))
             except Exception:
                 return                                    # the final read reports anything real
+            if text is None:
+                return                                    # let go mid-read: the final has it from here
             # A long hold takes longer to re-read: space the reads out so the Mac stays responsive.
             wait = max(self.partial_every, (time.monotonic() - started) * 2)
-            if text and self._snapshot(generation) is not None and self._mic is not None:
+            if text and self._listening(generation):
                 self.callbacks.partial(text)
 
     def release(self) -> None:
-        self._stop_mic()
+        self._stop_mic()                                  # the live loop stops before its next read
         with self._lock:
-            generation = self._generation
-            audio = bytes(self._audio)
-        threading.Thread(target=self._final, args=(generation, audio), daemon=True,
+            generation, audio, texts = self._generation, bytes(self._audio), self._texts
+        threading.Thread(target=self._final, args=(generation, audio, texts), daemon=True,
                          name="plip-parakeet-final").start()
 
-    def _final(self, generation: int, audio: bytes) -> None:
+    def _final(self, generation: int, audio: bytes, texts: dict[tuple[int, int], str]) -> None:
+        # Its own stream, next to a live read still finishing (sherpa-onnx reads streams side by side):
+        # it never waits for that one, and only reads the pieces the live transcript hasn't.
         try:
-            with self._decoding:
-                if generation != self._generation:
-                    return
-                text = transcribe(self._model(), audio)
+            text = _hear(self._model, audio, texts, lambda: generation == self._generation)
         except Exception as exc:
             if generation == self._generation:
                 self.callbacks.error(f"speech recognition failed: {exc}")
             return
-        if generation == self._generation:
+        finally:
+            self._unload_later()
+        if text is not None and generation == self._generation:
             self.callbacks.final(text)
 
     def cancel(self) -> None:
+        self._reset()
+        self._unload_later()
+
+    def _reset(self) -> int:
+        """Stop listening and drop this press: its late audio, reads and live loop see a newer generation."""
         self._stop_mic()
         with self._lock:
             self._generation += 1
-            self._audio = bytearray()
+            self._audio, self._texts = bytearray(), {}
+            return self._generation
 
     def _stop_mic(self) -> None:
         mic, self._mic = self._mic, None
         if mic is not None:
             mic.stop()
+
+    # -- letting the model go when nobody's talking ----------------------------------------------------
+
+    def _keep_loaded(self) -> None:
+        """A press: this listener's idle timer stops, and any other listener's stands down when it fires (a
+        settings change builds a new listener while the old one's timer still runs)."""
+        with _IN_USE:
+            _USE["presses"] += 1
+        with self._lock:
+            timer, self._idle_timer = self._idle_timer, None
+        if timer is not None:
+            timer.cancel()
+
+    def _unload_later(self) -> None:
+        timer = threading.Timer(self.idle_unload, self._idle, args=(_USE["presses"],))
+        timer.daemon = True
+        with self._lock:
+            old, self._idle_timer = self._idle_timer, timer
+        if old is not None:
+            old.cancel()
+        timer.start()
+
+    def _idle(self, presses: int) -> None:
+        """Nobody's pressed for ``idle_unload``: let the model go (about 1.2 GB) until the next press loads it."""
+        with _IN_USE:
+            _IN_USE.wait_for(lambda: not _USE["reads"])  # never mid-read: the ones in flight finish first
+            if presses != _USE["presses"] or self._mic is not None:
+                return                                    # pressed again since, here or on a newer listener
+            self._unload()
+        gc.collect()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import random
 import struct
 import sys
 import threading
@@ -14,7 +15,8 @@ import pytest
 
 from mcp_vision.buddy import parakeet
 from mcp_vision.buddy.parakeet import (
-    Cancelled, DownloadError, ModelFile, ModelSpec, ParakeetListener, ParakeetModel, download, installed, transcribe,
+    PIECE, Cancelled, DownloadError, ModelFile, ModelSpec, ParakeetListener, ParakeetModel, download, installed,
+    pieces, transcribe,
 )
 from mcp_vision.buddy.speech_in import SAMPLE_RATE, ListenerCallbacks
 
@@ -137,31 +139,79 @@ def pcm(seconds: float, level: int = 4000) -> bytes:
     return struct.pack(f"<{int(SAMPLE_RATE * seconds)}h", *([level, -level] * int(SAMPLE_RATE * seconds / 2)))
 
 
+def noise(seconds: float, seed: int = 1) -> bytes:
+    return random.Random(seed).randbytes(int(SAMPLE_RATE * seconds) * 2)
+
+
+def silence(seconds: float) -> bytes:
+    return bytes(int(SAMPLE_RATE * seconds) * 2)
+
+
 class FakeModel:
-    """Says how much audio it was given, like a recognizer that only counts."""
+    """Says how much audio it was given, like a recognizer that only counts. Streams read side by side."""
 
     def __init__(self, delay: float = 0.0):
         self.delay = delay
         self.reads = []
+        self.reading = 0                                            # reads in flight right now
+        self._lock = threading.Lock()
 
     def create_stream(self):
-        return types.SimpleNamespace(samples=[], result=None,
-                                     accept_waveform=lambda rate, samples: self._accept(rate, samples))
+        stream = types.SimpleNamespace(samples=None, result=None)
+        stream.accept_waveform = lambda rate, samples: self._accept(stream, rate, samples)
+        return stream
 
-    def _accept(self, rate, samples):
+    def _accept(self, stream, rate, samples):
         assert rate == SAMPLE_RATE and all(-1.0 <= value <= 1.0 for value in samples[:50])
-        self._last = samples
+        stream.samples = samples
 
     def decode_stream(self, stream):
+        with self._lock:
+            self.reading += 1
         time.sleep(self.delay)
-        self.reads.append(len(self._last))
-        stream.result = types.SimpleNamespace(text=f" heard {len(self._last) / SAMPLE_RATE:.1f}  seconds,  at least$5 ")
+        with self._lock:
+            self.reading -= 1
+            self.reads.append(len(stream.samples))
+        stream.result = types.SimpleNamespace(text=f" heard {len(stream.samples) / SAMPLE_RATE:.1f}  seconds,  at least$5 ")
 
 
 def test_transcribe_tidies_the_text_and_skips_a_tap():
     model = FakeModel()
     assert transcribe(model, pcm(0.1)) == ""                       # a tap on the keys, not speech
     assert transcribe(model, pcm(1.0)) == "heard 1.0 seconds, at least $5"
+
+
+def test_long_audio_is_read_in_pieces_and_joined():
+    model = FakeModel()
+    text = transcribe(model, pcm(25.0))
+    assert len(model.reads) == len(pieces(pcm(25.0))) == 4 and max(model.reads) <= PIECE * SAMPLE_RATE
+    assert sum(model.reads) == 25 * SAMPLE_RATE and text.count("heard") == 4 and "$5 heard" in text
+
+
+# -- pieces -----------------------------------------------------------------------------------------------
+
+def test_pieces_are_at_most_10s_and_add_up_to_the_audio_exactly():
+    audio = noise(37.3) + b"\x01"                                    # a stray odd byte too
+    spans = pieces(audio)
+    assert len(spans) >= 4 and all(end - start <= PIECE * SAMPLE_RATE * 2 for start, end in spans)
+    assert b"".join(audio[start:end] for start, end in spans) == audio
+    assert all(start % 2 == 0 for start, _ in spans)                 # never splits a sample
+    assert pieces(pcm(9.9)) == [(0, len(pcm(9.9)))] and pieces(b"") == [(0, 0)]
+
+
+def test_a_cut_lands_in_the_pause():
+    audio = noise(7.3) + silence(0.25) + noise(6.0, seed=2)
+    (_, cut), (start, end) = pieces(audio)
+    assert cut == start and end == len(audio)
+    assert 7.3 <= cut / 2 / SAMPLE_RATE <= 7.55
+
+
+def test_pieces_of_growing_audio_stay_put():
+    audio = noise(33.0)
+    whole = pieces(audio)
+    for seconds in (10.5, 14.0, 21.7, 26.0, 32.9):
+        grown = pieces(audio[: int(SAMPLE_RATE * seconds) * 2])
+        assert grown[:-1] == whole[:len(grown) - 1]                # only the last piece is still changing
 
 
 class FakeMic:
@@ -175,7 +225,7 @@ class FakeMic:
         self.stopped = True
 
 
-def listener(model, **kw):
+def listener(model, load=None, **kw):
     heard = {"partial": [], "final": [], "level": [], "error": []}
     callbacks = ListenerCallbacks(partial=heard["partial"].append, final=heard["final"].append,
                                   level=heard["level"].append, error=heard["error"].append)
@@ -184,7 +234,7 @@ def listener(model, **kw):
     def mic(on_audio):
         mics.append(FakeMic(on_audio))
         return mics[-1]
-    return ParakeetListener(callbacks, model=lambda: model, mic_factory=mic, **kw), heard, mics
+    return ParakeetListener(callbacks, model=load or (lambda: model), mic_factory=mic, **kw), heard, mics
 
 
 def wait_until(check, timeout=3.0):
@@ -225,11 +275,142 @@ def test_letting_go_of_another_shortcut_hears_nothing():
 def test_a_model_that_wont_load_is_an_error_not_a_crash():
     def broken():
         raise RuntimeError("encoder.int8.onnx is corrupt")
-    callbacks = ListenerCallbacks(error=(errors := []).append, final=(finals := []).append)
-    talk = ParakeetListener(callbacks, model=broken, mic_factory=FakeMic, partial_every=10)
+    talk, heard, mics = listener(None, load=broken, partial_every=10)
     talk.start()
+    mics[0].on_audio(pcm(1.0))
     talk.release()
-    assert wait_until(lambda: errors) and "corrupt" in errors[0] and finals == []
+    assert wait_until(lambda: heard["error"]) and "corrupt" in heard["error"][0] and heard["final"] == []
+
+
+def test_a_tap_doesnt_wait_for_the_model():
+    loaded = threading.Event()
+    talk, heard, mics = listener(None, load=lambda: loaded.wait(5), partial_every=10)
+    talk.start()
+    mics[0].on_audio(pcm(0.1))
+    talk.release()
+    assert wait_until(lambda: heard["final"], timeout=1) and heard["final"] == [""]
+    loaded.set()
+
+
+# -- loading it when you press, letting it go when you don't ----------------------------------------------
+
+def slow_load(model, seconds):
+    """Like recognizer(): the first call loads (slowly), the rest wait for it, then it's there."""
+    loads, lock = [], threading.Lock()
+
+    def load():
+        with lock:
+            if not loads:
+                time.sleep(seconds)
+                loads.append(time.monotonic())
+        return model
+    return load, loads
+
+
+def test_the_model_loads_on_the_first_press_and_letting_go_early_waits_for_it():
+    model = FakeModel(delay=0.1)
+    load, loads = slow_load(model, 0.3)
+    talk, heard, mics = listener(model, load=load, partial_every=0.01)
+    time.sleep(0.1)
+    assert loads == []                                              # nothing loaded until they press
+    pressed = time.monotonic()
+    talk.start()
+    mics[0].on_audio(pcm(1.0))
+    time.sleep(0.1)                                                 # the live loop is waiting for it too
+    talk.release()                                                  # before it finished loading
+    assert wait_until(lambda: heard["final"])
+    assert loads[0] - pressed >= 0.3 and heard["final"] == ["heard 1.0 seconds, at least $5"]
+    assert heard["partial"] == [] and model.reads == [SAMPLE_RATE]  # no live read once they let go
+
+
+def test_partials_start_once_its_loaded():
+    model = FakeModel()
+    load, loads = slow_load(model, 0.3)
+    talk, heard, mics = listener(model, load=load, partial_every=0.01)
+    talk.start()
+    mics[0].on_audio(pcm(1.0))
+    assert wait_until(lambda: heard["partial"])
+    assert loads and heard["partial"][0] == "heard 1.0 seconds, at least $5"
+    talk.cancel()
+
+
+def test_an_idle_model_is_let_go_but_never_mid_read():
+    model = FakeModel(delay=0.3)
+    unloads = []
+    talk, heard, mics = listener(model, partial_every=0.01, idle_unload=0.02,
+                                 unload=lambda: unloads.append(model.reading))
+    talk.start()
+    mics[0].on_audio(pcm(2.0))
+    assert wait_until(lambda: model.reading)                        # a live read is running
+    talk.cancel()                                                   # idle from here: the timer fires mid-read
+    assert wait_until(lambda: unloads)
+    assert unloads == [0] and model.reads                           # it waited for that read to finish
+
+
+def test_pressing_again_keeps_it_loaded():
+    unloads = []
+    talk, heard, mics = listener(FakeModel(), partial_every=10, idle_unload=0.2, unload=lambda: unloads.append(1))
+    talk.start()
+    mics[0].on_audio(pcm(1.0))
+    talk.release()
+    assert wait_until(lambda: heard["final"])
+    talk.start()                                                    # back before it went idle
+    time.sleep(0.4)
+    assert unloads == []
+    talk.release()
+    assert wait_until(lambda: unloads)
+    time.sleep(0.3)
+    assert unloads == [1]
+
+
+def test_an_old_listener_doesnt_pull_the_model_from_a_new_one():
+    unloads = []
+    old, heard, mics = listener(FakeModel(), partial_every=10, idle_unload=0.2, unload=lambda: unloads.append("old"))
+    old.start()
+    mics[0].on_audio(pcm(1.0))
+    old.release()
+    assert wait_until(lambda: heard["final"])
+    new, _, new_mics = listener(FakeModel(), partial_every=10, idle_unload=0.2, unload=lambda: unloads.append("new"))
+    new.start()                                                     # settings changed: a new listener, in use
+    time.sleep(0.4)
+    assert unloads == []
+    new.cancel()
+    assert wait_until(lambda: unloads) and unloads == ["new"]
+
+
+# -- reading only what's new, and letting go without waiting ------------------------------------------------
+
+def test_the_live_transcript_only_rereads_the_newest_piece_and_so_does_the_final():
+    model = FakeModel()
+    talk, heard, mics = listener(model, partial_every=0.02)
+    talk.start()
+    mics[0].on_audio(pcm(25.0))
+    assert wait_until(lambda: heard["partial"])
+    assert len(model.reads) == len(pieces(pcm(25.0))) == 4         # every piece, once
+    mics[0].on_audio(pcm(0.5))
+    assert wait_until(lambda: len(heard["partial"]) == 2)
+    start, end = pieces(pcm(25.5))[-1]
+    assert len(model.reads) == 5 and model.reads[-1] == (end - start) // 2     # just the newest piece again
+    mics[0].on_audio(pcm(0.5))
+    talk.release()
+    assert wait_until(lambda: heard["final"])
+    start, end = pieces(pcm(26.0))[-1]
+    assert set(model.reads[5:]) == {(end - start) // 2}            # the final too (or a live read just before it)
+    assert heard["final"][0].count("heard") == 4
+
+
+def test_letting_go_doesnt_wait_for_a_live_read():
+    model = FakeModel(delay=0.4)
+    talk, heard, mics = listener(model, partial_every=0.01)
+    talk.start()
+    mics[0].on_audio(pcm(2.0))
+    assert wait_until(lambda: model.reading)                        # a live read just started
+    let_go = time.monotonic()
+    talk.release()
+    assert wait_until(lambda: heard["final"])
+    assert time.monotonic() - let_go < 0.65                         # its own read only, not 0.4 + 0.4
+    time.sleep(0.5)
+    assert len(model.reads) == 2 and heard["partial"] == []        # the live one's text dropped, no new one
 
 
 # -- picking it ---------------------------------------------------------------------------------------------
