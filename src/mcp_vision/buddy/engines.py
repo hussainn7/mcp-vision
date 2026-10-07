@@ -368,6 +368,21 @@ def transcript_prompt(turns: list[Turn], image_paths: list[str] | None = None,
     return "\n\n".join(parts)
 
 
+def history_blocks(history: list[Turn]) -> list[dict[str, Any]]:
+    """Earlier messages as one text block each, the newest marked for the prompt cache.
+
+    A turn's history is the last turn's plus one exchange, so with a block per message the cache gives
+    back everything up to the previous mark and only the new exchange (then the screen) is read fresh.
+    As one block, any growth was a new block and the whole conversation was written to the cache again.
+    """
+    blocks = [{"type": "text", "text": ("<earlier_conversation>\n" if index == 0 else "") +
+               f"{'user' if turn.role == 'user' else 'you (plip)'}: {turn.text}\n"}
+              for index, turn in enumerate(history)]
+    if blocks:
+        blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return blocks
+
+
 def write_images(turn: Turn, directory: str) -> list[str]:
     paths = []
     for index, shot in enumerate(turn.images, start=1):
@@ -607,12 +622,12 @@ class ClaudeCodeBrain(CLIBrain):
 
     def invocation(self, *, system, turns, workdir, detailed):
         *history, current = turns
-        content: list[dict[str, Any]] = []
+        content = history_blocks(history)
         for shot in current.images:
             content.append({"type": "image", "source": {"type": "base64", "media_type": shot.media_type,
                                                         "data": base64.standard_b64encode(shot.data).decode()}})
             content.append({"type": "text", "text": screen_label(shot, len(current.images))})
-        content.append({"type": "text", "text": transcript_prompt([*history, Turn("user", current.text)])})
+        content.append({"type": "text", "text": ("</earlier_conversation>\n\n" if history else "") + current.text})
         message = {"type": "user", "message": {"role": "user", "content": content}}
         # No tools, no MCP servers, no hooks/CLAUDE.md/plugins (--safe-mode), nothing saved to disk.
         argv = [self.binary, "-p", "--input-format", "stream-json", "--output-format", "stream-json",
@@ -620,8 +635,8 @@ class ClaudeCodeBrain(CLIBrain):
                 "--strict-mcp-config", "--safe-mode", "--no-session-persistence", "--effort", self._effort(detailed)]
         if self.model:
             argv += ["--model", self.model]
-        # Every turn's screen, map and history are new, so what Claude Code writes to the prompt cache is
-        # never read back; only the system prompt is. On a subscription it caches for an hour, and hour-long
+        # Each turn's screen and map are new, so only the system prompt and the history before them come back
+        # from the prompt cache (history_blocks). On a subscription it caches for an hour, and hour-long
         # writes cost twice the input price (five-minute ones 1.25x). Five minutes is about 30% cheaper.
         # No nonessential traffic: the CLI otherwise spends ~0.45 s after every answer flushing its own
         # telemetry before it exits (and ~0.25 s more starting up), right where Plip waits for the next step.

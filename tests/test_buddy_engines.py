@@ -304,8 +304,12 @@ def test_claude_code_brain_streams_images_through_stdin(tmp_path):
         assert os.environ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"    # no telemetry flush before exit
         message = json.loads(stdin_text.strip().splitlines()[0])
         content = message["message"]["content"]
-        assert content[0]["type"] == "image" and content[0]["source"]["media_type"] == "image/jpeg"
-        assert "image dimensions: 1280x800" in content[1]["text"]
+        # history first, a block per message, the newest marked for the cache; then the screen, then the ask
+        assert content[0]["text"].startswith("<earlier_conversation>") and "where is wifi" in content[0]["text"]
+        assert "cache_control" not in content[0] and content[1]["cache_control"] == {"type": "ephemeral"}
+        assert content[2]["type"] == "image" and content[2]["source"]["media_type"] == "image/jpeg"
+        assert "image dimensions: 1280x800" in content[3]["text"]
+        assert content[-1]["text"].startswith("</earlier_conversation>")
         assert content[-1]["text"].endswith("and bluetooth?")
         assert not os.listdir(".")                                   # runs in an empty scratch dir
         for word in ["Bluetooth ", "is ", "next to Wi-Fi. ", "[POINT:1180,12:bluetooth:screen1]"]:
@@ -315,6 +319,28 @@ def test_claude_code_brain_streams_images_through_stdin(tmp_path):
     """)
     text = asyncio.run(collect(ClaudeCodeBrain(binary), TURNS))
     assert text == "Bluetooth is next to Wi-Fi. [POINT:1180,12:bluetooth:screen1]"
+
+
+def test_each_turns_history_starts_with_the_last_turns_so_the_cache_can_give_it_back():
+    from mcp_vision.buddy.engines import history_blocks
+
+    first = history_blocks(TURNS[:2])
+    later = history_blocks([*TURNS[:2], Turn("user", "and bluetooth?"), Turn("assistant", "Next to it.")])
+    unmarked = [{key: value for key, value in block.items() if key != "cache_control"} for block in later[:2]]
+    assert unmarked == [{key: value for key, value in block.items() if key != "cache_control"} for block in first]
+    assert [("cache_control" in block) for block in later] == [False, False, False, True]
+    assert history_blocks([]) == []
+
+
+def test_history_drops_a_few_exchanges_at_once_so_its_start_holds_still():
+    from mcp_vision.buddy.conversation import Conversation
+
+    talk = Conversation(max_turns=20)
+    starts = []
+    for n in range(30):
+        talk.record(f"ask {n}", f"answer {n}")
+        starts.append(talk.turns[0].text)
+    assert len(set(starts)) <= 8 and talk.turns[0].role == "user" and len(talk.turns) <= 20   # was 21: a new start each turn
 
 
 def test_codex_brain_attaches_screens_and_reads_stdin(tmp_path):

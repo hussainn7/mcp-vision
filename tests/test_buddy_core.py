@@ -285,6 +285,8 @@ def test_claude_request_caches_system_and_attaches_labeled_images():
     assert body["output_config"] == {"effort": "low"}
     assert "thinking" not in body and "temperature" not in body
     assert body["messages"][0] == {"role": "user", "content": "old q"}
+    # the end of the history is marked, so the next turn reads all of it back from the cache
+    assert body["messages"][1]["content"] == [{"type": "text", "text": "old a", "cache_control": {"type": "ephemeral"}}]
     current = body["messages"][-1]["content"]
     assert current[0]["source"]["data"] == base64.standard_b64encode(s.data).decode()
     assert current[1]["text"].startswith("the user's screen (cursor is here)")
