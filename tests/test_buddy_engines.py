@@ -12,6 +12,7 @@ import os
 import stat
 import sys
 import textwrap
+import time
 
 import pytest
 
@@ -229,6 +230,20 @@ def test_claude_code_parser_streams_deltas_and_reports_errors():
                         {"type": "result", "subtype": "success", "result": "Hi."}]) == ["Hi."]
 
 
+def test_a_cli_retry_mid_reply_doesnt_run_the_reply_twice():
+    def delta(text):
+        return {"type": "stream_event", "event": {"type": "content_block_delta",
+                                                  "delta": {"type": "text_delta", "text": text}}}
+    start = {"type": "stream_event", "event": {"type": "message_start", "message": {}}}
+    parser = ClaudeCodeParser()
+    texts = feed(parser, [start, delta("Typing it. "), delta('[DO:type_text {"text": "hi"}]'),
+                          start, delta("Typing it. "), delta('[DO:type_text {"text": "hi"}]'),
+                          {"type": "result", "subtype": "success", "result": "Typing it."}])
+    assert texts == ["Typing it. ", '[DO:type_text {"text": "hi"}]'] and parser.retried
+    fresh = ClaudeCodeParser()                # the first message_start of a reply is normal
+    assert feed(fresh, [start, delta("Hi.")]) == ["Hi."] and not fresh.retried
+
+
 def test_codex_parser_emits_message_text_once():
     parser = CodexParser()
     events = [{"type": "thread.started", "thread_id": "t"}, {"type": "turn.started"},
@@ -286,10 +301,15 @@ def test_claude_code_brain_streams_images_through_stdin(tmp_path):
         assert argv[argv.index("--effort") + 1] == "low"
         assert "CLAUDECODE" not in os.environ
         assert os.environ["CLAUDE_CODE_PROMPT_CACHE_TTL"] == "5m"      # never re-read: no hour-long cache writes
+        assert os.environ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"    # no telemetry flush before exit
         message = json.loads(stdin_text.strip().splitlines()[0])
         content = message["message"]["content"]
-        assert content[0]["type"] == "image" and content[0]["source"]["media_type"] == "image/jpeg"
-        assert "image dimensions: 1280x800" in content[1]["text"]
+        # history first, a block per message, the newest marked for the cache; then the screen, then the ask
+        assert content[0]["text"].startswith("<earlier_conversation>") and "where is wifi" in content[0]["text"]
+        assert "cache_control" not in content[0] and content[1]["cache_control"] == {"type": "ephemeral"}
+        assert content[2]["type"] == "image" and content[2]["source"]["media_type"] == "image/jpeg"
+        assert "image dimensions: 1280x800" in content[3]["text"]
+        assert content[-1]["text"].startswith("</earlier_conversation>")
         assert content[-1]["text"].endswith("and bluetooth?")
         assert not os.listdir(".")                                   # runs in an empty scratch dir
         for word in ["Bluetooth ", "is ", "next to Wi-Fi. ", "[POINT:1180,12:bluetooth:screen1]"]:
@@ -299,6 +319,28 @@ def test_claude_code_brain_streams_images_through_stdin(tmp_path):
     """)
     text = asyncio.run(collect(ClaudeCodeBrain(binary), TURNS))
     assert text == "Bluetooth is next to Wi-Fi. [POINT:1180,12:bluetooth:screen1]"
+
+
+def test_each_turns_history_starts_with_the_last_turns_so_the_cache_can_give_it_back():
+    from mcp_vision.buddy.engines import history_blocks
+
+    first = history_blocks(TURNS[:2])
+    later = history_blocks([*TURNS[:2], Turn("user", "and bluetooth?"), Turn("assistant", "Next to it.")])
+    unmarked = [{key: value for key, value in block.items() if key != "cache_control"} for block in later[:2]]
+    assert unmarked == [{key: value for key, value in block.items() if key != "cache_control"} for block in first]
+    assert [("cache_control" in block) for block in later] == [False, False, False, True]
+    assert history_blocks([]) == []
+
+
+def test_history_drops_a_few_exchanges_at_once_so_its_start_holds_still():
+    from mcp_vision.buddy.conversation import Conversation
+
+    talk = Conversation(max_turns=20)
+    starts = []
+    for n in range(30):
+        talk.record(f"ask {n}", f"answer {n}")
+        starts.append(talk.turns[0].text)
+    assert len(set(starts)) <= 8 and talk.turns[0].role == "user" and len(talk.turns) <= 20   # was 21: a new start each turn
 
 
 def test_codex_brain_attaches_screens_and_reads_stdin(tmp_path):
@@ -462,6 +504,21 @@ def test_no_first_answer_in_time_names_the_network_problem(tmp_path):
         asyncio.run(collect(CodexBrain(binary, first_output_timeout=0.8), TURNS))
     assert "Reconnecting" in str(caught.value)
     assert _friendly_error(caught.value).startswith("I can't reach my brain")
+
+
+def test_the_turn_ends_at_the_answer_not_when_the_cli_gets_round_to_exiting(tmp_path):
+    binary = fake_cli(tmp_path, "claude", """
+        import time
+        out({"type": "stream_event", "event": {"type": "content_block_delta",
+                                               "delta": {"type": "text_delta", "text": "Top right."}}})
+        out({"type": "result", "subtype": "success", "is_error": False, "result": "Top right.",
+             "usage": {"input_tokens": 10, "output_tokens": 3}})
+        time.sleep(30)                    # still flushing its own traffic, stdout open
+    """)
+    brain = ClaudeCodeBrain(binary)
+    started = time.monotonic()
+    assert asyncio.run(collect(brain, TURNS)) == "Top right."
+    assert time.monotonic() - started < 2.5 and brain.last_usage.output == 3
 
 
 # -- what each brain says it used ----------------------------------------------------------

@@ -69,6 +69,9 @@ def ask(question: str, images: tuple[str, ...], speak: bool, as_json: bool, engi
         raise click.ClickException(str(exc)) from exc
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    from mcp_vision.buddy import workers
+
+    workers.install(loop)
     # Not asyncio.run(): it waits for every worker thread, and a stuck screen grab or
     # CLI brain must not keep this one-shot command alive after it has answered.
     result = loop.run_until_complete(companion.respond(question))

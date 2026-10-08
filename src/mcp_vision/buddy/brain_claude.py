@@ -60,7 +60,7 @@ class ClaudeBrain:
             "model": self.model,
             "max_tokens": self.max_tokens,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            "messages": [_message(turn) for turn in turns],
+            "messages": _cached([_message(turn) for turn in turns]),
             "output_config": {"effort": effort},
             "betas": [FALLBACK_BETA],
             "fallbacks": "default",
@@ -88,6 +88,17 @@ def _usage(final: Any, model: str) -> Usage | None:
     raw = {key: getattr(usage, key, 0) or 0 for key in
            ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
     return from_report(raw, model=str(getattr(final, "model", "") or model))
+
+
+def _cached(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mark the end of the history for the prompt cache: the next turn starts with all of it."""
+    if len(messages) < 2:
+        return messages
+    last = messages[-2]
+    content = last["content"]
+    blocks = [{"type": "text", "text": content}] if isinstance(content, str) else [dict(block) for block in content]
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return [*messages[:-2], {**last, "content": blocks}, messages[-1]]
 
 
 def _message(turn: Turn) -> dict[str, Any]:

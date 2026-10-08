@@ -30,6 +30,7 @@ from mcp_vision.buddy.prompt import (
 )
 from mcp_vision.buddy.screen_context import ScreenContext
 from mcp_vision.buddy.usage import Request, Usage, estimate, image_tokens, text_tokens
+from mcp_vision.buddy.workers import PooledExecutor
 
 Observer = Callable[[str, dict[str, Any]], None]
 
@@ -210,7 +211,7 @@ class Companion:
         self._task: asyncio.Task | None = None
         self._token: int | None = None
         self._prefetched: tuple[float, concurrent.futures.Future] | None = None
-        self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="buddy-look")
+        self._pool = PooledExecutor(max_workers=2, thread_name_prefix="buddy-look")
 
     @property
     def vision(self) -> bool:

@@ -42,7 +42,10 @@ class Conversation:
                            Turn("assistant", assistant_text, request=self.requests)])
         overflow = len(self.turns) - self.max_turns
         if overflow > 0:
-            # Drop whole exchanges so the history always starts with a user turn.
+            # Drop a few exchanges at once, not one per turn: the history is the start of every prompt, and
+            # a start that shifts each turn is never read back from the prompt cache. Whole exchanges, so it
+            # always starts with a user turn.
+            overflow = max(overflow, self.max_turns // 4)
             overflow += overflow % 2
             del self.turns[:overflow]
 

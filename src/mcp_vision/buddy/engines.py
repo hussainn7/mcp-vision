@@ -368,6 +368,21 @@ def transcript_prompt(turns: list[Turn], image_paths: list[str] | None = None,
     return "\n\n".join(parts)
 
 
+def history_blocks(history: list[Turn]) -> list[dict[str, Any]]:
+    """Earlier messages as one text block each, the newest marked for the prompt cache.
+
+    A turn's history is the last turn's plus one exchange, so with a block per message the cache gives
+    back everything up to the previous mark and only the new exchange (then the screen) is read fresh.
+    As one block, any growth was a new block and the whole conversation was written to the cache again.
+    """
+    blocks = [{"type": "text", "text": ("<earlier_conversation>\n" if index == 0 else "") +
+               f"{'user' if turn.role == 'user' else 'you (plip)'}: {turn.text}\n"}
+              for index, turn in enumerate(history)]
+    if blocks:
+        blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return blocks
+
+
 def write_images(turn: Turn, directory: str) -> list[str]:
     paths = []
     for index, shot in enumerate(turn.images, start=1):
@@ -397,6 +412,7 @@ class StreamParser:
         self.final = ""
         self.notice = ""            # latest transient problem (e.g. "Reconnecting...")
         self.usage: Usage | None = None   # token counts from the CLI's final event, when it reports them
+        self.ended = False          # the CLI's last event is in: stop reading, don't wait for it to exit
 
     def feed(self, line: str) -> list[str]:
         line = line.strip()
@@ -507,8 +523,14 @@ class CLIBrain:
                     break
                 for text in parser.feed(raw.decode("utf-8", "replace")):
                     yield text
-            code = await process.wait()
-            stderr = (await errors).decode("utf-8", "replace")
+                if parser.ended:
+                    break
+            try:
+                # Once the answer's in, a CLI still flushing its own traffic isn't worth waiting for.
+                code = await asyncio.wait_for(process.wait(), 0.3 if parser.ended else None)
+                stderr = (await errors).decode("utf-8", "replace")
+            except asyncio.TimeoutError:
+                code, stderr = 0, ""                 # still going after its last event: the cleanup kills it
             self.last_usage = parser.usage
             if self.last_usage is not None and not self.last_usage.model:
                 self.last_usage.model = self.model or ""
@@ -559,12 +581,19 @@ def _tail(text: str, limit: int = 240) -> str:
 # Claude Code ----------------------------------------------------------------------------
 
 class ClaudeCodeParser(StreamParser):
+    retried = False
+
     def handle(self, event):
         kind = event.get("type")
         if kind == "stream_event":
             inner = event.get("event") or {}
             delta = inner.get("delta") or {}
-            if inner.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+            if inner.get("type") == "message_start" and self.produced:
+                # The CLI retried mid-reply: what it streams now starts over, and replaying it would run
+                # the reply's [DO:] steps and say its sentences a second time. Keep the first attempt.
+                self.notice, self.retried = "retried mid-reply", True
+            elif inner.get("type") == "content_block_delta" and delta.get("type") == "text_delta" \
+                    and not self.retried:
                 return [delta.get("text", "")]
         elif kind == "assistant" and not self.produced:
             # Without partial messages we still get whole assistant messages.
@@ -572,6 +601,7 @@ class ClaudeCodeParser(StreamParser):
             self.final = "".join(block.get("text", "") for block in message.get("content", [])
                                  if block.get("type") == "text") or self.final
         elif kind == "result":
+            self.ended = True
             if event.get("is_error") or event.get("subtype", "success") != "success":
                 self.error = str(event.get("result") or event.get("subtype") or "error")
             elif not self.final:
@@ -592,12 +622,12 @@ class ClaudeCodeBrain(CLIBrain):
 
     def invocation(self, *, system, turns, workdir, detailed):
         *history, current = turns
-        content: list[dict[str, Any]] = []
+        content = history_blocks(history)
         for shot in current.images:
             content.append({"type": "image", "source": {"type": "base64", "media_type": shot.media_type,
                                                         "data": base64.standard_b64encode(shot.data).decode()}})
             content.append({"type": "text", "text": screen_label(shot, len(current.images))})
-        content.append({"type": "text", "text": transcript_prompt([*history, Turn("user", current.text)])})
+        content.append({"type": "text", "text": ("</earlier_conversation>\n\n" if history else "") + current.text})
         message = {"type": "user", "message": {"role": "user", "content": content}}
         # No tools, no MCP servers, no hooks/CLAUDE.md/plugins (--safe-mode), nothing saved to disk.
         argv = [self.binary, "-p", "--input-format", "stream-json", "--output-format", "stream-json",
@@ -605,10 +635,13 @@ class ClaudeCodeBrain(CLIBrain):
                 "--strict-mcp-config", "--safe-mode", "--no-session-persistence", "--effort", self._effort(detailed)]
         if self.model:
             argv += ["--model", self.model]
-        # Every turn's screen, map and history are new, so what Claude Code writes to the prompt cache is
-        # never read back; only the system prompt is. On a subscription it caches for an hour, and hour-long
+        # Each turn's screen and map are new, so only the system prompt and the history before them come back
+        # from the prompt cache (history_blocks). On a subscription it caches for an hour, and hour-long
         # writes cost twice the input price (five-minute ones 1.25x). Five minutes is about 30% cheaper.
-        env = {"DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}
+        # No nonessential traffic: the CLI otherwise spends ~0.45 s after every answer flushing its own
+        # telemetry before it exits (and ~0.25 s more starting up), right where Plip waits for the next step.
+        env = {"DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_PROMPT_CACHE_TTL": "5m",
+               "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
         return Invocation(argv, stdin=(json.dumps(message) + "\n").encode(), env=env)
 
     def parser(self):
