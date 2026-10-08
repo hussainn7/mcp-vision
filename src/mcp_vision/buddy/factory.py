@@ -133,7 +133,7 @@ def make_companion(settings: BuddySettings, *, pointer: Pointer | None = None,
 
 
 def make_notes(memory=None):
-    """What Plip knows about the user, added to every turn."""
+    """What Plip knows about the user, added to the system prompt."""
     if memory is None:
         return None
     return memory.summary

@@ -219,7 +219,19 @@ class Companion:
 
     @property
     def system_prompt(self) -> str:
-        return self._system_prompt or system_prompt(vision=self.vision)
+        """Plip's instructions, then what it knows about the user.
+
+        What it knows changes only when they tell it something, so it rides in the cached prompt rather than in
+        each turn, where every call (each walkthrough step and action result too) paid for it again in full.
+        """
+        base = self._system_prompt or system_prompt(vision=self.vision)
+        known = ""
+        if self.notes is not None:
+            try:
+                known = (self.notes() or "").strip()
+            except Exception:
+                known = ""
+        return f"{base}\n\n{known}" if known else base
 
     def emit(self, event: str, /, **data: Any) -> None:
         if self.observer is not None:
@@ -446,16 +458,10 @@ class Companion:
         loop.call_soon_threadsafe(say)
 
     def _notes(self) -> str:
+        """Per-turn notes: the time (it changes every minute, so it stays out of the cached prompt)."""
         import datetime as _dt
 
-        now = _dt.datetime.now().strftime("%A, %B %d %Y, %I:%M %p").replace(" 0", " ")
-        extra = ""
-        if self.notes is not None:
-            try:
-                extra = self.notes() or ""
-            except Exception:
-                extra = ""
-        return f"now: {now}" + (f"\n{extra}" if extra else "")
+        return "now: " + _dt.datetime.now().strftime("%A, %B %d %Y, %I:%M %p").replace(" 0", " ")
 
     async def _turn(self, transcript: str, *, guide: bool = False, screen: bool | None = None,
                     route: Route | None = None) -> TurnResult:
@@ -484,6 +490,7 @@ class Companion:
                 self.actions.ctx.state.pop("scrolled", None)        # a fresh look: the numbers are current again
             history = self.conversation.history()
             text = user_turn_text(transcript, shots, context, vision=self.vision, notes=self._notes())
+            system = self.system_prompt
             turn = Turn("user", text, images=tuple(shots) if self.vision else ())
             reply = ReplyStream()
             badge = brain_badge(self.brain)
@@ -491,7 +498,7 @@ class Companion:
             self.emit("step", id="think", label=f"{badge['label']} is thinking", status="active")
             first = True
             called = True
-            async for delta in self.brain.stream(system=self.system_prompt, turns=[*history, turn],
+            async for delta in self.brain.stream(system=system, turns=[*history, turn],
                                                  detailed=result.route.detailed):
                 if first:
                     mark("first_token")
@@ -506,7 +513,7 @@ class Companion:
             called = False
             reported = getattr(self.brain, "last_usage", None)
             self._meter_turn(meter, reported if isinstance(reported, Usage) else estimate(
-                text_tokens(self.system_prompt) + sum(text_tokens(t.text) for t in [*history, turn])
+                text_tokens(system) + sum(text_tokens(t.text) for t in [*history, turn])
                 + sum(image_tokens(shot.width, shot.height) for shot in turn.images),
                 reply.spoken_text, str(getattr(self.brain, "model", "") or "")))
             result.spoken = reply.spoken_text

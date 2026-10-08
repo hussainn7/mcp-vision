@@ -23,9 +23,11 @@ class ScriptedBrain:
         self.replies = list(replies)
         self.chunk = chunk
         self.calls = []
+        self.systems = []
 
     async def stream(self, *, system, turns, detailed=False):
         self.calls.append(turns)
+        self.systems.append(system)
         reply = self.replies.pop(0) if self.replies else "okay."
         for start in range(0, len(reply), self.chunk):
             yield reply[start:start + self.chunk]

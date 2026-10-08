@@ -30,9 +30,10 @@ assert "-p" in args and "--tools" in args, args
 message = json.loads(sys.stdin.readline())
 content = message["message"]["content"]
 text = content[-1]["text"]
+system = args[args.index("--system-prompt") + 1]
 with open(os.environ["FAKE_CLAUDE_LOG"], "a") as log:
     log.write(json.dumps({"text": text, "images": sum(1 for part in content if part["type"] == "image"),
-                          "system": args[args.index("--system-prompt") + 1][:40]}) + "\n")
+                          "system": system[:40], "knows": re.findall(r"- email: (\S+)", system)}) + "\n")
 
 def say(*chunks):
     for chunk in chunks:
@@ -47,7 +48,7 @@ if "(action results" in text:
 elif "find my lease" in current:
     say("Looking for it now. ", '[DO:search_files {"query": "lease", "kind": "pdf"}]')
 elif "my email" in current:
-    email = re.search(r"- email: (\S+)", text)
+    email = re.search(r"- email: (\S+)", system)
     say("Your email is " + (email.group(1) if email else "a mystery") + ".")
 elif "two factor" in current:
     say("[STEPS:3] [PLAN: open settings | security | turn on two factor] ",
@@ -128,7 +129,7 @@ def test_memory_import_then_personal_answer(plip, tmp_path):
     shown = plip("memory", "show").stdout
     assert "ada@example.com" in shown and "(ChatGPT)" in shown
     assert plip("ask", "what's my email").stdout.splitlines()[0] == "Your email is ada@example.com."
-    assert "- email: ada@example.com" in plip.calls()[-1]["text"]
+    assert plip.calls()[-1]["knows"] == ["ada@example.com"] and "- email:" not in plip.calls()[-1]["text"]
     assert "key: value" in plip("memory", "prompt").stdout
 
 
