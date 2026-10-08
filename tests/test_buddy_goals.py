@@ -152,3 +152,25 @@ def test_task_steps_skip_the_screenshot_when_the_map_has_it_and_look_brings_it_b
     assert first.images                                                    # the request itself always sees it
     assert not step.images and "screen unchanged since your last look" in step.text   # ~1,400 tokens saved
     assert looked.images                                                   # asked to look: it gets the pixels
+
+
+def test_routine_steps_think_less_and_anything_that_went_wrong_keeps_their_depth():
+    class Brain(ScriptedBrain):
+        def __init__(self, *replies):
+            super().__init__(*replies)
+            self.efforts = []
+
+        async def stream(self, *, system, turns, detailed=False, effort=None):
+            self.efforts.append(effort)
+            async for chunk in super().stream(system=system, turns=turns, detailed=detailed):
+                yield chunk
+
+    host = Spotify()
+    brain = Brain('[GOAL: play it] opening it. [DO:open_app {"name": "spotify"}]',
+                  'picking the playlist. [DO:click {"id": 9}]',
+                  'by its name then. [DO:click {"text": "Play"}] playing. [DONE]')
+    companion = Companion(brain=brain, capturer=Capturer(), context=host, speaker=Speaker(),
+                          actions=ActionEngine(ActionContext(host=host)), settle_interval=0.01)
+    result = asyncio.run(companion.respond("open spotify and play discover weekly"))
+    # the ask: their depth · after a clean open that moved the screen: low · after a failed click: their depth
+    assert brain.efforts == [None, "low", None] and result.finished and host.playing

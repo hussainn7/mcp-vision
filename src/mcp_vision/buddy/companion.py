@@ -196,7 +196,7 @@ class Companion:
                  observer: Observer | None = None, watcher: Watcher | None = None,
                  walkthroughs: bool = True, guide_timeout: float = 90.0, max_guide_turns: int = 10,
                  actions: Any = None, notes: Callable[[], str] | None = None, max_followups: int = 3,
-                 max_agent_steps: int = 15,
+                 max_agent_steps: int = 15, step_effort: str | None = "low",
                  capture_timeout: float = 6.0, usage: Any = None, usage_kind: str = "voice",
                  settle_interval: float = 0.15):
         self.brain = brain
@@ -220,6 +220,7 @@ class Companion:
         self.capture_timeout = capture_timeout
         self.max_followups = max_followups
         self.max_agent_steps = max_agent_steps        # click/scroll/type loops and goals get a bigger budget
+        self.step_effort = step_effort                # routine task steps think this hard (None: the user's depth)
         self._goal = ""                               # the open multi-step task, until [DONE]
         self._goal_waiting = False                    # the task stopped to ask the user something
         self._rejected = 0                            # [DONE]s sent back this task because the last step didn't land
@@ -440,6 +441,8 @@ class Companion:
                 break
             seen = getattr(self, "_context", None)
             changes = result.settle is not None
+            if bool(self._goal) or result.hands:
+                self.warm_brain(self._step_effort(result, result.acted))   # starts up while the screen settles
             settled = await self._wait_for_screen(result)
             agent = bool(self._goal) or result.hands
             lines = list((result.acted if agent else result.reports) or ["(nothing else)"])
@@ -482,7 +485,8 @@ class Companion:
             brief = f"(step {followups + 1}{toward}; results, not from the user) " + \
                 "; ".join(_clip(line, 600) for line in lines)
             followup = await self._turn(prompt, guide=True, screen=agent or bool(result.look_after), route=route,
-                                        record_as=_clip(brief, 1500), lean=agent)
+                                        record_as=_clip(brief, 1500), lean=agent,
+                                        effort=self._step_effort(result, lines, moved) if agent else None)
             turns += 1
             followups += 1
             goal = self._goal or goal
@@ -539,6 +543,21 @@ class Companion:
         result.turns = turns
         await self.speaker.drain()                  # the steps ran while it talked; now let it finish
         return result
+
+    def _step_effort(self, result: TurnResult, lines: list[str], moved: bool | None = None) -> str | None:
+        """How hard a task step thinks. A routine one (the last step worked and the screen moved on) gets
+        ``step_effort``: thinking there cost ~1.5 s a step for the same next click. Reading results to judge
+        them, and anything that went wrong (a failure, a rejected [DONE], no change, going in circles), keeps
+        the user's depth. None means the user's depth."""
+        if not self.step_effort or moved is False:
+            return None
+        if any(report.split(":", 1)[0] in _READING for report in result.reports):
+            return None                               # page text, search hits, a closer look: judge them properly
+        if self._rejected or any(" failed: " in line or line.startswith("note:") for line in lines):
+            return None
+        if max(self._screens_seen.values(), default=0) >= 2:
+            return None                               # back on a screen it's seen: think it through
+        return self.step_effort
 
     async def _check_done(self, result: TurnResult) -> str:
         """[DONE] in the same reply as an action: did that action actually land?
@@ -755,7 +774,8 @@ class Companion:
         return "now: " + _dt.datetime.now().strftime("%A, %B %d %Y, %I:%M %p").replace(" 0", " ")
 
     async def _turn(self, transcript: str, *, guide: bool = False, screen: bool | None = None,
-                    route: Route | None = None, record_as: str | None = None, lean: bool = False) -> TurnResult:
+                    route: Route | None = None, record_as: str | None = None, lean: bool = False,
+                    effort: str | None = None) -> TurnResult:
         transcript = " ".join(transcript.split())
         result = TurnResult(transcript=transcript)
         started = self.clock()
@@ -795,8 +815,9 @@ class Companion:
             self.emit("step", id="think", label=f"{badge['label']} is thinking", status="active")
             first = True
             called = True
+            per_call = {"effort": effort} if effort and _takes_effort(self.brain) else {}
             async for delta in self.brain.stream(system=system, turns=[*history, turn],
-                                                 detailed=result.route.detailed):
+                                                 detailed=result.route.detailed, **per_call):
                 if first:
                     mark("first_token")
                     self.emit("step", id="think", label=f"{badge['label']} answered", status="done",
@@ -1045,6 +1066,8 @@ CONTINUE_RE = re.compile(r"^\W*((ok(ay)?|yes|yeah|sure|alright)\W+)?((you can|pl
                          r"(\W+(please|then|now|plip))?\W*$", re.IGNORECASE)
 # Actions that work on whatever is on screen right now, so they wait for an earlier one to finish loading.
 _ON_SCREEN = {"type_text", "replace_selection"}
+# Actions whose results the next step reads and judges, rather than just moving on from.
+_READING = {"read_page", "search_files", "look", "find_flights", "list_shortcuts", "run_shortcut", "web_search"}
 # Lines in a step's results that mean it didn't get anywhere.
 _STUCK = (" failed: ", "nothing on screen changed", "only the window title", "you ended with [DONE]")
 
@@ -1053,6 +1076,16 @@ def _region(size: tuple[int, int]) -> tuple[float, float, float, float]:
     """The screen minus its menu bar, so the clock ticking over isn't a change."""
     width, height = size
     return 0, height * 0.04, width, height
+
+
+def _takes_effort(brain: Any) -> bool:
+    """Does this brain take a per-call effort (the CLIs and the API do; fakes and old brains may not)?"""
+    import inspect
+
+    try:
+        return "effort" in inspect.signature(brain.stream).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def reply_asks(spoken: str) -> bool:
