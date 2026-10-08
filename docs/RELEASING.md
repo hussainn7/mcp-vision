@@ -21,7 +21,8 @@ macOS says it can't check Plip, and they go to System Settings → Privacy & Sec
 
 ## Ship a release
 
-1. Bump the version in `pyproject.toml`, `src/mcp_vision/__init__.py` and `ui/package.json`.
+1. Bump the version in `pyproject.toml`, `src/mcp_vision/__init__.py` and `ui/package.json`, then run
+   `uv lock` (the DMG installs the versions in `uv.lock` and stops if it's out of date).
 2. Commit, then `git tag v0.8.0 && git push origin v0.8.0`.
 3. GitHub Actions (`.github/workflows/release.yml`) builds the DMG on a Mac and attaches it to
    the release. The README links to `releases/latest`, so the download link never changes.
@@ -76,3 +77,6 @@ Add these repository secrets (Settings → Secrets and variables → Actions):
 | `PLIP_SUPABASE_KEY` | its **publishable** key (`sb_publishable_…`); the build refuses a secret one |
 
 Without the two Supabase secrets the DMG doesn't ask anyone to sign in.
+
+Without the Apple secrets a tag stops instead of publishing an unsigned DMG. Run the workflow by hand
+(Actions → release dmg → Run workflow) for an ad hoc test build; its DMG is kept on the run's page.

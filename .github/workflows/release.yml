@@ -1,8 +1,9 @@
 name: release dmg
 
 # Push a tag like v0.9.0: this builds Plip-<version>.dmg with scripts/build_dmg.py and attaches it to a
-# GitHub release. With the Apple secrets set (docs/RELEASING.md) it's signed + notarized, so it opens
-# with no warning; without them it's signed ad hoc. With the Supabase secrets set it asks people to sign in.
+# GitHub release, signed + notarized with the Apple secrets (docs/RELEASING.md) so it opens with no warning.
+# A tag stops without them, or when it isn't pyproject's version. Run it by hand for an ad hoc test build:
+# the DMG is kept on the run's page. With the Supabase secrets set it asks people to sign in.
 on:
   push:
     tags: ['v*']
@@ -19,6 +20,14 @@ jobs:
       APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
     steps:
       - uses: actions/checkout@v7
+      - name: A tag ships signed, under its own version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME but pyproject.toml says $version"; exit 1; fi
+          if [ -z "$APPLE_CERT_P12" ]; then
+            echo "::error::APPLE_CERT_P12 isn't set: this would publish an unsigned DMG that macOS blocks"; exit 1; fi
       - name: uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -68,3 +77,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: dist/Plip-*.dmg
+          fail_on_unmatched_files: true
+      - uses: actions/upload-artifact@v7
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: plip-dmg
+          path: dist/Plip-*.dmg
+          if-no-files-found: error
