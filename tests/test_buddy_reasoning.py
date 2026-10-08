@@ -304,3 +304,38 @@ def test_a_point_on_a_listed_control_lands_on_it_without_waiting_for_a_snap():
     assert (invite.x, invite.y, invite.source) == (1350.0, 86.0, "snapped")   # the control's exact center
     assert snapper.asked == ["help"]                                            # no ~190 ms snap for the listed one
     assert [point["snapped"] for point in events.kinds("point")] == [True, False]
+
+
+def test_the_map_shows_whats_typed_in_boxes_by_their_label_and_never_a_secret():
+    from mcp_vision.buddy.ax_context import MacAXContext
+
+    def box(frame, value, **attrs):
+        node = ax("AXTextField", frame, **({"title": attrs.pop("title")} if "title" in attrs else {}))
+        node.update({"AXValue": value, **attrs})
+        return node
+
+    window = ax("AXWindow", (0, 37, 1512, 945), "Checkout", children=[
+        box((100, 100, 300, 28), "usb-c hub", AXPlaceholderValue="Search products"),
+        box((100, 150, 300, 28), "4111 1111 1111 1111", title="Card number"),
+        box((100, 200, 300, 28), "hunter2", title="Password", AXSubrole="AXSecureTextField"),
+        box((100, 250, 300, 28), "Austin")])                              # no label at all: still gets an id
+    controls = MacAXContext()._walk(FakeAX(), [window])
+    assert [(c.label, c.value) for c in controls] == [("Search products", "usb-c hub"), ("Card number", ""),
+                                                      ("Password", ""), ("text field", "Austin")]
+    screen = ScreenInfo(1, Rect(0, 0, 1512, 982), is_cursor_screen=True)
+    text = ScreenContext(app="Chrome", controls=controls).describe(
+        [Screenshot(screen=screen, data=b"jpg", width=1280, height=831)])
+    assert '[1] Search products = "usb-c hub" | text field' in text and "4111" not in text and "hunter2" not in text
+    assert ScreenContext(controls=controls).find("search products").value == "usb-c hub"    # found by its label
+
+
+def test_text_plip_just_typed_isnt_the_page_changing():
+    from mcp_vision.buddy.companion import TurnResult
+
+    before = ScreenContext(app="Safari", controls=[Control("Search", "text field", 600, 60)])
+    after = ScreenContext(app="Safari", controls=[Control("Search", "text field", 600, 60, value="usb-c hub")])
+    companion = Companion(brain=ScriptedBrain([]), capturer=capturer())
+    companion._settled = after
+    typed = TurnResult(transcript="", typed=["usb-c hub"])
+    assert companion._unchanged(after.signature(), before, typed)               # typing, then a dead return
+    assert not companion._unchanged(after.signature(), before, TurnResult(transcript=""))   # someone else's change

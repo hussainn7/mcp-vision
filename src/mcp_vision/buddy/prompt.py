@@ -83,7 +83,7 @@ undo {} puts the last tidy-up back.
 - type_text {"text", "id"?, "submit"?, "append"?}: without an id it adds the text at their cursor, in the box \
 "typing goes into" names; with a field's [id] it clicks it first and replaces what's in it ("append": true keeps it), \
 so to redo a field, use its id. long text goes in instantly. "submit": true presses return after. the result says \
-what the field reads now: trust it, don't retype to check. replace_selection {"text"}: swaps the selected text for \
+what the field reads now (the controls list shows it too, as label = "text"): trust it, don't retype to check. replace_selection {"text"}: swaps the selected text for \
 yours, great for "rewrite this", "fix my grammar", "translate this".
 - create_reminder {"title", "due"?: "YYYY-MM-DD HH:MM"} · create_note {"title", "body"} · \
 set_timer {"minutes", "label"?}

@@ -10,14 +10,16 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from mcp_vision.buddy.geometry import Screenshot
+from mcp_vision.buddy.geometry import Rect, Screenshot
 
 MAX_CONTROLS = 70
 MAX_TEXTS = 40
 TEXT_BUDGET = 1400            # characters of visible text per look
+VALUE_SHOWN = 60              # characters of what's typed in a field, per field (a text area's last ones)
 _DIGITS = re.compile(r"\d+")
 SELECTION_LIMIT = 3000        # characters of selected text the model sees (about 750 tokens at most)
 HIDDEN_INPUT = 6              # px: a text box thinner than this is an editor's stand-in (google docs, vs code)
@@ -33,6 +35,10 @@ class Control:
     role: str
     x: float          # center, global top-left points
     y: float
+    w: float = 0.0
+    h: float = 0.0
+    value: str = ""   # what's typed in a text box ("" for a password): never part of the label, so finds still match
+    secure: bool = False      # a password box, whatever it's labeled: what's typed into it stays private
 
 
 @dataclass
@@ -47,6 +53,7 @@ class ScreenContext:
     focused: str = ""             # the text box typing goes into, like 'search field "Search"'
     selection_chars: int = 0      # how long the selection really is; ``selection`` keeps SELECTION_LIMIT of it
     blind: bool = False           # a web app whose page isn't in the map (yet)
+    window_frame: Rect | None = None      # the focused window, global top-left points
     ids: dict[int, Control] = field(default_factory=dict, compare=False, repr=False)   # [n] in the last describe
 
     @property
@@ -90,12 +97,24 @@ class ScreenContext:
                 best, found = key, item
         return found
 
-    def signature(self) -> str:
-        """Changes when what's on screen changes (app, page, controls and where they are, the text)."""
+    def signature(self, values: bool = True, skip: Collection[str] = ()) -> str:
+        """Changes when what's on screen changes (app, page, controls and where they are, text, what's typed).
+
+        ``values=False`` leaves out what's typed: the numbers the model has still point at the same fields.
+        ``skip``: fields (by ``_spot``) whose value doesn't count, like the ones just typed into (``holding``).
+        """
         parts = [self.app, self.window, self.url,
-                 *(f"{c.label}|{c.role}|{round(c.x)}|{round(c.y)}" for c in self.controls),
+                 *(_spot(c) + (f"|{c.value}" if values and _spot(c) not in skip else "") for c in self.controls),
                  *(t.label for t in self.texts)]
         return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
+
+    def holding(self, texts: Iterable[str]) -> set[str]:
+        """The fields (by ``_spot``) that show one of these texts: the ones they were just typed into.
+
+        By its start or end: a long one is only partly kept, and the field around it may have more.
+        """
+        pieces = {piece for text in texts if _loose(text) for piece in (_loose(text)[:40], _loose(text)[-40:])}
+        return {_spot(c) for c in self.controls if c.value and any(piece in _loose(c.value) for piece in pieces)}
 
     def settle_signature(self) -> str:
         """For "has it stopped changing?": ``signature`` minus what moves on its own.
@@ -143,6 +162,10 @@ class ScreenContext:
                 for control, label, x, y in items:
                     number = len(self.ids) + 1
                     self.ids[number] = control
+                    if control.value.strip() and not control.secure and not SECRET.search(control.label):
+                        # what's typed in it now; a text area's end, where typing goes (not a long note's top)
+                        shown = _clip(control.value, VALUE_SHOWN, end=control.role == "text area")
+                        label += f' = "{shown}"'
                     lines.append(f"{'' if single else '    '}[{number}] {label} | {control.role} | {x},{y}")
         if self.blind:
             lines.append("note: this app isn't showing its page to plip's controls list yet, so the page itself isn't "
@@ -162,6 +185,25 @@ class ScreenContext:
         if visible:
             lines.append(f"visible text: {visible}")
         return "\n".join(lines)
+
+
+def _spot(control: Control) -> str:
+    return f"{control.label}|{control.role}|{round(control.x)}|{round(control.y)}"
+
+
+_CURLY = str.maketrans("\u2018\u2019\u201c\u201d", "''\"\"")
+
+
+def _loose(text: str) -> str:
+    """Give or take spacing (a no-break space too) and the curly quotes apps swap in as you type."""
+    return " ".join(text.translate(_CURLY).split())
+
+
+def _clip(text: str, limit: int, end: bool = False) -> str:
+    text = " ".join(text.split()).replace("|", "/")
+    if len(text) <= limit:
+        return text
+    return "…" + text[1 - limit:] if end else text[: limit - 1] + "…"
 
 
 def _tidy(text: str) -> str:

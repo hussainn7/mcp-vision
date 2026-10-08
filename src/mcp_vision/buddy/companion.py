@@ -138,6 +138,7 @@ class TurnResult:
     opened: str = ""                 # this turn's last action opened something (a link, a page): what it was
     verified: bool | None = None     # [DONE] after acting: True = the screen confirmed it, False = couldn't tell
     hushed: bool = False             # a step failed: the rest of the reply was written as if it worked
+    typed: list[str] = field(default_factory=list)        # text this reply put in fields: it showing isn't a change
     muted: dict[int, str] = field(default_factory=dict)  # ...so those chunks (by position) aren't said, or only this
     heard: int = 0                   # chunks the reply has streamed so far
 
@@ -452,18 +453,20 @@ class Companion:
             after = getattr(self, "_settled", None)
             pixels, unchanged = None, None
             if agent and changes and settled is not None and seen is not None:
-                unchanged = settled == seen.signature()
-                if unchanged and (pixels := await self._pixels_moved()):
+                unchanged = self._unchanged(settled, seen, result)
+                # Typed text always moves the pixels, so they only get a say when nothing was typed.
+                if unchanged and not result.typed and (pixels := await self._pixels_moved()):
                     # The map can't see what changed (a web page it isn't reading, a canvas): the pixels can.
                     lines.append("note: the screen changed, but not in the controls list, so here's a screenshot")
                     if self.actions is not None:
                         self.actions.ctx.state["force_image"] = True
                 elif unchanged:
-                    lines.append("note: nothing on screen changed after that step")         # costs nothing to notice
+                    lines.append("note: nothing on screen changed after that step"           # costs nothing to notice
+                                 + (" besides the text typed" if result.typed else ""))
                 elif after is not None and after.content_signature() == seen.content_signature() \
-                        and after.app == seen.app and after.window != seen.window:
-                    lines.append("note: only the window title changed; the page itself shows the same "
-                                 "controls as before, so it may not have loaded")
+                        and after.signature(values=False) != seen.signature(values=False):    # not just typing
+                    lines.append("note: only the address or title changed; the page itself shows the same "
+                                 "content as before, so it may not have loaded")
             moved = None if unchanged is None else not unchanged or bool(pixels)
             if agent and followups + 1 >= limit:
                 # More steps only for a task that's plainly getting somewhere: the screen moved on, nothing
@@ -594,9 +597,10 @@ class Companion:
             result.settle = None
             if settled is None or seen is None:
                 result.verified = False               # no map to check against
-            elif settled == seen.signature() and not await self._pixels_moved():
+            elif self._unchanged(settled, seen, result) and (result.typed or not await self._pixels_moved()):
                 last = (result.did[-1] if result.did else "that step").lower()
-                problem = (f"note: you ended with [DONE] right after {last}, but nothing on screen changed, "
+                besides = " besides the text typed" if result.typed else ""
+                problem = (f"note: you ended with [DONE] right after {last}, but nothing on screen changed{besides}, "
                            "so it probably didn't work. check and fix it another way; if it really can't be done, "
                            "tell them it didn't take.")
             else:
@@ -606,6 +610,16 @@ class Companion:
             self._rejected += 1
         return problem
 
+    def _unchanged(self, settled: str, seen: ScreenContext, result: TurnResult) -> bool:
+        """The screen after a step is the one the model saw. What this reply typed, sitting in the field it went
+        into, doesn't count: typing then a return or a click that did nothing would pass otherwise. Any other
+        field's value does (a search cleared, the city filled in from a zip code)."""
+        after = getattr(self, "_settled", None)
+        if not result.typed or after is None:
+            return settled == seen.signature()
+        typed = after.holding(result.typed)
+        return after.signature(skip=typed) == seen.signature(skip=typed)
+
     async def _pixels_moved(self) -> bool | None:
         """Did the screen itself change since the last look? For when the map can't tell. None: can't say."""
         grab = getattr(self.capturer, "glance", None)
@@ -613,6 +627,7 @@ class Companion:
         shot = next((item for item in shots if item.screen.is_cursor_screen), shots[0] if shots else None)
         if grab is None or shot is None:
             return None
+        frame = getattr(getattr(self, "_context", None), "window_frame", None)
 
         def compare() -> bool:
             import io
@@ -623,7 +638,8 @@ class Companion:
 
             before = Image.open(io.BytesIO(shot.data))
             now = grab()
-            return changed(glance(before, _region(before.size)), glance(now, _region(now.size)))
+            return changed(glance(before, _region(frame, shot, before.size)),
+                           glance(now, _region(frame, shot, now.size)))
         try:
             return await asyncio.to_thread(compare)
         except Exception:
@@ -1043,6 +1059,8 @@ class Companion:
             if action_result.settle:
                 result.settle = max(result.settle or 0.0, action_result.settle)
             result.opened = label if action_result.opens else ""
+            if tag.name in _AUTHORING:
+                result.typed.append(str(tag.args.get("text") or ""))
             self.emit("step", id=step_id, label=label, status="done", detail=action_result.detail)
             self.emit("action", name=tag.name, status="done", label=label, detail=action_result.detail,
                       items=action_result.items)
@@ -1068,17 +1086,26 @@ CONTINUE_RE = re.compile(r"^\W*((ok(ay)?|yes|yeah|sure|alright)\W+)?((you can|pl
                          r"carry on|keep at it|resume|don't stop|finish (it|up|the job)|go ahead and finish)"
                          r"(\W+(please|then|now|plip))?\W*$", re.IGNORECASE)
 # Actions that work on whatever is on screen right now, so they wait for an earlier one to finish loading.
-_ON_SCREEN = {"type_text", "replace_selection"}
+_ON_SCREEN = {"type_text", "replace_selection", "read_page"}
+_AUTHORING = {"type_text", "replace_selection"}         # Plip's words in a field: them showing isn't the page moving
 # Actions whose results the next step reads and judges, rather than just moving on from.
 _READING = {"read_page", "search_files", "look", "find_flights", "list_shortcuts", "run_shortcut", "web_search"}
 # Lines in a step's results that mean it didn't get anywhere.
 _STUCK = (" failed: ", "nothing on screen changed", "only the window title", "you ended with [DONE]")
 
 
-def _region(size: tuple[int, int]) -> tuple[float, float, float, float]:
-    """The screen minus its menu bar, so the clock ticking over isn't a change."""
+def _region(frame: Rect | None, shot: Screenshot, size: tuple[int, int]) -> tuple[float, float, float, float]:
+    """The focused window in an image of ``shot``'s screen (``size`` pixels); the screen minus its menu bar
+    when the window isn't known, so the clock ticking over isn't a change."""
     width, height = size
-    return 0, height * 0.04, width, height
+    screen = shot.screen.frame
+    if frame is None or screen.width <= 0 or screen.height <= 0:
+        return 0, height * 0.04, width, height
+    sx, sy = width / screen.width, height / screen.height
+    left, top = max(frame.x - screen.x, 0) * sx, max(frame.y - screen.y, 0) * sy
+    right = min(frame.x + frame.width - screen.x, screen.width) * sx
+    bottom = min(frame.y + frame.height - screen.y, screen.height) * sy
+    return left, max(top, height * 0.04), right, bottom
 
 
 def _takes_effort(brain: Any) -> bool:

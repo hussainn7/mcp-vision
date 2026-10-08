@@ -19,13 +19,16 @@ works from the screenshot instead of a menu bar posing as the page.
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import deque
 from typing import Any
 
 from mcp_vision.buddy.ax_locator import _ROLE_NAMES, CONTROL_ROLES, _bounds, _copy, _name
 from mcp_vision.buddy.geometry import Rect
-from mcp_vision.buddy.screen_context import SELECTION_LIMIT, Control, ScreenContext, flatten_page
+from mcp_vision.buddy.screen_context import (
+    SECRET, SELECTION_LIMIT, Control, ScreenContext, flatten_page,
+)
 
 _SKIP_ROLES = {"AXStaticText", "AXImage", "AXRow", "AXCell"}     # too noisy for a map
 _CONTAINER_ROLES = {"AXWindow", "AXGroup", "AXToolbar", "AXScrollArea", "AXSplitGroup", "AXTabGroup",
@@ -35,6 +38,9 @@ _CONTAINER_ROLES = {"AXWindow", "AXGroup", "AXToolbar", "AXScrollArea", "AXSplit
 # What content is cut to: a window, and the viewport of a scroll area or web page inside it.
 _CLIP_ROLES = {"AXWindow", "AXScrollArea", "AXWebArea"}
 MIN_VISIBLE = 4.0                     # points: thinner than this on screen isn't something to point at
+_TYPED_ROLES = {"AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"}     # boxes you type in
+_VALUE_KEPT = 400             # characters of what's typed in a box the map keeps (a text area's last ones)
+_VALUE_MAX = 4000             # longer is a whole document or a terminal's scrollback: not copied on every look
 # Chromium browsers that ignore AXManualAccessibility still honor the older VoiceOver switch. By bundle id:
 # names drift (Chrome 154 calls itself "Chrome", not "Google Chrome").
 _CHROMIUM_IDS = {"com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev", "com.google.Chrome.canary",
@@ -81,6 +87,7 @@ class MacAXContext:
         window = _copy(AX, app, "AXFocusedWindow")
         if window is not None:
             context.window = str(_copy(AX, window, "AXTitle") or "")
+            context.window_frame = _bounds(AX, window)
         focused = _copy(AX, system, "AXFocusedUIElement")
         if focused is not None:
             context.focused = _focused(AX, focused)
@@ -233,7 +240,7 @@ class MacAXContext:
                         where = _scrolled(AX, element) if role == "AXScrollArea" else ""
                         x, y = inside.center
                         areas.append(Control(label=str(name)[:40] + where, role="page" if role == "AXWebArea"
-                                             else "scroll area", x=x, y=y))
+                                             else "scroll area", x=x, y=y, w=inside.width, h=inside.height))
                     clip = inside
                 if role == "AXWebArea":
                     web = True
@@ -245,14 +252,20 @@ class MacAXContext:
             if (role in CONTROL_ROLES and role not in _SKIP_ROLES) or role == "AXMenuBarItem":
                 bounds = _bounds(AX, element)
                 shown = bounds if bounds is None or clip is None else bounds.intersect(clip)
-                name = _name(AX, element, role) if shown is not None else ""
+                typed = role in _TYPED_ROLES
+                # An editor's stand-in box (google docs, vs code, math) is thinner than a 4 pt control anyway; a
+                # box goes by its title or placeholder, never by what's typed in it.
+                name = "" if shown is None else _box_name(AX, element, role) if typed else _name(AX, element, role)
                 if shown is not None and shown.width >= MIN_VISIBLE and shown.height >= MIN_VISIBLE and name:
                     x, y = shown.center           # the part on screen, so a half-scrolled control is still hit
                     kind = _ROLE_NAMES.get(role, role.removeprefix("AX").lower())
                     key = (name, kind, round(x), round(y))
                     if key not in seen:           # Chrome lists its tab strip twice
                         seen.add(key)
-                        controls.append(Control(label=name, role=kind, x=x, y=y))
+                        secure = typed and _copy(AX, element, "AXSubrole") == "AXSecureTextField"
+                        controls.append(Control(label=name, role=kind, x=x, y=y, w=shown.width, h=shown.height,
+                                                secure=secure, value=_typed(AX, element, name, role)
+                                                if typed and not secure else ""))
             elif role in {"AXStaticText", "AXHeading"} and len(texts) < self.max_texts:
                 bounds = _bounds(AX, element)
                 value = _copy(AX, element, "AXValue") or _copy(AX, element, "AXTitle")
@@ -260,7 +273,8 @@ class MacAXContext:
                 if shown is not None and shown.width >= MIN_VISIBLE and shown.height >= MIN_VISIBLE \
                         and isinstance(value, str) and value.strip():
                     x, y = shown.center
-                    texts.append(Control(label=value.strip()[:200], role="text", x=x, y=y))
+                    texts.append(Control(label=value.strip()[:200], role="text", x=x, y=y, w=shown.width,
+                                         h=shown.height))
             if role in _CONTAINER_ROLES or role in {"AXCell", "AXRow"} or not role:
                 # A menu bar item's menu is closed unless it's the one open now.
                 if role == "AXMenuBarItem" and not _copy(AX, element, "AXSelected"):
@@ -268,6 +282,100 @@ class MacAXContext:
                 children = _copy(AX, element, "AXChildren") or []
                 queue.extend((child, clip) for child in list(children)[:200])
         return controls, texts, areas, url, web
+
+
+def _box_name(AX: Any, element: Any, role: str) -> str:
+    """A text box goes by its title or placeholder, never by what's typed in it. With neither it still gets a number,
+    but not a text area holding more than a short message: a whole note, a mail or a terminal, where typing by its
+    number is select all, then typing over all of it."""
+    placeholder = _copy(AX, element, "AXPlaceholderValue")
+    name = _name(AX, element, "") or (placeholder.strip() if isinstance(placeholder, str) else "")    # not its value
+    if name or (role == "AXTextArea" and _length(AX, element) > _VALUE_KEPT):
+        return name
+    return _ROLE_NAMES.get(role, role.removeprefix("AX").lower())
+
+
+def _length(AX: Any, element: Any) -> int:
+    """How much a text box holds, counted without copying a whole document when it says (can't tell: a lot)."""
+    size = _copy(AX, element, "AXNumberOfCharacters")
+    if isinstance(size, (int, float)):
+        return int(size)
+    value = _copy(AX, element, "AXValue")
+    return len(value) if isinstance(value, str) else _VALUE_MAX + 1
+
+
+def _typed(AX: Any, element: Any, name: str, role: str) -> str:
+    """What's typed in a text box, so the model sees it landed. Never a card's, code's and the like (by its name;
+    a password box, by its subrole, never gets here). A text area keeps its end, where typing goes. A whole
+    document or a terminal's scrollback isn't copied at all."""
+    if SECRET.search(name):
+        return ""
+    size = _copy(AX, element, "AXNumberOfCharacters")
+    if isinstance(size, (int, float)) and size > _VALUE_MAX:
+        return ""
+    value = _copy(AX, element, "AXValue")
+    if not isinstance(value, str) or len(value) > _VALUE_MAX:
+        return ""
+    value = value.strip()
+    return value[-_VALUE_KEPT:] if role == "AXTextArea" else value[:_VALUE_KEPT]
+
+
+_MATCH_ROLES = {"AXStaticText", "AXHeading", "AXLink", "AXButton", "AXTab", "AXMenuItem", "AXCheckBox",
+                "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXCell", "AXDisclosureTriangle"}
+_TEXT_BOXES = {"AXTextField", "AXTextArea", "AXSecureTextField", "AXSearchField", "AXComboBox"}
+
+
+def find_text(AX: Any, window: Any, text: str, *, node_cap: int = 6000, time_budget: float = 1.0) -> Any:
+    """The element showing ``text`` anywhere on the window's page, scrolled-out parts too (depth first, like
+    ``read``). An exact label beats one that starts with it, a whole word, any substring; never what's typed in
+    a field."""
+    needle = " ".join(text.lower().split())
+    if not needle or window is None:
+        return None
+    word = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)")
+    deadline = time.monotonic() + time_budget
+    stack, visited, best, found = [_find_role(AX, window, "AXWebArea") or window], 0, 4, None
+    while stack and visited < node_cap and time.monotonic() < deadline:
+        element = stack.pop()
+        visited += 1
+        role = str(_copy(AX, element, "AXRole") or "")
+        if role in _TEXT_BOXES:
+            continue
+        if role in _MATCH_ROLES:
+            for attribute in ("AXValue", "AXTitle", "AXDescription"):
+                value = _copy(AX, element, attribute)
+                label = " ".join(value.lower().split()) if isinstance(value, str) else ""
+                if needle in label:
+                    rank = 0 if label == needle else 1 if label.startswith(needle) else 2 if word.search(label) else 3
+                    if rank < best:
+                        best, found = rank, element
+                    break
+            if best == 0:
+                return found
+        stack.extend(reversed(list(_copy(AX, element, "AXChildren") or [])[:400]))
+    return found
+
+
+def visible_spot(AX: Any, element: Any, window: Rect | None, depth: int = 40
+                 ) -> tuple[tuple[float, float] | None, Rect | None]:
+    """Where to wheel for an off-screen element: the visible part of its nearest ancestor that shows in the
+    window, i.e. inside the panel that scrolls it, even when that panel doesn't say it's a scroll area (chrome's
+    overflow divs). (centre, visible rect), or (None, None)."""
+    boxes, node = [], _copy(AX, element, "AXParent")
+    while node is not None and len(boxes) < depth and _copy(AX, node, "AXRole") not in {"AXWindow", "AXApplication"}:
+        boxes.append(_bounds(AX, node))
+        node = _copy(AX, node, "AXParent")
+    real = [box if box is not None and box.width > 0 and box.height > 0 else None for box in boxes]
+    for index, box in enumerate(real):
+        if box is None:
+            continue
+        view = box if window is None else box.intersect(window)
+        for outer in real[index + 1:]:
+            if outer is not None and view is not None:
+                view = view.intersect(outer)          # clipped by every panel around it
+        if view is not None and view.width >= 40 and view.height >= 40:
+            return view.center, view
+    return None, None
 
 
 _TYPING_ROLES = {"AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AXSecureTextField"}
