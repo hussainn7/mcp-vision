@@ -20,6 +20,11 @@ MAX_TEXTS = 40
 TEXT_BUDGET = 1400            # characters of visible text per look
 _DIGITS = re.compile(r"\d+")
 SELECTION_LIMIT = 3000        # characters of selected text the model sees (about 750 tokens at most)
+HIDDEN_INPUT = 6              # px: a text box thinner than this is an editor's stand-in (google docs, vs code)
+# Boxes whose contents never go to the model (the screenshot may show them; the map and results don't).
+SECRET = re.compile(r"pass(word|code|phrase|port)|\bpin\b|\bcard\b|cvv|cvc|security code|\bssn\b|social security|"
+                    r"secret|api key|token|one.time code|verification code|\b2fa\b|\botp\b|account (number|no\b)|"
+                    r"routing|\biban\b|sort code|\btax ?id|taxpayer|national id|licen[cs]e number", re.IGNORECASE)
 
 
 @dataclass(frozen=True)

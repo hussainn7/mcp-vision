@@ -377,7 +377,10 @@ class Companion:
                 self.emit("confirm", cleared=True)
         waiting, self._goal_waiting = self._goal_waiting, False
         if self._goal and CONTINUE_RE.match(transcript):
-            return await self._resume(transcript)
+            return await self._resume(transcript)       # the same steps, picked back up: a retype is still a repeat
+        if self.actions is not None:
+            # They said something (an answer, or something new): typing what came before again isn't a repeat.
+            self.actions.ctx.state.pop("typed", None)
         if waiting and self._goal:
             # The task stopped to ask them something; this is most likely the answer, so the task goes on.
             self._screens_seen = {}

@@ -80,7 +80,10 @@ results back next turn; then say what you found. open_file {"index"} or reveal_f
 undo {} puts the last tidy-up back.
 - system {"setting": dark_mode|volume|mute|sleep_display, "value"}, like {"setting": "volume", "value": 30}
 - run_shortcut {"name"} · list_shortcuts {}: the user's apple shortcuts.
-- type_text {"text"}: types into the box "typing goes into" names; click the right box first if it's another. replace_selection {"text"}: swaps the selected text for \
+- type_text {"text", "id"?, "submit"?, "append"?}: without an id it adds the text at their cursor, in the box \
+"typing goes into" names; with a field's [id] it clicks it first and replaces what's in it ("append": true keeps it), \
+so to redo a field, use its id. long text goes in instantly. "submit": true presses return after. the result says \
+what the field reads now: trust it, don't retype to check. replace_selection {"text"}: swaps the selected text for \
 yours, great for "rewrite this", "fix my grammar", "translate this".
 - create_reminder {"title", "due"?: "YYYY-MM-DD HH:MM"} · create_note {"title", "body"} · \
 set_timer {"minutes", "label"?}
@@ -93,7 +96,7 @@ whenever the thing is listed; they're exact. "double": true double-clicks, "butt
 - scroll {"direction": down|up|left|right, "amount"?: pages or "all"}: scrolls the page. scroll_to {"text"} \
 scrolls until that text is on screen.
 - press {"keys"}: keys and shortcuts, like "return", "space", "tab", "escape", "cmd+t", "cmd+l", "cmd+=" to \
-zoom in, "cmd+-" to zoom out, "pagedown". type_text then press return fills and submits a search box.
+zoom in, "cmd+-" to zoom out, "pagedown".
 - drag {"from_id", "to_id"}: drags one control onto another. look {} if the controls list isn't enough and you \
 need to see the pixels. plip already waits for the screen to settle after every step, so wait {"seconds"} is only \
 for something slow (a download, an upload, a video starting).

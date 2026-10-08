@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from mcp_vision.buddy.geometry import Rect
+
 APP_DIRS = ("/Applications", "/Applications/Utilities", "/System/Applications",
             "/System/Applications/Utilities", "~/Applications", "/System/Library/CoreServices")
 SEARCH_ROOTS = ("Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music")
@@ -261,24 +263,80 @@ class MacHost(PortableHost):
 
     # keyboard / accessibility -------------------------------------------------------------
     def type_text(self, text: str) -> None:
+        """Type ``text`` where the cursor is.
+
+        Long or multi-line text is pasted: instant, exact, and no app drops or reorders it. Short text is
+        typed one character per key event (browsers and web editors lose characters from multi-character
+        events), with real Tab keys and no modifier flags, so a held ⌃⌥ can't turn letters into shortcuts.
+        """
+        if len(text) > PASTE_OVER or "\n" in text:
+            self.paste(text)
+            return
         import Quartz
 
-        for start in range(0, len(text), 16):
-            chunk = text[start:start + 16]
-            for down in (True, False):
-                event = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
-                Quartz.CGEventKeyboardSetUnicodeString(event, len(chunk), chunk)
-                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
-            time.sleep(0.012)
+        source = _source(Quartz)
+        for char in text:
+            if char == "\t":
+                self._key(48)
+            else:
+                code, shift = _US_KEYS.get(char, (0, False))
+                for down in (True, False):
+                    event = Quartz.CGEventCreateKeyboardEvent(source, code, down)
+                    Quartz.CGEventSetFlags(event, Quartz.kCGEventFlagMaskShift if shift else 0)
+                    Quartz.CGEventKeyboardSetUnicodeString(event, len(char), char)
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            time.sleep(0.004)
 
     def _key(self, keycode: int, flags: int = 0) -> None:
         import Quartz
 
+        source = _source(Quartz)
         for down in (True, False):
-            event = Quartz.CGEventCreateKeyboardEvent(None, keycode, down)
-            if flags:
-                Quartz.CGEventSetFlags(event, flags)
+            event = Quartz.CGEventCreateKeyboardEvent(source, keycode, down)
+            Quartz.CGEventSetFlags(event, flags)            # exactly these modifiers, none held by the user
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+
+    def focused_value(self) -> str | None:
+        """The focused text field's contents, to check typing landed (None: can't tell)."""
+        try:
+            import ApplicationServices as AX
+
+            system = AX.AXUIElementCreateSystemWide()
+            error, focused = AX.AXUIElementCopyAttributeValue(system, AX.kAXFocusedUIElementAttribute, None)
+            if error != 0 or focused is None:
+                return None
+            error, value = AX.AXUIElementCopyAttributeValue(focused, AX.kAXValueAttribute, None)
+            return str(value) if error == 0 and isinstance(value, str) else None
+        except Exception:
+            return None
+
+    def focused_frame(self) -> Rect | None:
+        """Where the focused element is, global points (None: can't tell). Tells a click's field from the last one."""
+        try:
+            import ApplicationServices as AX
+
+            from mcp_vision.buddy.ax_locator import _bounds, _copy
+
+            focused = _copy(AX, AX.AXUIElementCreateSystemWide(), "AXFocusedUIElement")
+            return _bounds(AX, focused) if focused is not None else None
+        except Exception:
+            return None
+
+    def focused_secure(self) -> bool:
+        """A password box, or one labeled like a card number or a code? Then what it reads stays private."""
+        try:
+            import ApplicationServices as AX
+
+            from mcp_vision.buddy.ax_locator import _copy, _name
+            from mcp_vision.buddy.screen_context import SECRET
+
+            focused = _copy(AX, AX.AXUIElementCreateSystemWide(), "AXFocusedUIElement")
+            if focused is None:
+                return False
+            return _copy(AX, focused, "AXSubrole") == "AXSecureTextField" \
+                or bool(SECRET.search(_name(AX, focused, "AXTextField")))
+        except Exception:
+            return True                                  # can't tell: keep it to itself
 
     def replace_selection(self, text: str) -> None:
         """Set the focused field's selected text via Accessibility; paste as a fallback."""
@@ -292,18 +350,31 @@ class MacHost(PortableHost):
         self.paste(text)
 
     def paste(self, text: str) -> None:
+        """Paste ``text`` with ⌘V, then put back whatever was on the clipboard (images and rich text too)."""
         import AppKit
         import Quartz
 
         board = AppKit.NSPasteboard.generalPasteboard()
-        saved = board.stringForType_(AppKit.NSPasteboardTypeString)
+        saved = []
+        for item in board.pasteboardItems() or []:
+            copy = {str(kind): item.dataForType_(kind) for kind in item.types() or []}
+            saved.append({kind: data for kind, data in copy.items() if data is not None})
         board.clearContents()
-        board.setString_forType_(text, AppKit.NSPasteboardTypeString)
+        item = AppKit.NSPasteboardItem.alloc().init()
+        item.setString_forType_(text, AppKit.NSPasteboardTypeString)
+        item.setString_forType_("", "org.nspasteboard.TransientType")    # clipboard managers: don't keep this
+        board.writeObjects_([item])
         self._key(9, Quartz.kCGEventFlagMaskCommand)                  # ⌘V
-        time.sleep(0.35)
-        if saved is not None:
-            board.clearContents()
-            board.setString_forType_(saved, AppKit.NSPasteboardTypeString)
+        time.sleep(0.3)                                                # the app reads the clipboard on its own time
+        board.clearContents()
+        if saved:
+            restored = []
+            for kinds in saved:
+                item = AppKit.NSPasteboardItem.alloc().init()
+                for kind, data in kinds.items():
+                    item.setData_forType_(data, kind)
+                restored.append(item)
+            board.writeObjects_(restored)
 
     def click(self, x: float, y: float, button: str = "left", count: int = 1) -> None:
         import Quartz
@@ -372,6 +443,39 @@ class MacHost(PortableHost):
         time.sleep(0.04)
         self.type_text(value)
         return True
+
+
+PASTE_OVER = 40               # characters; longer text is pasted instead of typed
+
+
+def poll(check, timeout: float, interval: float = 0.15):
+    """``check()`` until it returns something truthy (returned), or None after ``timeout`` seconds."""
+    deadline = time.monotonic() + timeout
+    while True:
+        value = check()
+        if value:
+            return value
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(interval)
+
+
+def _source(Quartz):
+    """A private event source: keys we send don't pick up modifiers the user is holding."""
+    try:
+        return Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
+    except Exception:
+        return None
+
+
+# US virtual key codes, so apps that look at the key (not just the character) see a real one.
+# The character itself always travels in the event too, so other layouts still type correctly.
+_US_KEYS: dict[str, tuple[int, bool]] = {}
+for _chars, _shift in (("asdfhgzxcv\x00bqweryt123465=97-80]ou[ip\x00lj'k;\\,/nm.\x00 `", False),
+                       ("ASDFHGZXCV\x00BQWERYT!@#$^%+(&_*)}OU{IP\x00LJ\"K:|<?NM>\x00 ~", True)):
+    for _code, _char in enumerate(_chars):
+        if _char != "\x00" and _char not in _US_KEYS:
+            _US_KEYS[_char] = (_code, _shift)
 
 
 def default_host() -> PortableHost:

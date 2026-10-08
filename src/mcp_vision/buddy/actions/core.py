@@ -11,8 +11,9 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from mcp_vision.buddy.actions.base import ActionContext, ActionError, ActionResult, ActionSpec, Preview
+from mcp_vision.buddy.actions.base import ActionContext, ActionError, ActionResult, ActionSpec, Preview, _short
 from mcp_vision.buddy.actions.host import applescript_string
+from mcp_vision.buddy.screen_context import HIDDEN_INPUT, SECRET
 
 APP_ALIASES = {
     "chrome": "google chrome", "vscode": "visual studio code", "vs code": "visual studio code",
@@ -314,10 +315,210 @@ def list_shortcuts(ctx: ActionContext, args: dict) -> ActionResult:
     return ActionResult(report="the user's shortcuts: " + ", ".join(names[:60]), detail=f"{len(names)} shortcuts")
 
 
-def type_text(ctx: ActionContext, args: dict) -> ActionResult:
-    text = _need(args, "text", "what to type")
+VERIFY = 0.6                  # s a field gets to show typed text: chrome, electron and busy pages show it a beat late
+POLL = 0.025                  # s between reads while waiting on it
+POLL_BIG = 0.1                # ...in a field this long or longer: every read copies all of it (a terminal, a doc)
+BIG = 20_000                  # characters
+QUIET = 0.15                  # s a change that isn't the text yet has to hold still to count (else it's half typed)
+FIELD_TALL = 200              # px: anything taller that has focus and holds the click may be the page, not a field
+
+
+def _focus_field(ctx: ActionContext, args: dict) -> str:
+    """Click the field the args name (id, field label or x/y) and wait for focus to really get there."""
+    if not any(key in args for key in ("id", "x", "field")):
+        return ""
+    from mcp_vision.buddy.actions import control
+    from mcp_vision.buddy.actions.host import poll
+
+    target = dict(args)
+    if "field" in target:
+        target["text"] = target.pop("field")
+    else:
+        target.pop("text", None)
+    x, y, into = control.resolve(ctx, target)
+    control._glide(ctx, x, y, into)
+    was = _field_frame(ctx)
+    ctx.host.click(x, y)
+    if getattr(ctx.host, "focused_frame", None) is None:
+        time.sleep(0.12)                            # can't tell where focus is: give it a beat
+        return into
+    # Web fields take focus a beat after the click. till then Accessibility still says what had it before (the
+    # field just typed into), and checking the typing against that one is how the next field got it twice.
+    clicked = time.monotonic()
+    poll(lambda: _arrived(_field_frame(ctx), was, x, y, time.monotonic() - clicked), 0.5, POLL)
+    return into
+
+
+def _field_value(ctx: ActionContext) -> str | None:
+    reader = getattr(ctx.host, "focused_value", None)
+    try:
+        return reader() if reader is not None else None
+    except Exception:
+        return None
+
+
+def _field_frame(ctx: ActionContext):
+    reader = getattr(ctx.host, "focused_frame", None)
+    try:
+        return reader() if reader is not None else None
+    except Exception:
+        return None
+
+
+def _hidden(frame) -> bool:
+    """Google Docs, VS Code, math boxes: keys go to a tiny stand-in box whose value never shows what's typed."""
+    return frame is not None and (frame.width < HIDDEN_INPUT or frame.height < HIDDEN_INPUT)
+
+
+def _arrived(frame, was, x: float, y: float, waited: float) -> bool:
+    """Focus left what had it before the click, or that already was the field clicked (not a stand-in, not the page)."""
+    if frame is None:
+        return waited >= 0.12                       # can't tell where focus is: a beat is all it gets
+    if frame != was:
+        return True                                 # moved, even if somewhere else (a button that opens a search box)
+    inside = frame.x - 2 <= x <= frame.x + frame.width + 2 and frame.y - 2 <= y <= frame.y + frame.height + 2
+    return inside and not _hidden(frame) and frame.height <= FIELD_TALL
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+_CURLY = str.maketrans("\u2018\u2019\u201c\u201d", "''\"\"")
+
+
+def _plain(text: str) -> str:
+    """Exactly as typed, give or take what apps swap in for it: a no-break space, curly quotes."""
+    return text.replace("\u00a0", " ").translate(_CURLY)
+
+
+def _shows(value: str | None, text: str, replace: bool, had: int) -> bool:
+    """Does the field read what typing should have made it? Replaced: exactly the text. Added: one more of it than
+    the ``had`` it held before."""
+    if value is None:
+        return False
+    if replace:
+        return _flat(value) == _flat(text)
+    return _flat(value).count(_flat(text)) > had
+
+
+def _settled(ctx: ActionContext, before: str, text: str, replace: bool) -> str | None:
+    """What the field reads once it shows the text (or changed and held still a while), waiting up to VERIFY s."""
+    deadline = time.monotonic() + VERIFY
+    had = 0 if replace else _flat(before).count(_flat(text))        # once, not on every read
+    pause = POLL if len(before) < BIG else POLL_BIG
+    value, since = _field_value(ctx), time.monotonic()
+    while not _shows(value, text, replace, had) and time.monotonic() < deadline:
+        if value is not None and value != before and time.monotonic() - since >= QUIET:
+            break                                   # changed and stayed that way: a mask, autocorrect, a max length
+        time.sleep(pause)
+        last, value = value, _field_value(ctx)
+        since = since if value == last else time.monotonic()      # a busy page shows 'act' first, then 'active'
+    return value
+
+
+def _type(ctx: ActionContext, text: str, replace: bool, before: str | None, into: str) -> str | None:
+    """Type it, then wait for the field to show it; paste only if it really never took. Returns what it reads."""
+    if replace:
+        ctx.host.press("cmd+a")                     # a field you name gets replaced, not added to
+        time.sleep(0.03)
     ctx.host.type_text(text)
-    return ActionResult(detail=f"{len(text)} characters")
+    if before is None:
+        return None                                 # can't read this field: nothing to check
+    after = _settled(ctx, before, text, replace)
+    if after != before:
+        return after
+    if _hidden(_field_frame(ctx)):
+        return None                                 # it took the keys, it just can't show them: never paste on top
+    # Nothing landed (an app that ignores synthetic keys): paste it instead. select all again first, so keys
+    # that land late after all get replaced, not doubled.
+    if replace:
+        ctx.host.press("cmd+a")
+        time.sleep(0.03)
+    ctx.host.paste(text)
+    after = _settled(ctx, before, text, replace)
+    if after == before:
+        raise ActionError(f"I typed{' into ' + repr(into) if into else ''}, but the text didn't show up. "
+                          "Click into the field and I'll try again.")
+    return after
+
+
+def _private(ctx: ActionContext, into: str, value: str) -> bool:
+    """A password box, or one labeled like a card number or a code: what it reads never goes to the model."""
+    if SECRET.search(into) or (value.strip() and set(value.strip()) <= {"•", "●"}):
+        return True
+    reader = getattr(ctx.host, "focused_secure", None)
+    try:
+        return bool(reader()) if reader is not None else False
+    except Exception:
+        return True
+
+
+def _reads(before: str, after: str, replace: bool, limit: int = 160) -> str:
+    """What the field reads now, for the model. Replaced: from the start. Added to: the stretch that ends with what
+    was just typed, so a long note, a mail reply or a terminal shows the new text, not its top."""
+    if replace or len(_flat(after)) <= limit:
+        return _short(after, limit)
+    same = _same_start(before, after)
+    kept = _same_start(before[same:][::-1], after[same:][::-1])                    # what's still after the cursor
+    upto, rest = _flat(after[: len(after) - kept]), _flat(after[len(after) - kept:])
+    shown = upto if len(upto) < limit else "…" + upto[1 - limit:]
+    return shown + (" …" if rest else "")
+
+
+def _same_start(a: str, b: str) -> int:
+    """How many characters two strings start with in common. Halving, since a terminal's scrollback is megabytes."""
+    low, high = 0, min(len(a), len(b))
+    while low < high:
+        mid = (low + high + 1) // 2
+        low, high = (mid, high) if a[:mid] == b[:mid] else (low, mid - 1)
+    return low
+
+
+def _again(ctx: ActionContext, before: str | None, text: str) -> bool:
+    """Typing at the cursor what it already typed this request, where the field already ends with exactly that.
+
+    Not flattened: 'TODO' after 'TODO' + return, or ' ha ha' after 'ha ha', is typing it again on purpose.
+    """
+    return before is not None and len(text.strip()) >= 3 and text in ctx.state.get("typed", ()) \
+        and _plain(before).endswith(_plain(text))
+
+
+def type_text(ctx: ActionContext, args: dict) -> ActionResult:
+    _need(args, "text", "what to type")
+    text = str(args["text"])                        # exactly as given: a leading space matters when appending
+    into = _focus_field(ctx, args)
+    hidden = _hidden(_field_frame(ctx))
+    # A field you name gets replaced. Not an editor's stand-in box though: select all there is the whole document.
+    replace = bool(into) and not args.get("append") and not hidden
+    before = None if hidden else _field_value(ctx)
+    there = ""
+    if replace and before is not None and _flat(before) == _flat(text):
+        shown = "that" if _private(ctx, into, before) else repr(_short(text))
+        there = f"{into!r} already reads {shown}"                   # typing it again could only double it
+    elif not into and _again(ctx, before, text):
+        shown = "that" if _private(ctx, into, before) else repr(_short(text))
+        there = f"{shown} is already at the end of the field"
+    if there:
+        said = there + ", so it wasn't typed again"
+    else:
+        after = _type(ctx, text, replace, before, into)
+        said = f"typed into {into!r}" if into else "typed"
+        if hidden:
+            kept = " at its cursor (an editor: what was there stays)" if into and not args.get("append") else ""
+            said += kept + ", but this field can't be read back: look before typing it again"
+        elif after is not None and not _private(ctx, into, after):
+            said += f"; the field now reads {_reads(before or '', after, replace)!r}"     # so it trusts that, no retyping
+        elif not into:
+            said = ""
+    ctx.state["typed"] = [*ctx.state.get("typed", [])[-19:], text]
+    if args.get("submit"):
+        ctx.host.press("return")                    # only after the check: the field holds it, once
+    # With a field named, the model hears it; typing at the cursor stays a note (no extra turn just for that).
+    return ActionResult(detail="Already there" if there else f"{len(text)} characters",
+                        report=said if into else "", note="" if into else said,
+                        look_after=0.25 if into or args.get("submit") else None,
+                        settle=4.0 if args.get("submit") else None)
 
 
 def replace_selection(ctx: ActionContext, args: dict) -> ActionResult:
@@ -443,7 +644,7 @@ SPECS = (
                args='{"setting": dark_mode|volume|mute|sleep_display, "value"}'),
     ActionSpec("run_shortcut", "system", "Running {name}", run_shortcut, args='{"name"}'),
     ActionSpec("list_shortcuts", "system", "Checking your shortcuts", list_shortcuts, args="{}"),
-    ActionSpec("type_text", "writing", "Typing it out", type_text, args='{"text"}'),
+    ActionSpec("type_text", "writing", "Typing it out", type_text, args='{"text", "id"?, "submit"?, "append"?}'),
     ActionSpec("replace_selection", "writing", "Rewriting your selection", replace_selection, args='{"text"}'),
     ActionSpec("create_reminder", "planning", "Reminder: {title}", create_reminder, args='{"title", "due"?}'),
     ActionSpec("create_note", "planning", "Note: {title}", create_note, args='{"title", "body"}'),
