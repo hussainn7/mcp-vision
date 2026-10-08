@@ -77,7 +77,7 @@ results back next turn; then say what you found. open_file {"index"} or reveal_f
 undo {} puts the last tidy-up back.
 - system {"setting": dark_mode|volume|mute|sleep_display, "value"}, like {"setting": "volume", "value": 30}
 - run_shortcut {"name"} · list_shortcuts {}: the user's apple shortcuts.
-- type_text {"text"}: types at their cursor. replace_selection {"text"}: swaps the selected text for \
+- type_text {"text"}: types into the box "typing goes into" names; click the right box first if it's another. replace_selection {"text"}: swaps the selected text for \
 yours, great for "rewrite this", "fix my grammar", "translate this".
 - create_reminder {"title", "due"?: "YYYY-MM-DD HH:MM"} · create_note {"title", "body"} · \
 set_timer {"minutes", "label"?}
