@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import json
 import re
 import time
@@ -429,7 +430,9 @@ class Companion:
                 unchanged = settled == seen.signature()
                 if unchanged and (pixels := await self._pixels_moved()):
                     # The map can't see what changed (a web page it isn't reading, a canvas): the pixels can.
-                    lines.append("note: the screen changed, but not in the controls list")
+                    lines.append("note: the screen changed, but not in the controls list, so here's a screenshot")
+                    if self.actions is not None:
+                        self.actions.ctx.state["force_image"] = True
                 elif unchanged:
                     lines.append("note: nothing on screen changed after that step")         # costs nothing to notice
                 elif after is not None and after.content_signature() == seen.content_signature() \
@@ -460,7 +463,7 @@ class Companion:
             brief = f"(step {followups + 1}{toward}; results, not from the user) " + \
                 "; ".join(_clip(line, 600) for line in lines)
             followup = await self._turn(prompt, guide=True, screen=agent or bool(result.look_after), route=route,
-                                        record_as=_clip(brief, 1500))
+                                        record_as=_clip(brief, 1500), lean=agent)
             turns += 1
             followups += 1
             goal = self._goal or goal
@@ -629,6 +632,39 @@ class Companion:
         return result
 
     # -- timers and other late announcements (called from worker threads) ------------------
+    def _read(self) -> list[str]:
+        """The whole frontmost page's text (worker thread). No screenshot, no tokens until it's reported."""
+        reader = getattr(self.context, "read", None)
+        if reader is None:
+            return []
+        try:
+            return list(reader() or [])
+        except Exception:
+            return []
+
+    def _images_for(self, shots: list[Screenshot], context: ScreenContext | None, *, guide: bool,
+                    lean: bool) -> tuple[list[Screenshot], str]:
+        """Which screenshots to actually send, and a note for the model when Plip skips them.
+
+        The numbered map already tells the model where everything is, so on a task's steps a screenshot
+        only goes out when the map is thin, the model asked to look, or the screen changed in a way the
+        map can't show. A screenshot is ~1,400 tokens; most steps of a task don't need one.
+        """
+        if not (self.vision and shots):
+            return [], ""
+        force = bool(self.actions is not None and self.actions.ctx.state.pop("force_image", False))
+        digest = hashlib.sha1(b"".join(shot.data for shot in shots)).hexdigest()
+        previous, self._last_image = getattr(self, "_last_image", None), digest
+        if force:
+            return shots, ""
+        if lean and guide and previous == digest:
+            return [], "(screen unchanged since your last look, so no new screenshot.)"
+        if lean and context is not None and context.rich:
+            self._last_image = previous           # nothing was sent; keep comparing with what the model saw
+            return [], ("(no screenshot this step to save tokens; the controls and text are current. "
+                        "[DO:look {}] shows pixels.)")
+        return shots, ""
+
     def _observe(self):
         """The screen map right now (any thread). No screenshot, no tokens."""
         if self.context is None:
@@ -700,7 +736,7 @@ class Companion:
         return "now: " + _dt.datetime.now().strftime("%A, %B %d %Y, %I:%M %p").replace(" 0", " ")
 
     async def _turn(self, transcript: str, *, guide: bool = False, screen: bool | None = None,
-                    route: Route | None = None, record_as: str | None = None) -> TurnResult:
+                    route: Route | None = None, record_as: str | None = None, lean: bool = False) -> TurnResult:
         transcript = " ".join(transcript.split())
         result = TurnResult(transcript=transcript)
         started = self.clock()
@@ -727,11 +763,13 @@ class Companion:
                 if self.actions is not None:
                     self.actions.ctx.state.pop("scrolled", None)    # a fresh look: the numbers are current again
             history = self.conversation.history()
+            images, skipped = self._images_for(shots, context, guide=guide, lean=lean)
             extra, self._extra_note = self._extra_note, ""
-            notes = self._notes() + self._circling(context, guide) + (f"\n{extra}" if extra else "")
-            text = user_turn_text(transcript, shots, context, vision=self.vision, notes=notes)
+            notes = self._notes() + self._circling(context, guide) + (f"\n{skipped}" if skipped else "") + \
+                (f"\n{extra}" if extra else "")
+            text = user_turn_text(transcript, shots, context, vision=bool(images), notes=notes)
             system = self.system_prompt
-            turn = Turn("user", text, images=tuple(shots) if self.vision else ())
+            turn = Turn("user", text, images=tuple(images))
             reply = ReplyStream()
             badge = brain_badge(self.brain)
             self.emit("engine", **badge)
@@ -915,6 +953,7 @@ class Companion:
         self.actions.ctx.announce = self.announce
         self.actions.ctx.screen = (getattr(self, "_shots", []), getattr(self, "_context", None))
         self.actions.ctx.observe = self._observe
+        self.actions.ctx.read = self._read
         self.actions.ctx.animate = lambda x, y, label: self.pointer.point(x, y, label)
         self._action_seq = getattr(self, "_action_seq", 0) + 1
         step_id = f"action-{self._action_seq}"

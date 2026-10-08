@@ -54,6 +54,8 @@ class ActionContext:
     schedule: Callable[[float, Callable[[], None]], Any] = lambda delay, fn: None
     screen: Any = None                                         # last screenshots/context, for forms
     observe: Callable[[], Any] = lambda: None                  # a fresh screen map now (no screenshot, no tokens)
+    # The whole frontmost page's text as lines, scrolled-out parts included (worker thread, no tokens).
+    read: Callable[[], list[str]] = lambda: []
     animate: Callable[[float, float, str], Any] = lambda x, y, label: None   # Plip flies to where it acts
 
 

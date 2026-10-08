@@ -121,9 +121,9 @@ def test_screen_map_uses_screenshot_pixels_and_text_only_brains_get_no_images():
                                       Control("File", "menu", 189, 12)])
     text = context.describe([shot])
     assert 'frontmost app: Keynote (window "Q4.key")' in text and 'selected text: "hello world"' in text
-    assert "File | menu | 160,10" in text and "Off screen" not in text and text.count("File |") == 1
+    assert "menu bar (click by name): File 160,10" in text and "Off screen" not in text and text.count("File") == 1
     turn = user_turn_text("where is file", [shot], context)
-    assert turn.endswith("the user said: where is file") and "controls on screen" in turn
+    assert turn.endswith("the user said: where is file") and "menu bar (click by name)" in turn
     assert "(image dimensions" in user_turn_text("q", [shot], context, vision=False)
     assert "can't see the screenshot" in system_prompt(vision=False)
 
@@ -135,7 +135,7 @@ def test_screen_map_uses_screenshot_pixels_and_text_only_brains_get_no_images():
 
     asyncio.run(Companion(brain=brain, capturer=capturer(), context=FixedContext()).respond("where is file"))
     system, turns = brain.seen[0]
-    assert turns[-1].images == () and "File | menu" in turns[-1].text and "can't see" in system
+    assert turns[-1].images == () and "File 160,10" in turns[-1].text and "can't see" in system
 
 
 def test_watcher_needs_a_change_that_then_settles():

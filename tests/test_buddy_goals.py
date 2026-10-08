@@ -106,3 +106,49 @@ def test_a_clock_on_the_page_doesnt_stop_it_settling():
     one = ScreenContext(app="Mail", controls=[Control("Inbox", "link", 40, 80), Control("2 min ago", "text", 300, 80)])
     later = ScreenContext(app="Mail", controls=[Control("Inbox", "link", 41, 80), Control("3 min ago", "text", 300, 80)])
     assert one.signature() != later.signature() and one.settle_signature() == later.settle_signature()
+
+
+def test_the_map_carries_the_page_its_text_and_where_it_scrolls():
+    from mcp_vision.buddy.geometry import Rect, ScreenInfo, Screenshot
+
+    shot = Screenshot(screen=ScreenInfo(1, Rect(0, 0, 1512, 982), is_cursor_screen=True), data=b"", width=1280,
+                      height=831)
+    context = ScreenContext(app="Chrome", window="Deals", url="https://shop.example/deals",
+                            controls=[Control("Add to cart", "button", 300, 200), Control("File", "menu", 115, 16)],
+                            texts=[Control("Today's deals", "text", 300, 120), Control("Add to cart", "text", 300, 200),
+                                   Control("Soundcore speaker $29", "text", 300, 160)],
+                            scroll_areas=[Control("page (scrolled 40% down)", "page", 700, 500)])
+    text = context.describe([shot])
+    assert "page: https://shop.example/deals" in text and "[1] Add to cart | button | 254,169" in text
+    assert "menu bar (click by name): File 97,14" in text and "[2]" not in text            # menus get no ids
+    assert "visible text: Today's deals · Soundcore speaker $29" in text                   # not "Add to cart" twice
+    assert "note: the page is scrolled down" in text and "  screen1:" not in text          # one screen: no headings
+    assert context.find("soundcore") is context.texts[2] and context.find("add to cart").role == "button"
+
+
+def test_read_page_reads_the_whole_page_or_just_what_its_after():
+    host = Spotify()
+    engine = ActionEngine(ActionContext(host=host))
+    engine.ctx.read = lambda: ["Deals", "1. Apple AirTag $24", "2. Soundcore speaker $29", "Shipping: free over $35"]
+    whole = asyncio.run(engine.handle("read_page", {})).result.report
+    assert whole.startswith("page text:\nDeals\n1. Apple AirTag $24")
+    found = asyncio.run(engine.handle("read_page", {"find": "soundcore"})).result.report
+    assert "Soundcore speaker $29" in found and "Shipping" in found and "page text about 'soundcore'" in found
+
+
+def test_task_steps_skip_the_screenshot_when_the_map_has_it_and_look_brings_it_back():
+    class Shop(Spotify):
+        def snapshot(self):                     # a rich page: plenty of controls
+            return ScreenContext(app="Safari", controls=[Control(f"item {n}", "link", 100, 40 * n) for n in range(1, 10)])
+
+    host = Shop()
+    host.open_now = True
+    companion, brain, _ = buddy(host,
+                                '[GOAL: add it] [DO:click {"id": 1}] adding it.',
+                                'let me see it. [DO:look {}]',
+                                'it is in. [DONE]')
+    asyncio.run(companion.respond("add item one to my cart"))
+    first, step, looked = (turns[-1] for turns in brain.calls)
+    assert first.images                                                    # the request itself always sees it
+    assert not step.images and "screen unchanged since your last look" in step.text   # ~1,400 tokens saved
+    assert looked.images                                                   # asked to look: it gets the pixels

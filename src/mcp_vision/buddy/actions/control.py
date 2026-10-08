@@ -254,6 +254,21 @@ def drag(ctx: ActionContext, args: dict) -> ActionResult:
     return ActionResult(report=f"dragged {label1!r} onto {label2!r}", look_after=0.6, detail="Dragged it")
 
 
+def wait(ctx: ActionContext, args: dict) -> ActionResult:
+    try:
+        seconds = max(0.5, min(float(args.get("seconds") or 2), 15.0))
+    except (TypeError, ValueError):
+        seconds = 2.0
+    # Up to that long, and over as soon as the screen holds still (a beat at least), not a blind sleep.
+    return ActionResult(report=f"waited for it to settle (up to {seconds:g}s)", look_after=min(seconds, 1.0),
+                        settle=seconds, detail="Waiting")
+
+
+def look(ctx: ActionContext, args: dict) -> ActionResult:
+    ctx.state["force_image"] = True
+    return ActionResult(report="here's a full screenshot", look_after=0.1, detail="Taking a closer look")
+
+
 SPECS = (
     ActionSpec("click", "control", "Clicking {text}", click, preview=preview_click,
                args='{"id"} or {"text"} or {"x","y"}, "double"?, "button"?: right'),
@@ -263,4 +278,6 @@ SPECS = (
     ActionSpec("press", "control", "Pressing {keys}", press, preview=preview_press,
                args='{"keys": "cmd+t" | "return" | "space" | "cmd+=" | "pagedown", "times"?}'),
     ActionSpec("drag", "control", "Dragging", drag, args='{"from_id", "to_id"} or from_x/from_y, to_x/to_y'),
+    ActionSpec("wait", "control", "Waiting a moment", wait, args='{"seconds"}'),
+    ActionSpec("look", "control", "Taking a closer look", look, args="{}"),
 )

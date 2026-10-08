@@ -77,6 +77,35 @@ def web_search(ctx: ActionContext, args: dict) -> ActionResult:
     return ActionResult(detail=query, settle=4.0, opens=True)
 
 
+READ_LIMIT = 6000              # characters per read: about the tokens of one screenshot
+
+
+def read_page(ctx: ActionContext, args: dict) -> ActionResult:
+    """The whole page as text in one go (or just the parts about ``find``), instead of a look per screenful."""
+    from mcp_vision.buddy.screen_context import page_excerpt
+
+    find = str(args.get("find") or "").strip()
+    try:
+        start = max(0, int(args.get("from") or 0))
+    except (TypeError, ValueError):
+        start = 0
+    lines = ctx.read() or []
+    if not lines:
+        seen = ctx.observe()
+        lines = [item.label for item in seen.texts] if seen is not None else []
+    if not lines:
+        raise ActionError("I can't read this page's text, so I'll look at it instead.",
+                          hint="work from the screenshot, or scroll_to what you're after")
+    text, total = page_excerpt(lines, find=find, start=start, limit=READ_LIMIT)
+    if not text:
+        return ActionResult(report=f"nothing on this page mentions {find!r}" if find else "that's the end of the page",
+                            detail="Nothing more" if not find else f"No {find[:20]}")
+    end = start + len(text)
+    more = f'\n(… {total - end} more characters. read_page {{"from": {end}}} reads on.)' if total > end else ""
+    about = f" about {find!r}" if find else (f" from character {start}" if start else "")
+    return ActionResult(report=f"page text{about}:\n{text}{more}", detail=f"Read {len(text):,} characters")
+
+
 # -- files -----------------------------------------------------------------------------------
 
 def search_files(ctx: ActionContext, args: dict) -> ActionResult:
@@ -402,6 +431,7 @@ SPECS = (
     ActionSpec("open_app", "apps", "Opening {name}", open_app, args='{"name"}'),
     ActionSpec("open_url", "apps", "Opening {url}", open_url, args='{"url"}'),
     ActionSpec("web_search", "apps", "Searching the web for {query}", web_search, args='{"query"}'),
+    ActionSpec("read_page", "apps", "Reading the page", read_page, args='{"find"?, "from"?}'),
     ActionSpec("search_files", "files", "Searching files for {query}", search_files,
                args='{"query", "kind"?: pdf|image|document|video|audio|archive}'),
     ActionSpec("open_file", "files", "Opening the file", open_file, args='{"index"} or {"path"}'),
