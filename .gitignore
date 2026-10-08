@@ -55,4 +55,3 @@ bench/golden/
 /outputs/*-cache/
 /outputs/contextual-demo/
 /outputs/signing/
-uv.lock

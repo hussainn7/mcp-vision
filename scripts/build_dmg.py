@@ -219,7 +219,13 @@ def build_app(dist: Path, sign: str = "-", env: str = "") -> Path:
     python = home / "bin" / PY
 
     print("2/5 plip and its dependencies")
-    run("uv", "pip", "install", "--python", python, "--quiet", ROOT)
+    # The versions in uv.lock, so every build of a commit ships the same packages; --locked stops on a stale lock.
+    locked = dist / "requirements.lock.txt"
+    run("uv", "export", "--project", ROOT, "--locked", "--no-emit-project", "--no-hashes", "--quiet",
+        "--output-file", locked)
+    run("uv", "pip", "install", "--python", python, "--quiet", "-r", locked)
+    run("uv", "pip", "install", "--python", python, "--quiet", "--no-deps", ROOT)
+    locked.unlink()
     for relative in PRUNE:
         target = home / relative
         if target.is_dir() and not target.is_symlink():

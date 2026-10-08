@@ -21,7 +21,8 @@ macOS says it can't check Plip, and they go to System Settings → Privacy & Sec
 
 ## Ship a release
 
-1. Bump the version in `pyproject.toml`, `src/mcp_vision/__init__.py` and `ui/package.json`.
+1. Bump the version in `pyproject.toml`, `src/mcp_vision/__init__.py` and `ui/package.json`, then run
+   `uv lock` (the DMG installs the versions in `uv.lock` and stops if it's out of date).
 2. Commit, then `git tag v0.8.0 && git push origin v0.8.0`.
 3. GitHub Actions (`.github/workflows/release.yml`) builds the DMG on a Mac and attaches it to
    the release. The README links to `releases/latest`, so the download link never changes.
