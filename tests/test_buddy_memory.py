@@ -61,6 +61,25 @@ def test_sensitive_facts_are_masked_and_kept_out_of_prompts(memory):
     assert card["value"] == mask("passport number: X1234567") == "•••• 4567" and card["sources"] == ["You told Plip"]
 
 
+def test_sensitive_notes_reach_the_model_as_what_they_are_never_what_they_say(memory):
+    memory.add("note", "wifi password hunter2", "you")                                    # no colon to cut at
+    memory.add("note", "card 4111 1111 1111 1111 exp 09/29", "you")
+    memory.add("note", "my passport is X12345678", "you")
+    memory.add("note", "my ssn is 123-45-6789, pin: 4821", "you")                          # secret before the colon
+    memory.add("note", "password is sunshine: the wifi", "you")
+    memory.add("note", "SSN: 078-05-1120", "you")
+    memory.add("note", "bank pin: 9917", "you")
+    memory.add("phone", "+1 555 010 2000", "contacts")
+    memory.add("phone", "5555 5555 5555 4444", "mail")                                     # a card filed as a phone
+    summary = memory.summary()
+    for secret in ("hunter2", "4111", "X12345678", "123-45", "4821", "sunshine", "078-05", "9917", "5555 5555"):
+        assert secret not in summary
+    private = [line.removeprefix("- (sensitive, ask before using) ") for line in summary.splitlines()
+               if "(sensitive" in line]
+    assert sorted(private) == ["SSN", "bank pin", "card number", "passport", "password", "password", "ssn"]
+    assert "- phone: +1 555 010 2000\n" in summary + "\n"                                   # the real number stays
+
+
 def test_profile_derives_first_and_last_names(memory):
     memory.add("name.full", "Hussain Syed", "you")
     assert memory.profile()["name.first"] == "Hussain" and memory.profile()["name.last"] == "Syed"
