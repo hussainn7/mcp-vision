@@ -118,3 +118,22 @@ def test_sentence_two_is_synthesized_while_sentence_one_plays():
     asyncio.run(asyncio.wait_for(speaker.drain(), 5))
     assert log.index(("prepare", "Two.")) < log.index(("play", "One."))
     assert [entry for entry in log if entry[0] == "play"] == [("play", "One."), ("play", "Two.")]
+
+
+def test_the_screen_map_is_read_at_key_release_too():
+    reads = []
+
+    class Page:
+        def snapshot(self):
+            reads.append(time.perf_counter())
+            return ScreenContext(app="Safari", controls=[Control("Buy", "AXButton", 10, 10)])
+
+    brain = ScriptedBrain("It's top left.")
+    companion = plip(Page())
+    companion.brain = brain
+    released = time.perf_counter()
+    companion.prefetch()                                   # key release
+    time.sleep(0.3)                                        # their last words are still being finalized
+    asyncio.run(companion.respond("where's buy"))
+    assert len(reads) == 1 and reads[0] - released < 0.2  # walked once, at release, not again once words were final
+    assert "Buy | AXButton" in brain.calls[0][-1].text

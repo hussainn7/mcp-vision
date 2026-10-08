@@ -271,6 +271,8 @@ class Companion:
         ignored, so a stale screen never answers a new question.
         """
         self._prefetched = (self.clock(), self._pool.submit(self.capturer.capture))
+        if self.context is not None:                  # the screen map too: a browser page can take ~0.3 s to walk
+            self._mapped = (self.clock(), self._pool.submit(self._observe))
 
     def warm_brain(self, effort: str | None = None) -> None:
         """Have a brain process ready before the question exists (key press, app start). On the loop."""
@@ -281,6 +283,13 @@ class Companion:
             ensure(self.system_prompt, effort)
         except Exception:
             pass                                      # a cold start is slower, not broken
+
+    def _take_map(self, max_age: float = 4.0):
+        """The map read at key release, if it's still fresh."""
+        mapped, self._mapped = getattr(self, "_mapped", None), None
+        if mapped is not None and self.clock() - mapped[0] <= max_age:
+            return asyncio.wrap_future(mapped[1])
+        return None
 
     def _take_prefetch(self, max_age: float = 4.0):
         prefetched, self._prefetched = self._prefetched, None
@@ -858,8 +867,9 @@ class Companion:
         prefetched = self._take_prefetch()
         capture = (asyncio.wrap_future(prefetched) if prefetched is not None
                    else asyncio.create_task(asyncio.to_thread(self.capturer.capture)))
-        context_task = (asyncio.create_task(asyncio.to_thread(self.context.snapshot))
-                        if self.context is not None else None)
+        mapped = self._take_map() if self.context is not None else None
+        context_task = mapped if mapped is not None else \
+            (asyncio.create_task(asyncio.to_thread(self.context.snapshot)) if self.context is not None else None)
         route = routed or Route()
         if self.router is not None and routed is None:
             try:
