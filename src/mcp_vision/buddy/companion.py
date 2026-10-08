@@ -272,6 +272,16 @@ class Companion:
         """
         self._prefetched = (self.clock(), self._pool.submit(self.capturer.capture))
 
+    def warm_brain(self, effort: str | None = None) -> None:
+        """Have a brain process ready before the question exists (key press, app start). On the loop."""
+        ensure = getattr(self.brain, "ensure_warm", None)
+        if ensure is None or not getattr(self.brain, "prewarm", False):
+            return
+        try:
+            ensure(self.system_prompt, effort)
+        except Exception:
+            pass                                      # a cold start is slower, not broken
+
     def _take_prefetch(self, max_age: float = 4.0):
         prefetched, self._prefetched = self._prefetched, None
         if prefetched is None or self.clock() - prefetched[0] > max_age:

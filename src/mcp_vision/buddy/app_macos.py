@@ -548,6 +548,7 @@ def run_buddy_app() -> None:
                 AppHelper.callAfter(menu.set_status, "Brain problem: check its key or sign-in in Plip's settings")
         if hasattr(companion.brain, "prewarm"):
             companion.brain.prewarm = True          # the app lives on: keep the next brain process ready
+            loop.call_soon_threadsafe(companion.warm_brain)
         asyncio.run_coroutine_threadsafe(companion.brain.warm(), loop).add_done_callback(warmed)
 
     def rebuild(probe: bool = False) -> None:

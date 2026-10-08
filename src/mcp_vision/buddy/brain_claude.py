@@ -49,13 +49,14 @@ class ClaudeBrain:
         model = await self.client.models.retrieve(self.model)
         return getattr(model, "display_name", "") or self.model
 
-    def request(self, *, system: str, turns: list[Turn], detailed: bool = False) -> dict[str, Any]:
+    def request(self, *, system: str, turns: list[Turn], detailed: bool = False,
+                effort: str | None = None) -> dict[str, Any]:
         """The exact request body (minus transport options); handy for tests.
 
         ``detailed`` (a walkthrough or deeper explanation, as judged by the
         router) raises effort one step for that turn only.
         """
-        effort = _EFFORT_STEP.get(self.effort, self.effort) if detailed else self.effort
+        effort = effort or (_EFFORT_STEP.get(self.effort, self.effort) if detailed else self.effort)
         return {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -66,8 +67,9 @@ class ClaudeBrain:
             "fallbacks": "default",
         }
 
-    async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False) -> AsyncIterator[str]:
-        body = self.request(system=system, turns=turns, detailed=detailed)
+    async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False,
+                     effort: str | None = None) -> AsyncIterator[str]:
+        body = self.request(system=system, turns=turns, detailed=detailed, effort=effort)
         async with self.client.beta.messages.stream(**body) as stream:
             async for event in stream:
                 if event.type == "content_block_delta" and getattr(event.delta, "type", "") == "text_delta":

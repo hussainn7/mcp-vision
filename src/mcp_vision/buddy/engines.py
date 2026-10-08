@@ -445,6 +445,7 @@ class CLIBrain:
     vision = True
     effort_map: dict[str, str] = {}
     last_usage: Usage | None = None     # what the last stream() used, as the CLI reported it
+    exit_timeout = 10.0                 # seconds to wait for the CLI to exit once its answer is in
 
     def __init__(self, binary: str, *, model: str = "", effort: str = "low", timeout: float = 120.0,
                  first_output_timeout: float = 45.0, spawn: Callable[..., Any] | None = None):
@@ -456,16 +457,19 @@ class CLIBrain:
         self._spawn = spawn or asyncio.create_subprocess_exec
 
     # subclasses fill these in
-    def invocation(self, *, system: str, turns: list[Turn], workdir: str, detailed: bool) -> Invocation:
+    def invocation(self, *, system: str, turns: list[Turn], workdir: str, detailed: bool,
+                   effort: str | None = None) -> Invocation:
         raise NotImplementedError
 
     def parser(self) -> StreamParser:
         raise NotImplementedError
 
-    def _effort(self, detailed: bool) -> str:
+    def _effort(self, detailed: bool, effort: str | None = None) -> str:
+        """This call's effort: the one asked for, else the user's (a step up for a walkthrough)."""
         from mcp_vision.buddy.brain_claude import _EFFORT_STEP
 
-        effort = _EFFORT_STEP.get(self.effort, self.effort) if detailed else self.effort
+        if not effort:
+            effort = _EFFORT_STEP.get(self.effort, self.effort) if detailed else self.effort
         return self.effort_map.get(effort, effort)
 
     async def warm(self) -> str:
@@ -488,14 +492,15 @@ class CLIBrain:
     def _ended(self, call: Invocation) -> None:
         """A call finished cleanly (subclasses get the next one ready)."""
 
-    async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False) -> AsyncIterator[str]:
+    async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False,
+                     effort: str | None = None) -> AsyncIterator[str]:
         workdir = tempfile.mkdtemp(prefix="plip-")
         process = None
         errors: asyncio.Future | None = None
         self.last_usage = None
         clean = False
         try:
-            call = self.invocation(system=system, turns=turns, workdir=workdir, detailed=detailed)
+            call = self.invocation(system=system, turns=turns, workdir=workdir, detailed=detailed, effort=effort)
             process, used = await self._start(call, workdir)
             if used != workdir:                      # a warm process: it already has its own folder
                 shutil.rmtree(workdir, ignore_errors=True)
@@ -527,10 +532,16 @@ class CLIBrain:
                     break
             try:
                 # Once the answer's in, a CLI still flushing its own traffic isn't worth waiting for.
-                code = await asyncio.wait_for(process.wait(), 0.3 if parser.ended else None)
-                stderr = (await errors).decode("utf-8", "replace")
+                code = await asyncio.wait_for(process.wait(), 0.3 if parser.ended else self.exit_timeout)
             except asyncio.TimeoutError:
-                code, stderr = 0, ""                 # still going after its last event: the cleanup kills it
+                # The answer is in but the CLI won't exit (a stuck flush or child process): don't hang the turn.
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                code = 0 if parser.produced or parser.final else -9
+            try:
+                stderr = (await asyncio.wait_for(asyncio.shield(errors), 2.0)).decode("utf-8", "replace")
+            except asyncio.TimeoutError:
+                stderr = ""                          # a child still holds stderr open; the cleanup below cancels it
             self.last_usage = parser.usage
             if self.last_usage is not None and not self.last_usage.model:
                 self.last_usage.model = self.model or ""
@@ -620,7 +631,7 @@ class ClaudeCodeBrain(CLIBrain):
     label = "Claude"
     vision = True
 
-    def invocation(self, *, system, turns, workdir, detailed):
+    def invocation(self, *, system, turns, workdir, detailed, effort=None):
         *history, current = turns
         content = history_blocks(history)
         for shot in current.images:
@@ -632,7 +643,7 @@ class ClaudeCodeBrain(CLIBrain):
         # No tools, no MCP servers, no hooks/CLAUDE.md/plugins (--safe-mode), nothing saved to disk.
         argv = [self.binary, "-p", "--input-format", "stream-json", "--output-format", "stream-json",
                 "--verbose", "--include-partial-messages", "--system-prompt", system, "--tools", "",
-                "--strict-mcp-config", "--safe-mode", "--no-session-persistence", "--effort", self._effort(detailed)]
+                "--strict-mcp-config", "--safe-mode", "--no-session-persistence", "--effort", self._effort(detailed, effort)]
         if self.model:
             argv += ["--model", self.model]
         # Each turn's screen and map are new, so only the system prompt and the history before them come back
@@ -647,22 +658,38 @@ class ClaudeCodeBrain(CLIBrain):
     def parser(self):
         return ClaudeCodeParser()
 
-    # Claude Code's command line doesn't depend on the question (it arrives on stdin), so the next
-    # process can start while Plip is idle: each turn then skips the CLI's start-up (~0.2 s).
+    # Claude Code's command line doesn't depend on the question (it arrives on stdin), so a process can
+    # start before the question exists: at launch, while the keys are held, after a turn. A turn then skips
+    # the CLI's start-up (~0.2-0.4 s). One spare per command line (effort is part of it), and a spare nobody
+    # uses within a couple of minutes goes away (each holds ~100 MB).
     # Only the long-running app turns this on; one-shot runs (plip ask, tests) would leave it waiting.
     prewarm = False
-    warm_ttl = 600.0                     # a warm process older than 10 minutes is started fresh
+    idle_ttl = 120.0
+    max_spares = 2
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._spares: dict[tuple, tuple[Any, str, float]] = {}   # command line -> (process, folder, born)
+        self._starting: set[tuple] = set()
 
     async def _start(self, call: Invocation, workdir: str) -> tuple[Any, str]:
-        warm, self._warm = getattr(self, "_warm", None), None
-        if warm is not None:
-            key, process, folder, born = warm
-            if key == self._key(call) and process.returncode is None and time.monotonic() - born < self.warm_ttl:
+        spare = self._spares.pop(self._key(call), None)
+        if spare is not None:
+            process, folder, born = spare
+            if process.returncode is None and time.monotonic() - born < self.idle_ttl:
                 return process, folder
-            _discard(process, folder)        # different flags (effort, model) or too old
+            _discard(process, folder)
         return await self._launch(call, workdir), workdir
 
     def _ended(self, call: Invocation) -> None:
+        self._spawn_spare(call)
+
+    def ensure_warm(self, system: str, effort: str | None = None) -> None:
+        """Have a process for this prompt and effort ready before the question is (call on the loop)."""
+        call = self.invocation(system=system, turns=[Turn("user", "")], workdir="", detailed=False, effort=effort)
+        self._spawn_spare(call)
+
+    def _spawn_spare(self, call: Invocation) -> None:
         if not self.prewarm:
             return
         try:
@@ -671,29 +698,46 @@ class ClaudeCodeBrain(CLIBrain):
             pass
 
     async def _prewarm(self, call: Invocation) -> None:
-        if getattr(self, "_warm", None) is not None:
+        key, spares, pending = self._key(call), self._spares, self._starting
+        held = spares.get(key)
+        if key in pending or held is not None and held[0].returncode is None:
             return
+        pending.add(key)
         folder = tempfile.mkdtemp(prefix="plip-")
         try:
             process = await self._launch(call, folder)
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             return
-        if not self.prewarm:                 # closed while it was starting
+        finally:
+            pending.discard(key)
+        if not self.prewarm:                         # closed while it was starting
             _discard(process, folder)
             return
-        self._warm = (self._key(call), process, folder, time.monotonic())
+        while len(spares) >= self.max_spares:        # the oldest other one makes room
+            _discard(*spares.pop(next(iter(spares)))[:2])
+        born = time.monotonic()
+        spares[key] = (process, folder, born)
+        with contextlib.suppress(RuntimeError):
+            asyncio.get_running_loop().call_later(self.idle_ttl, self._reap, key, born)
+
+    def _reap(self, key: tuple, born: float) -> None:
+        """Nobody used this spare in time: don't keep paying ~100 MB for it."""
+        spare = self._spares.get(key)
+        if spare is not None and spare[2] == born:
+            del self._spares[key]
+            _discard(spare[0], spare[1])
 
     @staticmethod
     def _key(call: Invocation) -> tuple:
         return tuple(call.argv), tuple(sorted(call.env.items()))
 
     def close(self) -> None:
-        """Drop the warm process (app quitting, brain switched)."""
+        """Drop the warm processes (app quitting, brain switched)."""
         self.prewarm = False
-        warm, self._warm = getattr(self, "_warm", None), None
-        if warm is not None:
-            _discard(warm[1], warm[2])
+        while self._spares:
+            process, folder, _ = self._spares.pop(next(iter(self._spares)))
+            _discard(process, folder)
 
     async def aclose(self) -> None:
         """Like close, after letting a process that's still starting finish, so nothing is left waiting."""
@@ -742,11 +786,11 @@ class CodexBrain(CLIBrain):
     vision = True
     effort_map = {"xhigh": "high", "max": "high"}
 
-    def invocation(self, *, system, turns, workdir, detailed):
+    def invocation(self, *, system, turns, workdir, detailed, effort=None):
         images = write_images(turns[-1], workdir)
         prompt = transcript_prompt(turns, images, system=system)
         argv = [self.binary, "exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral",
-                "--color", "never", "-c", f"model_reasoning_effort={json.dumps(self._effort(detailed))}"]
+                "--color", "never", "-c", f"model_reasoning_effort={json.dumps(self._effort(detailed, effort))}"]
         if self.model:
             argv += ["--model", self.model]
         for path in images:
@@ -787,7 +831,7 @@ class CursorBrain(CLIBrain):
     label = "Cursor"
     vision = False
 
-    def invocation(self, *, system, turns, workdir, detailed):
+    def invocation(self, *, system, turns, workdir, detailed, effort=None):
         prompt = transcript_prompt(turns, system=system)
         argv = [self.binary, "-p", "--output-format", "stream-json", "--stream-partial-output",
                 "--mode", "ask", "--trust", "--workspace", workdir]
@@ -824,7 +868,7 @@ class GeminiBrain(CLIBrain):
     label = "Gemini"
     vision = True
 
-    def invocation(self, *, system, turns, workdir, detailed):
+    def invocation(self, *, system, turns, workdir, detailed, effort=None):
         images = write_images(turns[-1], workdir)
         system_file = os.path.join(workdir, "plip-system.md")
         with open(system_file, "w", encoding="utf-8") as handle:

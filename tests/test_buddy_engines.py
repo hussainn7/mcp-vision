@@ -626,44 +626,75 @@ def test_the_app_keeps_the_next_claude_process_warm_and_reuses_it(tmp_path):
         brain = ClaudeCodeBrain(binary)
         brain.prewarm = True
         answers = [await collect(brain, TURNS)]
-        for _ in range(100):                                  # the next process starts in the background
-            if getattr(brain, "_warm", None) is not None:
+        for _ in range(50):                                   # the next process starts in the background
+            if brain._spares:
                 break
             await asyncio.sleep(0.02)
-        warm_pid = brain._warm[1].pid
+        warm_pid = next(iter(brain._spares.values()))[0].pid
         answers.append(await collect(brain, TURNS))           # same command line: uses the warm one
         await asyncio.sleep(0.2)
         answers.append(await collect(brain, TURNS, detailed=True))   # different effort: a fresh process
         await brain.aclose()
-        return answers, warm_pid, brain
+        return answers, warm_pid
 
-    answers, warm_pid, brain = asyncio.run(three_turns())
+    answers, warm_pid = asyncio.run(three_turns())
     pids = [int(line) for line in marker.read_text().split()]
     assert answers == ["ok", "ok", "ok"] and pids[1] == warm_pid
-    assert getattr(brain, "_warm", None) is None and brain.prewarm is False
 
 
-def test_an_old_warm_process_is_replaced_and_one_shot_runs_leave_none(tmp_path):
+def test_the_companion_warms_a_brain_that_keeps_spares_and_skips_one_that_doesnt():
+    from buddy_fakes import Capturer, ScriptedBrain
+
+    asked = []
+
+    class Spare(ScriptedBrain):
+        prewarm = True
+
+        def ensure_warm(self, system, effort=None):
+            asked.append((system[:10], effort))
+
+    Companion(brain=Spare(), capturer=Capturer()).warm_brain()
+    Companion(brain=ScriptedBrain(), capturer=Capturer()).warm_brain()       # nothing to warm: no error
+    off = Spare()
+    off.prewarm = False                                                       # one-shot runs: never
+    Companion(brain=off, capturer=Capturer()).warm_brain()
+    assert asked == [("you're pli", None)]
+
+
+def test_one_shot_runs_dont_leave_a_process_waiting(tmp_path):
     binary = fake_cli(tmp_path, "claude", """
         out({"type": "result", "subtype": "success", "is_error": False, "result": "ok"})
     """)
     brain = ClaudeCodeBrain(binary)
-    assert asyncio.run(collect(brain, TURNS)) == "ok" and getattr(brain, "_warm", None) is None
+    assert asyncio.run(collect(brain, TURNS)) == "ok" and not brain._spares
 
-    async def stale():
-        warm = ClaudeCodeBrain(binary)
-        warm.prewarm = True
-        warm.warm_ttl = 0.0                                   # anything warm is already too old
-        await collect(warm, TURNS)
+
+def test_a_process_starts_while_the_keys_are_held_and_an_unused_one_goes_away(tmp_path):
+    marker = tmp_path / "pids"
+    binary = fake_cli(tmp_path, "claude", f"""
+        open({str(marker)!r}, "a").write(str(os.getpid()) + "\\n")
+        out({{"type": "result", "subtype": "success", "is_error": False, "result": "ok"}})
+    """)
+
+    async def press_then_ask():
+        brain = ClaudeCodeBrain(binary, effort="medium")
+        brain.prewarm, brain.idle_ttl = True, 0.6
+        brain.ensure_warm("SYSTEM")                          # the press: nothing to say yet
+        brain.ensure_warm("SYSTEM")                          # a second press doesn't start another
         for _ in range(100):
-            if getattr(warm, "_warm", None) is not None:
+            if brain._spares:
                 break
             await asyncio.sleep(0.02)
-        old = warm._warm[1]
-        assert await collect(warm, TURNS) == "ok"             # started fresh; the old one is gone
-        await asyncio.sleep(0.1)
-        await warm.aclose()
-        return old
+        spare_pid = next(iter(brain._spares.values()))[0].pid
+        answer = await collect(brain, TURNS)                 # the question arrives: uses that one
+        brain.ensure_warm("SYSTEM", effort="low")            # a quick check-in is coming: a low-effort spare
+        await asyncio.sleep(0.3)
+        efforts = sorted(key[0][key[0].index("--effort") + 1] for key in brain._spares)
+        await asyncio.sleep(1.0)                             # nobody used them: reaped
+        left = dict(brain._spares)
+        await brain.aclose()
+        return answer, spare_pid, efforts, left
 
-    old = asyncio.run(stale())
-    assert old.returncode is not None
+    answer, spare_pid, efforts, left = asyncio.run(press_then_ask())
+    pids = [int(line) for line in marker.read_text().split()]
+    assert answer == "ok" and pids[0] == spare_pid and efforts == ["low", "medium"] and left == {}

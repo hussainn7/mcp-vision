@@ -72,6 +72,9 @@ class BuddyController:
             return
         self.generation += 1
         self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
+        warm = getattr(self.companion, "warm_brain", None)
+        if warm is not None:                         # the brain starts up while they talk (~0.3 s off the answer)
+            self.loop.call_soon_threadsafe(warm)
         self.state = "listening"
         self.transcript = ""
         self.overlay.set_state("listening")
