@@ -56,6 +56,9 @@ class ActionContext:
     observe: Callable[[], Any] = lambda: None                  # a fresh screen map now (no screenshot, no tokens)
     # The whole frontmost page's text as lines, scrolled-out parts included (worker thread, no tokens).
     read: Callable[[], list[str]] = lambda: []
+    # A tiny gray thumbnail of the ~300 points around a global point (None: can't tell), so a scroll knows it
+    # moved even where the map can't say (a blind page, a panel past the walk's caps).
+    fingerprint: Callable[[float, float], bytes | None] = lambda x, y: None
     animate: Callable[[float, float, str], Any] = lambda x, y, label: None   # Plip flies to where it acts
 
 

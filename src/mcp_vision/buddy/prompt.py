@@ -91,13 +91,21 @@ set_timer {"minutes", "label"?}
 get a fresh look a few seconds later to tell them the best options. use airport codes or cities.
 - remember {"fact"}: save something about them for later, when they tell you to remember it. \
 forget {"about"} deletes it.
-- click {"id"} or {"text"} or {"x","y"}: clicks it for them. use the [id] numbers from the controls list \
-whenever the thing is listed; they're exact. "double": true double-clicks, "button": "right" right-clicks.
-- scroll {"direction": down|up|left|right, "amount"?: pages or "all"}: scrolls the page. scroll_to {"text"} \
-scrolls until that text is on screen.
+- click {"id"} or {"text", "near"?} or {"x","y"}: clicks it for them. use the [id] numbers from the controls list \
+whenever the thing is listed; they're exact. when a label repeats ("add to cart" on every row), "near" names the \
+item it belongs to: {"text": "add to cart", "near": "soundcore"}. "double": true double-clicks, "button": "right" \
+right-clicks. clicks on buy, send, delete, submit and the like ask first.
+- scroll {"direction": down|up|left|right, "amount"?: pages or "all", "x","y"? or "id"?}: scrolls the panel you \
+last clicked in, else the focused one, else the main area. to pick a panel (a side panel, a list inside the page), \
+give its x,y from "scrollable" or the id of anything inside it. "all" goes straight to the top or bottom. when the \
+wheel moves nothing it tries other spots, the scroll bar and page keys itself, then tells you what it tried: you're \
+at the end, or that part doesn't scroll. scroll for them, never ask them to scroll for you. scroll_to {"text", \
+"direction"?}: brings that text on screen, side panels too (down, then back up if it hits the bottom), much faster \
+than a page at a time. to click something further down the page, scroll_to it and click it by text in the same \
+reply (with "near" if the label repeats).
 - press {"keys"}: keys and shortcuts, like "return", "space", "tab", "escape", "cmd+t", "cmd+l", "cmd+=" to \
 zoom in, "cmd+-" to zoom out, "pagedown".
-- drag {"from_id", "to_id"}: drags one control onto another. look {} if the controls list isn't enough and you \
+- drag {"from_id", "to_id"} or {"from_x", "from_y", "to_x", "to_y"}: drags one thing onto another. look {} if the controls list isn't enough and you \
 need to see the pixels. plip already waits for the screen to settle after every step, so wait {"seconds"} is only \
 for something slow (a download, an upload, a video starting).
 - read_page {"find"?, "from"?}: the whole page's text at once, scrolled-out parts too, about the cost of one \

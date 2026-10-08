@@ -699,6 +699,16 @@ class Companion:
         except Exception:
             return []
 
+    def _fingerprint(self, x: float, y: float) -> bytes | None:
+        """The pixels around a point, tiny and gray (worker thread): did a scroll move anything there?"""
+        grab = getattr(self.capturer, "fingerprint_at", None)
+        if grab is None:
+            return None
+        try:
+            return grab(x, y)
+        except Exception:
+            return None
+
     def _images_for(self, shots: list[Screenshot], context: ScreenContext | None, *, guide: bool,
                     lean: bool) -> tuple[list[Screenshot], str]:
         """Which screenshots to actually send, and a note for the model when Plip skips them.
@@ -818,8 +828,9 @@ class Companion:
             if screen is not False or not getattr(self, "_shots", None):
                 # A follow-up that didn't look keeps the last screen: actions still aim with it.
                 self._shots, self._context = shots, context
-                if self.actions is not None:
-                    self.actions.ctx.state.pop("scrolled", None)    # a fresh look: the numbers are current again
+                if self.actions is not None:                    # a fresh look: the numbers are current again
+                    self.actions.ctx.state.pop("scrolled", None)
+                    self.actions.ctx.state.pop("stale_map", None)
             history = self.conversation.history()
             images, skipped = self._images_for(shots, context, guide=guide, lean=lean)
             extra, self._extra_note = self._extra_note, ""
@@ -1014,6 +1025,7 @@ class Companion:
         self.actions.ctx.screen = (getattr(self, "_shots", []), getattr(self, "_context", None))
         self.actions.ctx.observe = self._observe
         self.actions.ctx.read = self._read
+        self.actions.ctx.fingerprint = self._fingerprint
         self.actions.ctx.animate = lambda x, y, label: self.pointer.point(x, y, label)
         self._action_seq = getattr(self, "_action_seq", 0) + 1
         step_id = f"action-{self._action_seq}"
@@ -1029,10 +1041,16 @@ class Companion:
             result.acted.append(f"note: that's {tag.name} with the same arguments {repeats} times in a row. if it "
                                 "isn't getting you closer, do something different: aim another way, use the keyboard "
                                 "or another control.")
-        if result.settle and spec is not None and (spec.skill == "control" or tag.name in _ON_SCREEN):
+        if tag.name == "wait" and result.settle:
+            pass                                      # the wait is the settle: one early-exit wait, not two
+        elif result.settle and spec is not None and (spec.skill == "control" or tag.name in _ON_SCREEN):
             # An earlier action in this reply is still loading; this one works on what it shows.
-            await self._settle(result.settle)
+            settled = await self._settle(result.settle)
             result.settle = None
+            seen, after = getattr(self, "_context", None), getattr(self, "_settled", None)
+            if settled is not None and seen is not None and after is not None \
+                    and after.signature(values=False) != seen.signature(values=False):
+                self.actions.ctx.state["stale_map"] = True    # the numbers the model saw are gone (typing moves none)
         label = spec.describe(tag.args) if spec else tag.name.replace("_", " ")
         self.emit("step", id=step_id, label=label, status="active")
         outcome = await self.actions.handle(tag.name, tag.args)

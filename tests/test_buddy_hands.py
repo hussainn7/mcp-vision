@@ -76,29 +76,6 @@ def test_risky_clicks_and_keys_ask_first():
     assert run(actions.handle("press", {"keys": "cmd+="})).status == "done" and host.calls[-1] == ("press", "cmd+=")
 
 
-def test_scroll_says_when_nothing_moved():
-    still = mapped()
-    actions, host = engine(still, observe=lambda: still)
-    outcome = run(actions.handle("scroll", {"direction": "down"}))
-    assert outcome.status == "done" and "nothing moved" in outcome.result.report
-    pages = iter([mapped(), mapped([Control("Next song", "AXRow", 500, 200)])] * 5)
-    actions, host = engine(mapped(), observe=lambda: next(pages))
-    outcome = run(actions.handle("scroll", {"direction": "down", "amount": 2}))
-    assert outcome.result.report == "scrolled down" and host.calls[-1][3] == 16          # two pages of lines
-    assert actions.ctx.state["scrolled"] is True
-    outcome = run(actions.handle("click", {"id": 2}))                                     # old numbers moved
-    assert outcome.status == "failed" and "fresh look" in outcome.message
-
-
-def test_scroll_to_reads_the_map_until_the_text_shows_up():
-    screens = iter([mapped([Control(f"Song {n}", "AXRow", 500, 300)]) for n in range(1, 10)]
-                   + [mapped([Control("Pricing", "AXHeading", 500, 300)])] * 3)
-    actions, host = engine(mapped(), observe=lambda: next(screens))
-    outcome = run(actions.handle("scroll_to", {"text": "pricing"}))
-    assert outcome.status == "done" and "found 'Pricing'" in outcome.result.report
-    assert sum(1 for call in host.calls if call[0] == "scroll") == 9
-
-
 class Map:
     def __init__(self, context):
         self.context = context

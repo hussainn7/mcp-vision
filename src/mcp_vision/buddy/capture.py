@@ -146,6 +146,22 @@ class ScreenCapturer:
         screen = order_cursor_first(self.screens())[0]
         return fingerprint(self._grab(self._monitor_for(screen)))
 
+    def fingerprint_at(self, x: float, y: float, size: float = 300.0) -> bytes | None:
+        """The same tiny thumbnail of just the ``size``-point square around a global point (~16 ms): did a
+        scroll move anything there, even when the Accessibility map can't tell. None off every screen."""
+        from mcp_vision.buddy.watch import fingerprint
+
+        for monitor in self._monitors():
+            left, top, width, height = (float(monitor[key]) for key in ("left", "top", "width", "height"))
+            if not Rect(left, top, width, height).contains(x, y):
+                continue
+            side_x, side_y = min(size, width), min(size, height)
+            box = {"left": int(max(left, min(x - side_x / 2, left + width - side_x))),
+                   "top": int(max(top, min(y - side_y / 2, top + height - side_y))),
+                   "width": int(side_x), "height": int(side_y)}
+            return fingerprint(self._grab(box))
+        return None
+
     @classmethod
     def from_images(cls, paths: list[str], **options) -> ScreenCapturer:
         """Treat image files as displays laid out left to right (headless testing)."""
