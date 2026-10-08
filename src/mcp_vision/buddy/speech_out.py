@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -63,6 +64,64 @@ class SayVoice:
         if self.voice:
             command += ["-v", self.voice]
         self.runner([*command, "--", prepared], stop)
+
+
+class SystemVoice(SayVoice):
+    """macOS speech in this process (NSSpeechSynthesizer): the same system voice and words-per-minute as
+    ``say``, without starting a ``say`` process for every sentence (~0.3-0.4 s before each one was heard).
+    Falls back to ``say`` if the synthesizer won't start."""
+
+    def __init__(self, voice: str | None = None, rate: int = 200, runner=_run_until_stopped,
+                 synthesizer: Callable[[], Any] | None = None):
+        super().__init__(voice=voice, rate=rate, runner=runner)
+        self._make = synthesizer or _ns_synthesizer
+        self._synth: Any = None
+
+    def play(self, prepared: str, stop: threading.Event) -> None:
+        try:
+            with _autorelease():                      # the play thread lives as long as the app
+                if self._synth is None:
+                    self._synth = self._make()
+                    self._synth.setRate_(float(self.rate))
+                if not self._synth.startSpeakingString_(prepared):
+                    raise RuntimeError("the system voice didn't start")
+                while self._synth.isSpeaking():
+                    if stop.is_set():
+                        self._synth.stopSpeaking()
+                        return
+                    _pump(0.02)
+        except Exception:
+            self._synth = None
+            super().play(prepared, stop)              # the old way still works
+
+
+def _ns_synthesizer() -> Any:
+    import AppKit
+
+    return AppKit.NSSpeechSynthesizer.alloc().init()
+
+
+def _autorelease():
+    try:
+        from objc import autorelease_pool
+    except ImportError:
+        import contextlib
+        return contextlib.nullcontext()
+    return autorelease_pool()
+
+
+def _pump(seconds: float) -> None:
+    """Let the synthesizer's run loop callbacks through for a moment, without spinning when there are none."""
+    started = time.monotonic()
+    try:
+        import AppKit
+
+        AppKit.NSRunLoop.currentRunLoop().runUntilDate_(AppKit.NSDate.dateWithTimeIntervalSinceNow_(seconds))
+    except Exception:
+        pass
+    left = seconds - (time.monotonic() - started)
+    if left > 0:
+        time.sleep(left)
 
 
 class EspeakVoice(SayVoice):
@@ -248,7 +307,9 @@ def default_voice(settings: Any = None) -> tuple[Voice, Voice | None]:
     """Pick the best available voice and a local fallback for it."""
     local: Voice
     if sys.platform == "darwin" and shutil.which("say"):
-        local = SayVoice(voice=getattr(settings, "say_voice", None) or None)
+        chosen = getattr(settings, "say_voice", None) or None
+        # A voice picked by name stays on `say -v`; the system voice speaks in-process.
+        local = SayVoice(voice=chosen) if chosen else SystemVoice()
     elif shutil.which("espeak"):
         local = EspeakVoice()
     else:
