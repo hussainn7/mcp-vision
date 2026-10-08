@@ -341,7 +341,7 @@ def run_buddy_app() -> None:
 
     def open_settings(tab: str = "home") -> None:
         if not web:
-            _open_url("https://github.com/hussainn7/mcp-vision#readme")
+            _open_url("https://github.com/hussainn7/plip-oss#readme")
             return
         settings_window().show(tab)
 

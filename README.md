@@ -33,7 +33,7 @@ happens until you say yes.
 
 ## Download
 
-**[⬇ Download Plip for Mac (.dmg)](https://github.com/hussainn7/mcp-vision/releases/latest)**: free and open source. macOS 13+, Apple Silicon.
+**[⬇ Download Plip for Mac (.dmg)](https://github.com/hussainn7/plip-oss/releases/latest)**: free and open source. macOS 13+, Apple Silicon.
 
 1. Open the `.dmg` and drag **Plip** into **Applications**.
 2. Open Plip from Applications. If macOS says it can't check it for malicious software,
@@ -45,12 +45,12 @@ happens until you say yes.
 5. Hold **Control+Option**, ask something, let go.
 
 Something broken? Click **Report a bug** in Plip's menu bar (or **Settings → General**), or
-[open a GitHub issue](https://github.com/hussainn7/mcp-vision/issues).
+[open a GitHub issue](https://github.com/hussainn7/plip-oss/issues).
 
 ## Quick start (from source)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hussainn7/mcp-vision/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hussainn7/plip-oss/main/scripts/install.sh | bash
 plip                 # Plip moves into your notch; the dashboard opens on first run
 ```
 

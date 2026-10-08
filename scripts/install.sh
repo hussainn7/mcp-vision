@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # The `plip` command from source, for people who'd rather not use the app:
-#   curl -fsSL https://raw.githubusercontent.com/hussainn7/mcp-vision/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/hussainn7/plip-oss/main/scripts/install.sh | bash
 # Most people want the DMG instead (Releases on GitHub). Uses Python 3.12 (macOS's own python3 is too old).
 set -euo pipefail
 
-REPO="${PLIP_REPO:-https://github.com/hussainn7/mcp-vision.git}"
+REPO="${PLIP_REPO:-https://github.com/hussainn7/plip-oss.git}"
 PY="${PLIP_PYTHON:-3.12}"
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
