@@ -3,8 +3,8 @@
 Facts come from your own data (Contacts card, browser autofill, Mail
 accounts, the memory you paste from ChatGPT or Claude) and from
 things you tell Plip to remember. Each fact keeps its source. Sensitive ones
-(passport, card numbers, SSN) are stored but never sent to the model; Plip
-asks before using them.
+(passport, card numbers, SSN) are stored but never sent to the model, only
+what kind they are; Plip asks before using them.
 """
 from __future__ import annotations
 
@@ -37,14 +37,33 @@ SENSITIVE_RE = re.compile(r"passport|social security|\bssn\b|card number|credit 
                           re.IGNORECASE)
 
 
-def looks_sensitive(key: str, value: str) -> bool:
-    if SENSITIVE_RE.search(key) or SENSITIVE_RE.search(value):
-        return True
+LABEL_RE = re.compile(r"[^\W\d_]+(?:[ '’&./-]+[^\W\d_]+)*")      # words only: "wifi password", "driver's license"
+
+
+def sensitive_kind(key: str, value: str) -> str:
+    """What makes a fact sensitive ("passport", "card number"), or "" when nothing does."""
+    found = SENSITIVE_RE.search(key) or SENSITIVE_RE.search(value)
+    if found:
+        return found.group(0).lower()
     for candidate in re.findall(r"(?:\d[ -]?){13,19}", value):       # card-like numbers anywhere
         digits = re.sub(r"\D", "", candidate)
         if 13 <= len(digits) <= 19 and _luhn(digits):
-            return True
-    return bool(re.search(r"\b\d{3}-\d{2}-\d{4}\b", value))          # SSN shape
+            return "card number"
+    return "ssn" if re.search(r"\b\d{3}-\d{2}-\d{4}\b", value) else ""   # SSN shape
+
+
+def looks_sensitive(key: str, value: str) -> bool:
+    return bool(sensitive_kind(key, value))
+
+
+def private_label(value: str) -> str:
+    """Names a sensitive note without any of it: "passport number: X1234567" -> "passport number"."""
+    label = value.split(":", 1)[0].strip() if ":" in value else ""
+    # The name before a colon stays only while it can't be the secret: a few words, no digits, no "… is …".
+    if (LABEL_RE.fullmatch(label) and len(label.split()) <= 4 and SENSITIVE_RE.search(label)
+            and not re.search(r"\b(?:is|are|was|were)\b", label, re.IGNORECASE)):
+        return label
+    return sensitive_kind("note", value) or "private detail"
 
 
 def _luhn(digits: str) -> bool:
@@ -171,8 +190,9 @@ class Memory:
         candidates = [fact for fact in self.facts if fact.key == key]
         return min(candidates, key=lambda fact: (fact.rank, -fact.at)) if candidates else None
 
-    def values(self, key: str) -> list[str]:
-        facts = sorted((fact for fact in self.facts if fact.key == key), key=lambda fact: (fact.rank, -fact.at))
+    def values(self, key: str, sensitive: bool = True) -> list[str]:
+        facts = sorted((fact for fact in self.facts if fact.key == key and (sensitive or not fact.sensitive)),
+                       key=lambda fact: (fact.rank, -fact.at))
         return [fact.value for fact in facts]
 
     def profile(self) -> dict[str, str]:
@@ -202,11 +222,11 @@ class Memory:
         for key, value in profile.items():
             if key in {"name.first", "name.last"} and "name.full" in profile:
                 continue
-            extra = self.values(key)[1:3] if key in MULTI else []
+            extra = self.values(key, sensitive=False)[1:3] if key in MULTI else []
             lines.append(f"- {KEYS[key].lower()}: {value}" + (f" (also {', '.join(extra)})" if extra else ""))
         notes = [fact for fact in sorted(self.facts, key=lambda fact: (fact.rank, -fact.at)) if fact.key == "note"]
         for fact in notes[:25]:
-            lines.append(f"- {'(sensitive, ask before using) ' + fact.value.split(':')[0] if fact.sensitive else fact.value}")
+            lines.append(f"- {'(sensitive, ask before using) ' + private_label(fact.value) if fact.sensitive else fact.value}")
         sensitive = [fact for fact in self.facts if fact.sensitive and fact.key != "note"]
         if sensitive:
             lines.append("- saved but private (ask first): " + ", ".join(sorted({KEYS.get(f.key, f.key) for f in sensitive})))
