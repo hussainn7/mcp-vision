@@ -462,3 +462,21 @@ def test_the_controller_says_the_shortcut_they_picked():
     controller.on_final("")
     assert statuses[-1] == "Didn't catch that - hold Option+Command and talk"
     assert view.calls[-1] == ("failed", "I didn't catch that. Hold ⌥⌘ and try again.")
+
+
+def test_the_island_lets_plips_own_clicks_through_and_ignores_the_cursor_it_parked():
+    from mcp_vision.buddy.clear_path import clear, on_clear
+    from mcp_vision.buddy.island_macos import PARK_SLOP, YIELD_SECONDS, HoverGate
+
+    gate = HoverGate()
+    assert gate.takes((500, 900), over=True, now=0.0)                       # the user hovering: it takes the mouse
+    gate.plip_moved((500, 900), now=10.0)                                    # plip clicks a tab under the notch
+    assert not gate.takes((500, 900), over=True, now=10.0 + YIELD_SECONDS / 2)     # click-through while it acts
+    assert not gate.takes((500 + PARK_SLOP / 2, 900), over=True, now=20.0)  # where plip left it: not a hover
+    assert gate.takes((560, 900), over=True, now=20.0)                       # they moved it: theirs again
+    heard = []
+    stop = on_clear(lambda points, act: heard.append((points, act)))
+    clear([(10, 20)])
+    stop()
+    clear([(30, 40)])
+    assert heard == [([(10.0, 20.0)], True)]

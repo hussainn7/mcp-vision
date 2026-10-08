@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from mcp_vision.buddy.clear_path import clear
 from mcp_vision.buddy.geometry import Rect
 
 APP_DIRS = ("/Applications", "/Applications/Utilities", "/System/Applications",
@@ -417,6 +418,7 @@ class MacHost(PortableHost):
     def click(self, x: float, y: float, button: str = "left", count: int = 1) -> None:
         import Quartz
 
+        clear([(x, y)])                                  # the notch island lets this one through
         point = Quartz.CGPointMake(x, y)
         down, up, which = {
             "right": (Quartz.kCGEventRightMouseDown, Quartz.kCGEventRightMouseUp, Quartz.kCGMouseButtonRight),
@@ -435,6 +437,7 @@ class MacHost(PortableHost):
         """Wheel scrolling in small line steps, aimed at (x, y)."""
         import Quartz
 
+        clear([(x, y)])
         point = Quartz.CGPointMake(x, y)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(
             None, Quartz.kCGEventMouseMoved, point, Quartz.kCGMouseButtonLeft))
@@ -467,6 +470,7 @@ class MacHost(PortableHost):
         """The pointer to (x, y), nothing pressed: whatever lights up under it does so before a scroll there."""
         import Quartz
 
+        clear([(x, y)])
         move = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, Quartz.CGPointMake(x, y),
                                               Quartz.kCGMouseButtonLeft)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
@@ -519,6 +523,7 @@ class MacHost(PortableHost):
     def drag(self, x1: float, y1: float, x2: float, y2: float) -> None:
         import Quartz
 
+        clear([(x1, y1), (x2, y2)])
         left = Quartz.kCGMouseButtonLeft
         start, end = Quartz.CGPointMake(x1, y1), Quartz.CGPointMake(x2, y2)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap,
