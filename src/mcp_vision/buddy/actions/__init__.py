@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from mcp_vision.buddy.actions.base import ActionContext, ActionError, ActionResult, ActionSpec, Preview
-from mcp_vision.buddy.actions.engine import ActionEngine, ActionLog, Outcome, answer_kind
+from mcp_vision.buddy.actions.engine import ActionEngine, ActionLog, Consent, Outcome, answer_kind
 
 
 def all_specs() -> list[ActionSpec]:
@@ -24,4 +24,4 @@ SKILLS = {
 }
 
 __all__ = ["SKILLS", "ActionContext", "ActionEngine", "ActionError", "ActionLog", "ActionResult", "ActionSpec",
-           "Outcome", "Preview", "all_specs", "answer_kind"]
+           "Consent", "Outcome", "Preview", "all_specs", "answer_kind"]

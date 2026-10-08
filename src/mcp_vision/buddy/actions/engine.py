@@ -34,6 +34,68 @@ def answer_kind(text: str) -> str:
     return ""
 
 
+# The consequential things a step does, by name. A yes covers a step only when both name the same thing.
+_DOINGS = {
+    "send": r"send|sending",
+    "delete": r"delete|deleting|remove|removing|erase|erasing|trash|trashing|discard|discarding|wipe|wiping",
+    "submit": r"submit|submitting",
+    "post": r"post|posting|publish|publishing",
+    "apply": r"apply|applying",
+    "tidy": r"tidy|tidying|organi[sz]e|organi[sz]ing|clean(?:ing)? (?:it |them |this |that )?up",
+    "fill": r"fill|filling",
+    "attach": r"attach|attaching|upload|uploading",
+    "quit": r"quit|quitting|cmd\+q",
+    "sign out": r"(?:sign|log)(?:ging)? ?out|logout",
+    "unsubscribe": r"unsubscribe|unsubscribing",
+    "merge": r"merge|merging",
+    "deploy": r"deploy|deploying",
+}
+_DOING_RES = {name: re.compile(rf"\b(?:{pattern})\b", re.IGNORECASE) for name, pattern in _DOINGS.items()}
+# Spending money always gets its card, however clearly they said so.
+MONEY_RE = re.compile(r"\b(buy|buying|purchas\w*|order|ordering|pay|paying|payment|checkout|check ?out|book|booking|"
+                      r"reserv\w*|transfer\w*|donat\w*|subscribe|subscribing|tip)\b|[$€£¥]", re.IGNORECASE)
+_HOLD_RE = re.compile(r"\b(don'?t|do not|not|never|no|wait|hold|later|before|after|unless|instead|yet|first)\b",
+                      re.IGNORECASE)
+_ASKING_RE = re.compile(r"^\W*(should|shall|do|does|did|is|are|was|what|why|how|when|where|which|who|whose)\b",
+                        re.IGNORECASE)
+
+
+def doings(text: str) -> set[str]:
+    """The consequential things a sentence talks about doing: {"send"}, {"delete", "fill"}, ..."""
+    return {name for name, pattern in _DOING_RES.items() if pattern.search(text or "")}
+
+
+@dataclass
+class Consent:
+    """A yes the user already gave to Plip's own question, so the confirm card doesn't ask again.
+
+    "Want me to send it?" "Yes." That was the confirmation: the step it described (the next one that
+    names the same thing, once, this request) runs without a card. A request in their own words ("send
+    it", "apply to this job") is not a yes to anything yet: it gets its one card. Never a step that spends
+    money, never a card with its own question, never a yes with a "but", "wait" or "not yet".
+    """
+
+    doings: set[str]
+
+    @classmethod
+    def given(cls, transcript: str, asked: str = "") -> Consent | None:
+        text = " ".join((transcript or "").split())
+        if not asked or answer_kind(text) != "yes" or _ASKING_RE.match(text):
+            return None
+        if _HOLD_RE.search(YES_RE.sub("", text, count=1)):
+            return None
+        found = doings(asked) | doings(text)
+        return cls(found) if found else None
+
+    def covers(self, preview: Preview) -> bool:
+        text = f"{preview.title} {preview.confirm}"
+        if preview.firm or MONEY_RE.search(text):
+            return False
+        matched = self.doings & doings(text)
+        self.doings -= matched                     # one step per yes
+        return bool(matched)
+
+
 @dataclass
 class Pending:
     spec: ActionSpec
@@ -50,6 +112,7 @@ class Outcome:
     result: ActionResult | None = None
     preview: Preview | None = None
     message: str = ""
+    agreed: bool = False           # it would have asked, but they'd already said yes
     hint: str = ""                 # for the model: what to try instead (ActionError.hint)
 
     @property
@@ -117,7 +180,8 @@ class ActionEngine:
                 for spec in self.specs.values()]
 
     # -- running -----------------------------------------------------------------------------
-    async def handle(self, name: str, args: dict | None = None) -> Outcome:
+    async def handle(self, name: str, args: dict | None = None, consent: Consent | None = None) -> Outcome:
+        """Run an action, or hold it for a yes. ``consent``: a yes they already gave covers it."""
         args = dict(args or {})
         spec = self.specs.get(name)
         if spec is None:
@@ -135,6 +199,10 @@ class ActionEngine:
                 return Outcome("failed", spec, args, message=_friendly(exc))
             if preview is None:                         # this one needs no yes (a plain click, an ordinary key)
                 return await self._run(spec, args)
+            if consent is not None and consent.covers(preview):
+                outcome = await self._run(spec, args, preview.state)
+                outcome.agreed = True
+                return outcome
             self.pending = Pending(spec, args, preview)
             return Outcome("pending", spec, args, preview=preview)
         return await self._run(spec, args)

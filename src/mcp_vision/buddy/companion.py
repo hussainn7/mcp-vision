@@ -229,6 +229,9 @@ class Companion:
         self._trail: list[str] = []                   # the last few actions, to notice the same one on repeat
         self._hiccups = 0                             # steps that failed or went nowhere this task
         self._screens_seen: dict[str, int] = {}       # screens visited this task, to notice going in circles
+        self._asked = ""                              # the question Plip's last reply ended on
+        self._consent = None                          # a yes they gave this request: the step it names won't ask
+        self._authored = False                        # Plip typed something this request (they haven't seen it yet)
         self.settle_interval = settle_interval
         self.usage = usage                      # buddy.usage.UsageLog, or None to keep no record
         self.usage_kind = usage_kind
@@ -338,6 +341,8 @@ class Companion:
             result = TurnResult(transcript=transcript, state="cancelled")
         result.usage = meter.usage if meter.turns else None
         result.outcome = _outcome(result)
+        self._asked = _question(result.spoken) if result.state == "done" and not result.pending else ""
+        self._consent, self._authored = None, False   # a yes lasts one request
         self._record(meter, result)
         return result
 
@@ -365,6 +370,9 @@ class Companion:
             pass                                      # bookkeeping must never break a turn
 
     async def _session(self, transcript: str) -> TurnResult:
+        from mcp_vision.buddy.actions import Consent
+
+        asked, self._asked = self._asked, ""
         if self.actions is not None and self.actions.pending is not None:
             from mcp_vision.buddy.actions import answer_kind
 
@@ -376,6 +384,8 @@ class Companion:
             else:
                 self.actions.cancel_pending()          # they moved on to something else
                 self.emit("confirm", cleared=True)
+        # "Yes" to Plip's "want me to send it?" was the confirmation: the step it named doesn't ask again.
+        self._consent = Consent.given(transcript, asked)
         waiting, self._goal_waiting = self._goal_waiting, False
         if self._goal and CONTINUE_RE.match(transcript):
             return await self._resume(transcript)       # the same steps, picked back up: a retype is still a repeat
@@ -1053,7 +1063,10 @@ class Companion:
                 self.actions.ctx.state["stale_map"] = True    # the numbers the model saw are gone (typing moves none)
         label = spec.describe(tag.args) if spec else tag.name.replace("_", " ")
         self.emit("step", id=step_id, label=label, status="active")
-        outcome = await self.actions.handle(tag.name, tag.args)
+        consent = None if self._authored else self._consent
+        outcome = await self.actions.handle(tag.name, tag.args, consent=consent)
+        if tag.name in _AUTHORING and outcome.status == "done":
+            self._authored = True
         if outcome.status == "pending":
             preview = outcome.preview
             result.pending = preview.title
@@ -1079,7 +1092,8 @@ class Companion:
             result.opened = label if action_result.opens else ""
             if tag.name in _AUTHORING:
                 result.typed.append(str(tag.args.get("text") or ""))
-            self.emit("step", id=step_id, label=label, status="done", detail=action_result.detail)
+            detail = "you said yes" if outcome.agreed else action_result.detail
+            self.emit("step", id=step_id, label=label, status="done", detail=detail)
             self.emit("action", name=tag.name, status="done", label=label, detail=action_result.detail,
                       items=action_result.items)
             if action_result.say:
@@ -1139,6 +1153,22 @@ def _takes_effort(brain: Any) -> bool:
 def reply_asks(spoken: str) -> bool:
     """Does the reply end by asking the user something?"""
     return "?" in spoken.strip()[-160:]
+
+
+def _question(spoken: str) -> str:
+    """The question a reply ends on, or "" when it doesn't ask.
+
+    "Want me to send it?" on its own; "I'm about to send it. Can you confirm?" with the sentence
+    before, which says what "it" is.
+    """
+    if not reply_asks(spoken):
+        return ""
+    sentences = [part.strip() for part in re.findall(r"[^.!?]+[.!?]*", spoken.strip()) if part.strip()]
+    last = max(index for index, sentence in enumerate(sentences) if "?" in sentence)
+    from mcp_vision.buddy.actions.engine import doings
+
+    start = last if doings(sentences[last]) or last == 0 else last - 1
+    return " ".join(sentences[start:last + 1])
 
 
 def _clip(text: str, limit: int) -> str:

@@ -26,6 +26,7 @@ class Preview:
     lines: list[str] = field(default_factory=list)
     confirm: str = "Do it"                  # button label
     state: Any = None                       # whatever run() needs (e.g. the computed move plan)
+    firm: bool = False                      # the card itself has a question: always shown, a yes in words never covers it
 
 
 @dataclass
