@@ -77,3 +77,6 @@ Add these repository secrets (Settings → Secrets and variables → Actions):
 | `PLIP_SUPABASE_KEY` | its **publishable** key (`sb_publishable_…`); the build refuses a secret one |
 
 Without the two Supabase secrets the DMG doesn't ask anyone to sign in.
+
+Without the Apple secrets a tag stops instead of publishing an unsigned DMG. Run the workflow by hand
+(Actions → release dmg → Run workflow) for an ad hoc test build; its DMG is kept on the run's page.
