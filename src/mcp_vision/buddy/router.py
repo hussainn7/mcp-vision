@@ -25,6 +25,15 @@ _SCREEN_WORDS = re.compile(
 )
 _POINT_WORDS = re.compile(r"\b(where|point|show me|which (button|menu|icon|one)|find the|locate)\b", re.I)
 _CHAT_WORDS = re.compile(r"^\s*(hi|hey|hello|thanks|thank you|good (morning|night|evening)|how are you)\b", re.I)
+# Asking how to do something: a walkthrough of what's on their screen, so it's worth a look and a deeper think.
+_HOWTO = re.compile(r"\b(how (do|can|would|should) i|how to|walk me|step by step|show me how|guide me|teach me)\b", re.I)
+# Worth a deeper think: a walkthrough, debugging, or an explanation they asked to go into.
+_DEEP = re.compile(
+    r"\b(how (do|can|would|should) i|how to|walk me|step by step|show me how|guide me|teach me|"
+    r"help me (set|fix|figure|debug|understand|get|make|create|build)|debug|in detail|go deeper|"
+    r"why (is|isn't|does|doesn't|did|didn't|won't|can't|am i|do i)|explain (how|why|in))\b",
+    re.IGNORECASE,
+)
 _GENERAL_LEADS = re.compile(
     r"^\s*(what('s| is| are| was| were)|who|when|why|define|tell me (a|about)|explain|how (many|much|far|long|old)|"
     r"translate|convert|calculate)\b",
@@ -46,6 +55,7 @@ def rule_route(transcript: str) -> Route:
     else:
         intent, needs_screen = "explain", True
     return Route(needs_screen=needs_screen, intent=intent, provider="rules", confidence=0.6,
+                 detailed=intent != "chat" and bool(_DEEP.search(text)),
                  latency_ms=round((time.perf_counter() - started) * 1000, 2))
 
 
@@ -114,11 +124,15 @@ class JevRouter:
         except Exception:
             fallback = await self.fallback.route(transcript, screens)
             return Route(**{**fallback.__dict__, "provider": "rules (jev unavailable)"})
-        needs_screen = needs >= self.screen_threshold or intent.choice in {"point", "explain"}
+        detailed = depth.choice == "detailed" and depth.p("detailed") >= 0.6
+        # A walkthrough starts from where they are: Jev said "no screen" to some of them ("walk me through
+        # turning on two factor in github"), and the first step was then guessed blind.
+        needs_screen = (needs >= self.screen_threshold or intent.choice in {"point", "explain"}
+                        or (detailed and bool(_HOWTO.search(transcript))))
         return Route(
             needs_screen=needs_screen, intent=intent.choice,
             cursor_screen_only=bool(scope and scope.choice == "cursor" and scope.confidence >= 0.6),
-            detailed=depth.choice == "detailed" and depth.p("detailed") >= 0.6,
+            detailed=detailed,
             provider="jev", confidence=intent.confidence,
             latency_ms=round((time.perf_counter() - started) * 1000, 1),
         )
