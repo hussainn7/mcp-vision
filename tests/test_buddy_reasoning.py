@@ -278,3 +278,29 @@ def test_check_ins_follow_the_checklist_the_user_sees():
     assert 'step 3 of 3 ("save pdf")' in third and "next step," in third
     history = brain.seen[1][1][-2].text                     # what the model said on step one, as it reads it back
     assert history.startswith("[STEPS:3] [PLAN: open file menu | pick export | save pdf] First, open the File menu.")
+
+
+def test_a_point_on_a_listed_control_lands_on_it_without_waiting_for_a_snap():
+    class Snapper:
+        def __init__(self):
+            self.asked = []
+
+        async def snap(self, target):
+            self.asked.append(target.label)
+            return target
+
+    context = ScreenContext(app="Chrome", controls=[Control("Invite", "button", 1350.0, 86.0)])
+
+    class FixedContext:
+        def snapshot(self):
+            return context
+
+    # The map lists Invite at 1143,73 in the 1280 px screenshot; Plip's pixel guess elsewhere still gets snapped.
+    brain = ScriptedBrain([["Invite them up here. [POINT:1143,73:Invite] Or the help icon. [POINT:40,700:help]"]])
+    snapper, events = Snapper(), Events()
+    result = asyncio.run(Companion(brain=brain, capturer=capturer(), context=FixedContext(), snapper=snapper,
+                                   observer=events).respond("where do i invite people"))
+    invite, help_icon = result.targets
+    assert (invite.x, invite.y, invite.source) == (1350.0, 86.0, "snapped")   # the control's exact center
+    assert snapper.asked == ["help"]                                            # no ~190 ms snap for the listed one
+    assert [point["snapped"] for point in events.kinds("point")] == [True, False]

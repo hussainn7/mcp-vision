@@ -630,7 +630,11 @@ class Companion:
             target = resolve_target(event, shots)
             if target is None:
                 return
-            if self.snapper is not None:
+            listed = _listed(target, getattr(self, "_context", None))
+            if listed is not None:
+                # It aimed with the screen map's own numbers: already on the control, nothing to snap.
+                target = replace(target, x=listed.x, y=listed.y, source="snapped")
+            elif self.snapper is not None:
                 try:
                     # Snapping refines the point; it must not hold up the reply stream.
                     target = await asyncio.wait_for(self.snapper.snap(target), self.snap_timeout)
@@ -705,6 +709,14 @@ def _outcome(result: TurnResult) -> str:
     if result.failed and not result.did:
         return "failed"
     return "done" if result.did or result.steps_total else "answered"
+
+
+def _listed(target: Target, context: ScreenContext | None, tolerance: float = 3.0):
+    """The screen map control whose center this point is (it was written as whole pixels), if any."""
+    if context is None:
+        return None
+    return next((control for control in context.ids.values()
+                 if abs(control.x - target.x) <= tolerance and abs(control.y - target.y) <= tolerance), None)
 
 
 def _history_text(reply: ReplyStream, targets: list[Target], did: list[str] | None = None) -> str:
