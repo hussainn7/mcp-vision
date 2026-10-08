@@ -30,6 +30,13 @@ class Rect:
     def contains(self, x: float, y: float) -> bool:
         return self.x <= x < self.x + self.width and self.y <= y < self.y + self.height
 
+    def intersect(self, other: Rect) -> Rect | None:
+        """The overlap of two rects, or ``None`` when they don't overlap."""
+        left, top = max(self.x, other.x), max(self.y, other.y)
+        right = min(self.x + self.width, other.x + other.width)
+        bottom = min(self.y + self.height, other.y + other.height)
+        return Rect(left, top, right - left, bottom - top) if right > left and bottom > top else None
+
     def clamp(self, x: float, y: float, inset: float = 1.0) -> tuple[float, float]:
         """Keep a point inside the rect so the buddy never flies off-screen."""
         return (min(max(x, self.x + inset), self.x + self.width - inset),

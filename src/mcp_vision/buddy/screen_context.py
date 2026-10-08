@@ -29,6 +29,7 @@ class ScreenContext:
     window: str = ""
     selection: str = ""
     controls: list[Control] = field(default_factory=list)
+    focused: str = ""             # the text box typing goes into, like 'search field "Search"'
     ids: dict[int, Control] = field(default_factory=dict, compare=False, repr=False)   # [n] in the last describe
 
     @property
@@ -57,6 +58,8 @@ class ScreenContext:
         lines: list[str] = []
         if self.app:
             lines.append(f"frontmost app: {self.app}" + (f' (window "{self.window[:80]}")' if self.window else ""))
+        if self.focused:
+            lines.append(f"typing goes into: {self.focused}")
         if self.selection.strip():
             lines.append(f'selected text: "{" ".join(self.selection.split())[:600]}"')
         mapped = _map_controls(self.controls, shots)

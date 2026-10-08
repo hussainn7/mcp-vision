@@ -160,3 +160,71 @@ def test_watcher_needs_a_change_that_then_settles():
 
 def test_capturer_fingerprint_is_small():
     assert len(capturer().fingerprint()) == 64 * 40
+
+
+class FakeAX:
+    """Just enough of ApplicationServices for the screen map walk: elements are dicts with a frame."""
+
+    kAXValueCGPointType, kAXValueCGSizeType = "point", "size"
+
+    def AXUIElementCopyAttributeValue(self, element, attribute, _):
+        if attribute in {"AXPosition", "AXSize"} and "frame" in element:
+            return 0, (attribute, element["frame"])
+        return (0, element[attribute]) if attribute in element else (-25212, None)
+
+    def AXValueGetValue(self, value, kind, _):
+        from types import SimpleNamespace
+
+        x, y, width, height = value[1]
+        return True, SimpleNamespace(x=x, y=y) if kind == "point" else SimpleNamespace(width=width, height=height)
+
+
+def ax(role, frame=None, title="", children=()):
+    node = {"AXRole": role, "AXChildren": list(children)}
+    if frame is not None:
+        node["frame"] = frame
+    if title:
+        node["AXTitle"] = title
+    return node
+
+
+def test_the_screen_map_only_lists_what_is_actually_on_screen():
+    from mcp_vision.buddy.ax_context import MacAXContext
+
+    # A full-screen Chrome window scrolled down a page, as this Mac's Accessibility tree reports it: the hidden
+    # toolbar sits above the screen, its tabs are listed twice, the skip link is a 1x1 dot, links scrolled off
+    # the top are pinned to the page's top edge as slivers, and a list scrolled inside the page hides its rows.
+    tab = ax("AXRadioButton", (380, -60, 60, 30), "Recordings tab")
+    toolbar = ax("AXToolbar", (0, -100, 1512, 63), children=[ax("AXButton", (20, -90, 30, 30), "Back"), tab, tab])
+    inner = ax("AXScrollArea", (800, 400, 300, 200), children=[
+        ax("AXList", (800, 100, 300, 800), children=[ax("AXButton", (820, 150, 80, 30), "Row above"),
+                                                    ax("AXButton", (820, 450, 80, 30), "Row shown")])])
+    page = ax("AXWebArea", (0, 37, 1512, 945), children=[
+        ax("AXLink", (0, 37, 1, 1), "Skip to content"),
+        ax("AXLink", (250, 37, 60, 1.5), "1 Branch"),
+        ax("AXButton", (500, 20, 100, 40), "Half scrolled"),
+        ax("AXButton", (1300, 120, 100, 30), "Invite"),
+        inner])
+    window = ax("AXWindow", (0, 37, 1512, 945), "PostHog", children=[toolbar, ax("AXScrollArea", (0, 37, 1512, 945),
+                                                                                  children=[page])])
+    menubar = ax("AXMenuBar", (0, 0, 1512, 37), children=[ax("AXMenuBarItem", (60, 4, 40, 28), "File")])
+
+    controls = MacAXContext()._walk(FakeAX(), [menubar, window])
+
+    assert [c.label for c in controls] == ["File", "Half scrolled", "Invite", "Row shown"]
+    half = next(c for c in controls if c.label == "Half scrolled")
+    assert (half.x, half.y) == (550, 48.5)          # the middle of the part on screen, so a click lands on it
+
+
+def test_the_screen_map_says_where_typing_goes_but_never_what_is_typed():
+    from mcp_vision.buddy.ax_context import _focused
+
+    search = {"AXRole": "AXTextField", "AXDescription": "Address and search bar", "AXValue": "secret query"}
+    password = {"AXRole": "AXTextField", "AXSubrole": "AXSecureTextField", "AXTitle": "Password", "AXValue": "hunter2"}
+    assert _focused(FakeAX(), search) == 'text field "Address and search bar"'
+    assert _focused(FakeAX(), password) == 'password field "Password"'
+    assert _focused(FakeAX(), {"AXRole": "AXButton", "AXTitle": "OK"}) == ""
+    screen = ScreenInfo(1, Rect(0, 0, 1512, 982), is_cursor_screen=True)
+    text = ScreenContext(app="Chrome", focused=_focused(FakeAX(), search)).describe(
+        [Screenshot(screen=screen, data=b"jpg", width=1280, height=831)])
+    assert 'typing goes into: text field "Address and search bar"' in text and "secret" not in text
