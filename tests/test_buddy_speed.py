@@ -28,20 +28,20 @@ def plip(context, **kw):
 def test_it_looks_as_soon_as_the_screen_map_stops_changing():
     page = Loading(changes=4)
     started = time.perf_counter()
-    assert asyncio.run(plip(page)._settle(5.0)) is True
-    assert time.perf_counter() - started < 1.0 and page.reads == 6        # 4 changes, then 2 quiet reads
+    assert asyncio.run(plip(page)._settle(5.0)) == page.snapshot().signature()
+    assert time.perf_counter() - started < 1.0 and page.reads == 7        # 4 changes, 2 quiet reads (+1 here)
 
 
 def test_a_screen_that_keeps_changing_waits_out_the_limit():
     page = Loading(changes=10_000)
     started = time.perf_counter()
-    assert asyncio.run(plip(page)._settle(0.3)) is False
+    assert asyncio.run(plip(page)._settle(0.3)) is not None             # what it ended on, never settled
     assert 0.3 <= time.perf_counter() - started < 1.0
 
 
 def test_without_a_screen_map_it_only_waits_a_moment():
     started = time.perf_counter()
-    assert asyncio.run(plip(None)._settle(0.2)) is False
+    assert asyncio.run(plip(None)._settle(0.2)) is None
     assert time.perf_counter() - started < 0.5
 
 

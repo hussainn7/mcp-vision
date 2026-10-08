@@ -20,6 +20,27 @@ def fingerprint(image: Image.Image) -> bytes:
     return image.convert("L").resize(FINGERPRINT_SIZE, Image.Resampling.BILINEAR).tobytes()
 
 
+GLANCE_SIZE = (160, 100)
+GLANCE_LEVEL = 24             # gray levels a pixel has to move to count
+GLANCE_PIXELS = 3             # this many pixels moving is a change (a checkbox ticking moves ~4, JPEG noise 0)
+
+
+def glance(image: Image.Image, box: tuple[float, float, float, float] | None = None) -> bytes:
+    """A small gray thumbnail of ``box`` (pixels in ``image``) for "did anything change?"."""
+    if box is not None:
+        left, top, right, bottom = (int(round(v)) for v in box)
+        if right - left > 8 and bottom - top > 8:
+            image = image.crop((left, top, right, bottom))
+    return image.convert("L").resize(GLANCE_SIZE, Image.Resampling.BILINEAR).tobytes()
+
+
+def changed(a: bytes, b: bytes) -> bool:
+    """True when enough pixels moved for something real to have happened (not JPEG noise, which moves none)."""
+    if not a or not b or len(a) != len(b):
+        return True
+    return sum(1 for x, y in zip(a, b, strict=True) if abs(x - y) > GLANCE_LEVEL) >= GLANCE_PIXELS
+
+
 def difference(a: bytes, b: bytes) -> float:
     """Mean absolute pixel difference, 0..255."""
     if not a or not b or len(a) != len(b):

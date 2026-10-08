@@ -39,13 +39,16 @@ def resolve(ctx: ActionContext, args: dict, *, key: str = "") -> tuple[float, fl
     raw_id = args.get(f"{prefix}id")
     if raw_id is not None:
         if ctx.state.get("scrolled"):
-            raise ActionError("The page scrolled, so I'll take a fresh look first.")
+            raise ActionError("The page scrolled, so I'll take a fresh look first.",
+                              hint="the [id] numbers changed when it scrolled: aim by its text or by x,y from a fresh "
+                                   "look instead")
         try:
             control = context.ids.get(int(str(raw_id).lstrip("#"))) if context is not None else None
         except ValueError:
             control = None
         if control is None:
-            raise ActionError(f"I can't find number {raw_id} on screen anymore. Let me look again.")
+            raise ActionError(f"I can't find number {raw_id} on screen anymore. Let me look again.",
+                              hint="aim by its text or by x,y from the screenshot instead")
         return control.x, control.y, control.label
     text = args.get(f"{prefix}text")
     if text:
@@ -53,7 +56,9 @@ def resolve(ctx: ActionContext, args: dict, *, key: str = "") -> tuple[float, fl
             found = candidate.find(str(text)) if candidate is not None else None
             if found is not None:
                 return found.x, found.y, found.label
-        raise ActionError(f"I don't see {text} on screen.")
+        raise ActionError(f"I don't see {text} on screen.",
+                          hint="it may be scrolled out of view or worded differently: scroll_to it, or aim by x,y "
+                               "from the screenshot")
     if f"{prefix}x" in args and f"{prefix}y" in args and shots:
         try:
             px, py = float(args[f"{prefix}x"]), float(args[f"{prefix}y"])
@@ -63,8 +68,24 @@ def resolve(ctx: ActionContext, args: dict, *, key: str = "") -> tuple[float, fl
         shot = next((item for item in shots if screen and item.screen.index == int(screen)), None) or \
             next((item for item in shots if item.screen.is_cursor_screen), shots[0])
         gx, gy = shot.to_global(px, py)
-        return gx, gy, str(args.get("label") or "there")
+        # Named by what it lands on, not what the model calls it: "Buy now" clicked by x,y still asks first.
+        return gx, gy, _under(ctx, context, gx, gy) or str(args.get("label") or "there")
     raise ActionError("Tell me what to click: a number from the screen map, its label, or x and y.")
+
+
+def _under(ctx: ActionContext, context, x: float, y: float, reach: float = 40.0) -> str:
+    """The label of the control a point lands on (the nearest center within ``reach`` points), or ""."""
+    for candidate in (context, None):
+        if candidate is None:
+            try:
+                candidate = ctx.observe()             # the map the model saw may be gone: read it fresh
+            except Exception:
+                candidate = None
+        controls = list(getattr(candidate, "controls", None) or [])
+        near = min(controls, key=lambda c: abs(c.x - x) + abs(c.y - y), default=None)
+        if near is not None and abs(near.x - x) <= reach and abs(near.y - y) <= reach:
+            return near.label
+    return ""
 
 
 def _glide(ctx: ActionContext, x: float, y: float, label: str) -> None:
@@ -91,7 +112,7 @@ def click(ctx: ActionContext, args: dict, state: tuple | None = None) -> ActionR
     _glide(ctx, x, y, label)
     ctx.host.click(x, y, button, count)
     verb = {("left", 1): "Clicked", ("left", 2): "Double-clicked"}.get((button, count), "Right-clicked")
-    return ActionResult(report=f"{verb.lower()} {label!r}", look_after=1.5, detail=f"{verb} {label[:30]}")
+    return ActionResult(report=f"{verb.lower()} {label!r}", look_after=0.15, settle=4.0, detail=f"{verb} {label[:30]}")
 
 
 # -- scroll -----------------------------------------------------------------------------------
@@ -221,8 +242,8 @@ def press(ctx: ActionContext, args: dict, state: str | None = None) -> ActionRes
     for _ in range(times):
         ctx.host.press(keys)
         time.sleep(0.05)
-    return ActionResult(report=f"pressed {keys}" + (f" x{times}" if times > 1 else ""), look_after=1.0,
-                        detail=f"Pressed {keys}")
+    return ActionResult(report=f"pressed {keys}" + (f" x{times}" if times > 1 else ""), look_after=0.15,
+                        settle=3.0, detail=f"Pressed {keys}")
 
 
 def drag(ctx: ActionContext, args: dict) -> ActionResult:

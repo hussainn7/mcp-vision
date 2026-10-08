@@ -11,6 +11,10 @@ screen when omitted). It can also act and plan::
 
     [DO:open_app {"name": "Safari"}]
     [PLAN: open settings | pick privacy | turn on two-factor]
+    [GOAL: find remote backend jobs on linkedin]
+
+``[GOAL:...]`` opens a task that takes several actions; Plip keeps looking and
+acting until ``[DONE]``.
 
 Action arguments are JSON and may contain brackets, so ``[DO:`` tags are
 scanned with a JSON-aware matcher. Tags never reach the speech engine. Each tag is
@@ -41,6 +45,7 @@ _MAX_TAG_LEN = 200
 _MAX_ACTION_LEN = 6000               # fill_form tags carry every field
 _ACTION_HEAD_RE = re.compile(r"\[\s*DO\s*:\s*(?P<name>[a-z][a-z_]{1,40})\s*", re.IGNORECASE)
 _PLAN_RE = re.compile(r"\[\s*PLAN\s*:(?P<steps>[^\[\]]*)\]", re.IGNORECASE)
+_GOAL_RE = re.compile(r"\[\s*GOAL\s*:(?P<goal>[^\[\]]*)\]", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -77,7 +82,12 @@ class PlanTag:
     steps: tuple[str, ...]
 
 
-Event = SpeechChunk | PointTag | StepsTag | DoneTag | ActionTag | PlanTag
+@dataclass(frozen=True)
+class GoalTag:
+    text: str
+
+
+Event = SpeechChunk | PointTag | StepsTag | DoneTag | ActionTag | PlanTag | GoalTag
 
 
 def _balanced_end(raw: str) -> int | None:
@@ -93,8 +103,8 @@ def _balanced_end(raw: str) -> int | None:
     return None
 
 
-def scan_special(raw: str) -> tuple[int, ActionTag | PlanTag | None] | None:
-    """Match a ``[DO:...]`` or ``[PLAN:...]`` tag at the start of ``raw``.
+def scan_special(raw: str) -> tuple[int, ActionTag | PlanTag | GoalTag | None] | None:
+    """Match a ``[DO:...]``, ``[PLAN:...]`` or ``[GOAL:...]`` tag at the start of ``raw``.
 
     Returns ``(length consumed, tag)``; the tag is ``None`` when malformed (it is
     dropped, never spoken). Returns ``None`` when more text is needed.
@@ -109,6 +119,13 @@ def scan_special(raw: str) -> tuple[int, ActionTag | PlanTag | None] | None:
             return close + 1, None
         steps = tuple(step.strip(" .") for step in match.group("steps").split("|") if step.strip(" ."))[:10]
         return match.end(), (PlanTag(steps) if steps else None)
+    if head.startswith("[GOAL:"):
+        match = _GOAL_RE.match(raw)
+        if match is None:
+            end = _balanced_end(raw)
+            return (end, None) if end is not None else None
+        goal = " ".join(match.group("goal").split()).strip(" .")[:200]
+        return match.end(), (GoalTag(goal) if goal else None)
     match = _ACTION_HEAD_RE.match(raw)
     if match is None:
         if len(raw) < 12 and "]" not in raw:
@@ -209,6 +226,7 @@ class ReplyStream:
         self.done = False                  # set by [DONE]
         self.actions: list[ActionTag] = []
         self.plan: tuple[str, ...] = ()
+        self.goal = ""                     # set by [GOAL: ...]
 
     @property
     def spoken_text(self) -> str:
@@ -225,7 +243,7 @@ class ReplyStream:
             self._text += raw[:start]
             raw = raw[start:]
             special = raw[:7].upper().replace(" ", "")
-            if special.startswith(("[DO:", "[PLAN:")):
+            if special.startswith(("[DO:", "[PLAN:", "[GOAL:")):
                 scanned = scan_special(raw)
                 if scanned is None:
                     if len(raw) > _MAX_ACTION_LEN:       # runaway tag: drop it
@@ -239,6 +257,8 @@ class ReplyStream:
                     events.extend(self._release(merge=False))
                     if isinstance(tag, ActionTag):
                         self.actions.append(tag)
+                    elif isinstance(tag, GoalTag):
+                        self.goal = tag.text
                     else:
                         self.plan = tag.steps
                     events.append(tag)
@@ -289,10 +309,10 @@ class ReplyStream:
             leftover, self._raw = self._raw, ""
             if not leftover:
                 break
-            if not re.match(r"\[\s*(?:POINT|STEPS|DONE|DO|PLAN)\b", leftover, re.IGNORECASE):
+            if not re.match(r"\[\s*(?:POINT|STEPS|DONE|DO|PLAN|GOAL)\b", leftover, re.IGNORECASE):
                 self._text += leftover
                 break
-            if re.match(r"\[\s*(?:DO|PLAN)\b", leftover, re.IGNORECASE) and "]" in leftover:
+            if re.match(r"\[\s*(?:DO|PLAN|GOAL)\b", leftover, re.IGNORECASE) and "]" in leftover:
                 # A broken action tag: drop it and parse whatever came after it.
                 events.extend(self.feed(leftover[leftover.find("]") + 1:]))
                 continue

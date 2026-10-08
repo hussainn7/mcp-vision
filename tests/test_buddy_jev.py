@@ -155,7 +155,7 @@ def test_jev_router_maps_typed_answers_to_route():
     assert route.provider == "jev" and not route.needs_screen and route.detailed
     assert route.cursor_screen_only and route.intent == "answer"
     assert rec.calls[0][2]["state"] == {"user_said": "explain how vaccines work", "monitors": 2}
-    assert set(rec.calls[0][2]["questions"]) == {"needs_screen", "intent", "depth", "scope"}
+    assert set(rec.calls[0][2]["questions"]) == {"needs_screen", "intent", "depth", "scope", "task"}
 
 
 def test_jev_router_keeps_screen_for_point_intent_and_skips_scope_on_one_monitor():

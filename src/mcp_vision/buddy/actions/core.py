@@ -56,9 +56,9 @@ def open_app(ctx: ActionContext, args: dict) -> ActionResult:
             ctx.host.open_app(name)                     # LaunchServices may still know it
         except Exception as exc:
             raise ActionError(f"I couldn't find an app called {name}.") from exc
-        return ActionResult(detail=name)
+        return ActionResult(detail=name, settle=3.0, opens=True)
     ctx.host.open_app(path)
-    return ActionResult(detail=Path(path).stem)
+    return ActionResult(detail=Path(path).stem, settle=3.0, opens=True)
 
 
 def open_url(ctx: ActionContext, args: dict) -> ActionResult:
@@ -68,13 +68,13 @@ def open_url(ctx: ActionContext, args: dict) -> ActionResult:
     if not url:
         raise ActionError("That doesn't look like a web link.")
     ctx.host.open(url)
-    return ActionResult(detail=urllib.parse.urlparse(url).netloc or url)
+    return ActionResult(detail=urllib.parse.urlparse(url).netloc or url, settle=5.0, opens=True)
 
 
 def web_search(ctx: ActionContext, args: dict) -> ActionResult:
     query = _need(args, "query", "something to search for")
     ctx.host.open("https://www.google.com/search?q=" + urllib.parse.quote_plus(query))
-    return ActionResult(detail=query)
+    return ActionResult(detail=query, settle=4.0, opens=True)
 
 
 # -- files -----------------------------------------------------------------------------------
@@ -114,13 +114,13 @@ def _file_from(ctx: ActionContext, args: dict) -> str:
 def open_file(ctx: ActionContext, args: dict) -> ActionResult:
     path = _file_from(ctx, args)
     ctx.host.open(path)
-    return ActionResult(detail=os.path.basename(path))
+    return ActionResult(detail=os.path.basename(path), settle=3.0)
 
 
 def reveal_file(ctx: ActionContext, args: dict) -> ActionResult:
     path = _file_from(ctx, args)
     ctx.host.reveal(path)
-    return ActionResult(detail=os.path.basename(path))
+    return ActionResult(detail=os.path.basename(path), settle=3.0)
 
 
 # -- desktop ------------------------------------------------------------------------------------

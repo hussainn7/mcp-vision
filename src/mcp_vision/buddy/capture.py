@@ -134,6 +134,11 @@ class ScreenCapturer:
         image.save(buffer, format="JPEG", quality=self.quality, optimize=True)
         return Screenshot(screen=screen, data=buffer.getvalue(), width=width, height=height)
 
+    def glance(self) -> Image.Image:
+        """The cursor screen as it is right now, unencoded: did a step change it where the map can't see?"""
+        screen = order_cursor_first(self.screens())[0]
+        return self._grab(self._monitor_for(screen))
+
     def fingerprint(self) -> bytes:
         """A tiny grayscale thumbnail of the cursor screen for change detection."""
         from mcp_vision.buddy.watch import fingerprint

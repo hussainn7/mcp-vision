@@ -14,6 +14,7 @@ from typing import Protocol
 from mcp_vision.buddy.geometry import Screenshot
 
 MAX_CONTROLS = 70
+_DIGITS = re.compile(r"\d+")
 SELECTION_LIMIT = 3000        # characters of selected text the model sees (about 750 tokens at most)
 
 
@@ -59,6 +60,22 @@ class ScreenContext:
     def signature(self) -> str:
         """Changes when what's on screen changes (app, window, controls and where they are)."""
         parts = [self.app, self.window, *(f"{c.label}|{c.role}|{round(c.x)}|{round(c.y)}" for c in self.controls)]
+        return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
+
+    def settle_signature(self) -> str:
+        """For "has it stopped changing?": ``signature`` minus what moves on its own.
+
+        A clock, a counter or "2 min ago" on the page kept it from ever looking settled, so every step there
+        waited out the whole limit. Digits in labels are masked and positions snapped to a 16-point grid; the
+        window title counts as it is ("Loading 2 of 5" is still loading).
+        """
+        parts = [self.app, self.window,
+                 *(f"{_DIGITS.sub('#', c.label)}|{c.role}|{int(c.x) // 16}|{int(c.y) // 16}" for c in self.controls)]
+        return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
+
+    def content_signature(self) -> str:
+        """What's on the page, not where: a navigation that loads nothing new keeps it (going in circles)."""
+        parts = [f"{c.label}|{c.role}" for c in self.controls if "address" not in c.label.lower()]
         return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
 
     def describe(self, shots: list[Screenshot]) -> str:

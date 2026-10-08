@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
@@ -24,9 +26,11 @@ from typing import Any, Protocol
 
 from mcp_vision.buddy.conversation import Conversation, Turn
 from mcp_vision.buddy.geometry import Rect, ScreenInfo, Screenshot
-from mcp_vision.buddy.pointing import ActionTag, DoneTag, PlanTag, PointTag, ReplyStream, SpeechChunk, StepsTag
+from mcp_vision.buddy.pointing import (
+    ActionTag, DoneTag, GoalTag, PlanTag, PointTag, ReplyStream, SpeechChunk, StepsTag,
+)
 from mcp_vision.buddy.prompt import (
-    ACTION_FOLLOWUP, LOOK_FOLLOWUP, SYSTEM_PROMPT, guide_followup, system_prompt, user_turn_text,
+    ACTION_FOLLOWUP, AGENT_FOLLOWUP, LOOK_FOLLOWUP, SYSTEM_PROMPT, guide_followup, system_prompt, user_turn_text,
 )
 from mcp_vision.buddy.screen_context import ScreenContext
 from mcp_vision.buddy.usage import Request, Usage, estimate, image_tokens, text_tokens
@@ -78,6 +82,7 @@ class Route:
     intent: str = "explain"          # point | explain | answer | chat
     cursor_screen_only: bool = False # multi-display: send just the screen under the cursor
     detailed: bool = False           # walkthrough / deeper explanation wanted
+    multistep: bool = False          # doing it takes several actions ("open X and do Y", "find me jobs here")
     provider: str = "default"
     confidence: float = 0.0
     latency_ms: float = 0.0
@@ -125,6 +130,15 @@ class TurnResult:
     failed: list[str] = field(default_factory=list)       # actions that didn't work
     outcome: str = ""                # how the request ended (usage.OUTCOMES), set when it's over
     usage: Usage | None = None       # tokens the whole request used (as the brain reported, or estimated)
+    goal: str = ""                   # the multi-step task this request worked toward ([GOAL: ...])
+    acted: list[str] = field(default_factory=list)        # what this model turn's actions did (incl. failures)
+    settle: float | None = None      # an action changed the screen: wait up to this long for it to settle
+    hands: bool = False              # Plip clicked, scrolled or pressed keys on screen this request
+    opened: str = ""                 # this turn's last action opened something (a link, a page): what it was
+    verified: bool | None = None     # [DONE] after acting: True = the screen confirmed it, False = couldn't tell
+    hushed: bool = False             # a step failed: the rest of the reply was written as if it worked
+    muted: dict[int, str] = field(default_factory=dict)  # ...so those chunks (by position) aren't said, or only this
+    heard: int = 0                   # chunks the reply has streamed so far
 
 
 @dataclass
@@ -181,6 +195,7 @@ class Companion:
                  observer: Observer | None = None, watcher: Watcher | None = None,
                  walkthroughs: bool = True, guide_timeout: float = 90.0, max_guide_turns: int = 10,
                  actions: Any = None, notes: Callable[[], str] | None = None, max_followups: int = 3,
+                 max_agent_steps: int = 15,
                  capture_timeout: float = 6.0, usage: Any = None, usage_kind: str = "voice",
                  settle_interval: float = 0.15):
         self.brain = brain
@@ -203,6 +218,14 @@ class Companion:
         self.notes = notes
         self.capture_timeout = capture_timeout
         self.max_followups = max_followups
+        self.max_agent_steps = max_agent_steps        # click/scroll/type loops and goals get a bigger budget
+        self._goal = ""                               # the open multi-step task, until [DONE]
+        self._goal_waiting = False                    # the task stopped to ask the user something
+        self._rejected = 0                            # [DONE]s sent back this task because the last step didn't land
+        self._extra_note = ""                         # one-turn context for the model ("you were working toward…")
+        self._trail: list[str] = []                   # the last few actions, to notice the same one on repeat
+        self._hiccups = 0                             # steps that failed or went nowhere this task
+        self._screens_seen: dict[str, int] = {}       # screens visited this task, to notice going in circles
         self.settle_interval = settle_interval
         self.usage = usage                      # buddy.usage.UsageLog, or None to keep no record
         self.usage_kind = usage_kind
@@ -314,7 +337,7 @@ class Companion:
                 model=used.model or str(getattr(self.brain, "model", "") or ""), input=used.input,
                 output=used.output, cache_read=used.cache_read, cache_write=used.cache_write,
                 cost=round(used.price(engine), 6), estimated=used.estimated, turns=meter.turns,
-                actions=meter.actions[:40], outcome=result.outcome, goal=meter.turns > 1,
+                actions=meter.actions[:40], outcome=result.outcome, goal=bool(result.goal) or meter.turns > 1,
                 ms=int((time.time() - meter.started) * 1000)))
         except Exception:
             pass                                      # bookkeeping must never break a turn
@@ -331,22 +354,124 @@ class Companion:
             else:
                 self.actions.cancel_pending()          # they moved on to something else
                 self.emit("confirm", cleared=True)
+        waiting, self._goal_waiting = self._goal_waiting, False
+        if self._goal and CONTINUE_RE.match(transcript):
+            return await self._resume(transcript)
+        if waiting and self._goal:
+            # The task stopped to ask them something; this is most likely the answer, so the task goes on.
+            self._screens_seen = {}
+            self._extra_note = (f"(you were working toward: {self._goal}, and stopped to ask them something. if this "
+                                "answers it, carry on with the task; if they've moved on to something else, drop it.)")
+            result = await self._turn(transcript)
+            if not (result.acted or result.pending or result.finished or reply_asks(result.spoken)) \
+                    and result.goal in {"", self._goal}:
+                self._goal = ""                       # they moved on
+            return await self._drive(result)
+        self._goal = ""                               # a new request: any old task is over
+        self._trail, self._hiccups, self._screens_seen, self._rejected = [], 0, {}, 0
         result = await self._turn(transcript)
+        if not self._goal and (result.acted or result.pending) and not result.finished and result.state == "done" \
+                and (result.route.multistep or result.hands):
+            # The model forgot [GOAL] on something that clearly takes several steps: hold it to the request.
+            self._goal = result.goal = _clip(transcript, 160)
+            self.emit("goal", text=self._goal, done=False)
+        return await self._drive(result)
+
+    async def _resume(self, transcript: str) -> TurnResult:
+        """"Keep going": pick an unfinished goal back up with a fresh look and a fresh step budget."""
+        self.emit("phase", phase="thinking", transcript=transcript, guide=False)
+        self.emit("goal", text=self._goal, done=False)
+        result = TurnResult(transcript=transcript, acted=[f"the user said: {transcript}"], goal=self._goal)
+        self._screens_seen = {}                       # a fresh go: old visits don't count toward "going in circles"
+        return await self._drive(result)
+
+    def _continues(self, result: TurnResult) -> bool:
+        """Does this reply need another model turn on its own (no user input)?"""
+        if result.state != "done" or result.pending:
+            return False
+        if result.finished and (result.hands or self._goal):
+            return False
+        if result.reports:
+            return True                              # results it hasn't read yet (search hits, a shortcut's output)
+        if reply_asks(result.spoken):
+            return False                             # it asked them something: wait for the answer, don't push on
+        if result.look_after:
+            return True
+        return bool(self._goal and result.acted)     # working toward a goal and just did something: look again
+
+    async def _drive(self, result: TurnResult, turns: int = 1) -> TurnResult:
+        """Hand results back, take fresh looks, and keep working toward an open goal until [DONE]."""
+        followups = 0
+        goal = self._goal
         route = result.route                   # Plip's own follow-ups aren't routed again: same depth, same screens
-        turns, followups = 1, 0
-        while result.state == "done" and (result.reports or result.look_after) and followups < self.max_followups:
-            if result.look_after:
-                self.emit("step", id="wait", label="Waiting for it to load", status="active")
-                await self._settle(result.look_after)
-            prompt = (LOOK_FOLLOWUP if result.look_after else ACTION_FOLLOWUP).format(
-                reports="\n".join(f"- {report}" for report in result.reports) or "- (nothing else)")
-            followup = await self._turn(prompt, guide=True, screen=bool(result.look_after), route=route)
+        start = getattr(self, "_context", None)
+        if self._goal and start is not None and not start.empty:     # the screen the task started from counts too
+            self._screens_seen.setdefault(start.content_signature(), 1)
+        limit = self.max_agent_steps
+        while followups < (limit if (result.hands or self._goal) else self.max_followups):
+            if result.finished and self._goal and result.state == "done" and not result.pending:
+                problem = await self._check_done(result)
+                if problem:
+                    result.finished = False           # not done yet: the next step hears why
+                    result.acted.append(problem)
+                    self.emit("step", id=f"verify-{self._rejected}", label="That didn't take, fixing it",
+                              status="failed")
+            if not self._continues(result):
+                break
+            seen = getattr(self, "_context", None)
+            changes = result.settle is not None
+            settled = await self._wait_for_screen(result)
+            agent = bool(self._goal) or result.hands
+            lines = list((result.acted if agent else result.reports) or ["(nothing else)"])
+            after = getattr(self, "_settled", None)
+            pixels, unchanged = None, None
+            if agent and changes and settled is not None and seen is not None:
+                unchanged = settled == seen.signature()
+                if unchanged and (pixels := await self._pixels_moved()):
+                    # The map can't see what changed (a web page it isn't reading, a canvas): the pixels can.
+                    lines.append("note: the screen changed, but not in the controls list")
+                elif unchanged:
+                    lines.append("note: nothing on screen changed after that step")         # costs nothing to notice
+                elif after is not None and after.content_signature() == seen.content_signature() \
+                        and after.app == seen.app and after.window != seen.window:
+                    lines.append("note: only the window title changed; the page itself shows the same "
+                                 "controls as before, so it may not have loaded")
+            moved = None if unchanged is None else not unchanged or bool(pixels)
+            if agent and followups + 1 >= limit:
+                # More steps only for a task that's plainly getting somewhere: the screen moved on, nothing
+                # failed or went nowhere (now or more than once before), no [DONE] was sent back, no circling.
+                circling = max(self._screens_seen.values(), default=0) >= 3
+                if moved and limit < 2 * self.max_agent_steps and not self._rejected and not circling and \
+                        self._hiccups <= 1 and not any(sign in line for line in lines for sign in _STUCK):
+                    limit += 5                        # still getting somewhere: a few more steps, not a pause
+                else:
+                    lines.append("note: this is your last step before plip pauses for them. finish the goal if this "
+                                 "step does it; otherwise say in a few words where you got to and that you'll carry "
+                                 "on when they say keep going. never hand them the remaining steps to do.")
+            if any(sign in line for line in lines for sign in _STUCK):
+                self._hiccups += 1
+            reports = "\n".join(f"- {line}" for line in lines)
+            template = AGENT_FOLLOWUP if agent else LOOK_FOLLOWUP if result.look_after else ACTION_FOLLOWUP
+            toward = f" toward: {self._goal}" if self._goal else ""
+            prompt = template.format(reports=reports, step=followups + 1, toward=toward)
+            if self._goal:
+                self.emit("goal", text=self._goal, done=False, step=followups + 1)
+            # Recorded short: the next step needs the gist, not every report again.
+            brief = f"(step {followups + 1}{toward}; results, not from the user) " + \
+                "; ".join(_clip(line, 600) for line in lines)
+            followup = await self._turn(prompt, guide=True, screen=agent or bool(result.look_after), route=route,
+                                        record_as=_clip(brief, 1500))
             turns += 1
             followups += 1
+            goal = self._goal or goal
+            followup.hands = followup.hands or result.hands
             followup.did = result.did + followup.did
+            followup.failed = result.failed + followup.failed
             followup.plan = followup.plan or result.plan
             followup.steps_total = followup.steps_total or result.steps_total
+            followup.goal = goal
             if followup.state != "done":
+                followup.turns = turns
                 return followup
             result = followup
         total = result.steps_total
@@ -371,10 +496,107 @@ class Companion:
             result = followup
         if total and result.finished:
             self.emit("walkthrough", index=total - 1, total=total, label="done", waiting=False, finished=True)
-        result.turns = turns
-        if turns > 1 and result.state == "done" and not result.pending:
+        if self._goal and result.finished:
+            self.emit("goal", text=self._goal, done=True)
+            self._goal = ""
             self.conversation.fold()                  # its step-by-step results needn't ride along any more
+        elif self._goal and result.state == "done" and not self._continues(result) and not result.pending:
+            self._goal_waiting = True                 # it asked them something: their answer carries the task on
+        elif self._goal and self._continues(result):
+            # Out of steps but not done: say so instead of going quiet, and keep the goal for "keep going".
+            pause = "I'm pausing here so I don't run on forever. Say keep going and I'll pick it back up."
+            self.speaker.speak(pause)
+            self.emit("answer", text=" " + pause)
+            self.emit("goal", text=self._goal, done=False, paused=True)
+            result.spoken = (result.spoken + " " + pause).strip()
+            result.outcome = "paused"
+        elif not self._goal and turns > 1 and result.state == "done" and not result.pending:
+            self.conversation.fold()
+        result.goal = result.goal or goal
+        result.route = route
+        result.turns = turns
+        await self.speaker.drain()                  # the steps ran while it talked; now let it finish
         return result
+
+    async def _check_done(self, result: TurnResult) -> str:
+        """[DONE] in the same reply as an action: did that action actually land?
+
+        Model-free and cheap: a step that failed, or a screen that didn't change after a step
+        that should have changed it, means the goal isn't met. Twice per task at most, so a
+        stubborn page can't loop forever. Returns why it isn't done, or "" to accept.
+        """
+        if not result.acted:
+            return ""                                 # it looked at the results first, then said done: trust it
+        if self._rejected >= 2:
+            result.verified = False
+            return ""
+        failed = [line for line in result.acted if " failed: " in line]
+        problem = ""
+        if failed:
+            problem = (f"note: you ended with [DONE], but {failed[-1]}. the goal isn't met yet: fix it another way "
+                       "(another way to aim, the keyboard, another control); only tell them what's in the way if it's "
+                       "something only they can sort out.")
+        elif result.opened and self._rejected == 0:
+            # Opening a playlist isn't playing it, and opening a product isn't adding it: one look first.
+            if result.settle:
+                await self._settle(result.settle)
+                result.settle = None
+            problem = (f"note: you ended with [DONE] right after {result.opened.lower()}, which opens something "
+                       "rather than finishing it. here's the screen now: finish the goal, or if it really is done, "
+                       "say so and end with [DONE].")
+        elif result.settle:
+            seen = getattr(self, "_context", None)
+            settled = await self._settle(result.settle)
+            result.settle = None
+            if settled is None or seen is None:
+                result.verified = False               # no map to check against
+            elif settled == seen.signature() and not await self._pixels_moved():
+                last = (result.did[-1] if result.did else "that step").lower()
+                problem = (f"note: you ended with [DONE] right after {last}, but nothing on screen changed, "
+                           "so it probably didn't work. check and fix it another way; if it really can't be done, "
+                           "tell them it didn't take.")
+            else:
+                result.verified = True
+                self.emit("step", id="verify", label="Checked it worked", status="done")
+        if problem:
+            self._rejected += 1
+        return problem
+
+    async def _pixels_moved(self) -> bool | None:
+        """Did the screen itself change since the last look? For when the map can't tell. None: can't say."""
+        grab = getattr(self.capturer, "glance", None)
+        shots = list(getattr(self, "_shots", None) or [])
+        shot = next((item for item in shots if item.screen.is_cursor_screen), shots[0] if shots else None)
+        if grab is None or shot is None:
+            return None
+
+        def compare() -> bool:
+            import io
+
+            from PIL import Image
+
+            from mcp_vision.buddy.watch import changed, glance
+
+            before = Image.open(io.BytesIO(shot.data))
+            now = grab()
+            return changed(glance(before, _region(before.size)), glance(now, _region(now.size)))
+        try:
+            return await asyncio.to_thread(compare)
+        except Exception:
+            return None
+
+    def _circling(self, context: ScreenContext | None, guide: bool) -> str:
+        """Back on the same screen a third time in one task: say so before the budget burns down."""
+        if not (guide and self._goal and context is not None and not context.empty):
+            return ""
+        key = context.content_signature()
+        self._screens_seen[key] = self._screens_seen.get(key, 0) + 1
+        if self._screens_seen[key] < 3:
+            return ""
+        return (f"\nnote: you've now seen this same screen {self._screens_seen[key]} times during this task. if "
+                "you're not getting closer, change approach: x,y from the screenshot instead of an id, the keyboard, "
+                "another control. only ask them if it's something only they can do (a login, a code, a detail you "
+                "don't have).")
 
     async def _answer(self, accept: bool, transcript: str) -> TurnResult | None:
         outcome = await self.actions.answer(accept)
@@ -416,31 +638,45 @@ class Companion:
         except Exception:
             return None
 
-    async def _settle(self, limit: float) -> bool:
+    async def _wait_for_screen(self, result: TurnResult) -> str | None:
+        """Let the last step land; returns the settled screen map's signature when Plip watched it settle."""
+        if result.look_after:
+            if result.look_after >= 1.0:
+                self.emit("step", id="wait", label="Waiting for it to load", status="active")
+            await asyncio.sleep(result.look_after)
+        settled = None
+        if result.settle:
+            settled = await self._settle(result.settle)
+            result.settle = None
+        return settled
+
+    async def _settle(self, limit: float) -> str | None:
         """Wait until the screen map stops changing (an app opened, a page loaded), at most ``limit`` seconds.
 
-        Re-reads the Accessibility map locally: no screenshot, no tokens. True when it watched the
-        screen settle; without a map to read it waits a moment and returns False.
+        Re-reads the Accessibility map locally: no screenshot, no tokens. Returns the map's signature when it
+        stopped changing (or at the limit), ``None`` without a map to read. ``self._settled`` keeps the map
+        itself, so the next step can tell "nothing changed" from "only the title did".
         """
+        self._settled = None
         if self.context is None:
             await asyncio.sleep(min(limit, 1.5))
-            return False
+            return None
         started = self.clock()
-        last, quiet = None, 0
+        steady, quiet, signature = None, 0, None
         while self.clock() - started < limit:
-            try:
-                seen = await asyncio.to_thread(self.context.snapshot)
-            except Exception:
-                seen = None
+            seen = await asyncio.to_thread(self._observe)
             signature = seen.signature() if seen is not None and not seen.empty else None
+            self._settled = seen if signature is not None else None
             if signature is None and self.clock() - started > 1.5:
-                return False                          # no Accessibility map here: a short wait is all we can do
-            quiet = quiet + 1 if signature is not None and signature == last else 0
+                return None                           # no Accessibility map here: a short wait is all we can do
+            # Still-ness ignores what changes on its own (a clock, a counter); the answer is the real signature.
+            calm = seen.settle_signature() if signature is not None else None
+            quiet = quiet + 1 if calm is not None and calm == steady else 0
+            steady = calm
             if quiet >= 2:
-                return True
-            last = signature
+                return signature
             await asyncio.sleep(self.settle_interval)
-        return False
+        return signature
 
     def _schedule(self, delay: float, fn: Callable[[], None]) -> None:
         loop = self._loop
@@ -464,7 +700,7 @@ class Companion:
         return "now: " + _dt.datetime.now().strftime("%A, %B %d %Y, %I:%M %p").replace(" 0", " ")
 
     async def _turn(self, transcript: str, *, guide: bool = False, screen: bool | None = None,
-                    route: Route | None = None) -> TurnResult:
+                    route: Route | None = None, record_as: str | None = None) -> TurnResult:
         transcript = " ".join(transcript.split())
         result = TurnResult(transcript=transcript)
         started = self.clock()
@@ -485,11 +721,15 @@ class Companion:
         try:
             shots, context, result.route = await self._look(transcript, result, screen, route)
             mark("looked")
-            self._shots, self._context = shots, context
-            if self.actions is not None and (shots or context is not None):
-                self.actions.ctx.state.pop("scrolled", None)        # a fresh look: the numbers are current again
+            if screen is not False or not getattr(self, "_shots", None):
+                # A follow-up that didn't look keeps the last screen: actions still aim with it.
+                self._shots, self._context = shots, context
+                if self.actions is not None:
+                    self.actions.ctx.state.pop("scrolled", None)    # a fresh look: the numbers are current again
             history = self.conversation.history()
-            text = user_turn_text(transcript, shots, context, vision=self.vision, notes=self._notes())
+            extra, self._extra_note = self._extra_note, ""
+            notes = self._notes() + self._circling(context, guide) + (f"\n{extra}" if extra else "")
+            text = user_turn_text(transcript, shots, context, vision=self.vision, notes=notes)
             system = self.system_prompt
             turn = Turn("user", text, images=tuple(shots) if self.vision else ())
             reply = ReplyStream()
@@ -516,18 +756,23 @@ class Companion:
                 text_tokens(system) + sum(text_tokens(t.text) for t in [*history, turn])
                 + sum(image_tokens(shot.width, shot.height) for shot in turn.images),
                 reply.spoken_text, str(getattr(self.brain, "model", "") or "")))
-            result.spoken = reply.spoken_text
+            said = (result.muted.get(index, text) for index, text in enumerate(reply.spoken))
+            result.spoken = " ".join(text for text in said if text)
             result.finished = reply.done
             result.steps_total = reply.steps
             result.plan = reply.plan or result.plan
+            result.goal = reply.goal or result.goal
             if result.pending and "?" not in result.spoken:
                 ask = f"{result.pending}. Say yes and I'll do it."
                 self.speaker.speak(ask)
                 self.emit("answer", text=(" " if result.spoken else "") + ask)
                 result.spoken = (result.spoken + " " + ask).strip()
-            self.conversation.record(transcript, _history_text(reply, result.targets, result.did), step=guide)
+            self.conversation.record(record_as or transcript, _history_text(reply, result.targets, result.did),
+                                     step=guide)
             self.emit("done", latency_ms=result.timings.get("first_speech"), spoken=result.spoken)
-            await self.speaker.drain()
+            if not self._continues(result):
+                await self.speaker.drain()
+            # else: more steps follow, so keep working while it talks ("opening it now" plays on)
             mark("spoken")
         except asyncio.CancelledError:
             # A new press owns the overlay now (it is already "listening");
@@ -609,6 +854,15 @@ class Companion:
 
     async def _handle(self, event, shots, result: TurnResult, mark) -> None:
         if isinstance(event, SpeechChunk):
+            index, result.heard = result.heard, result.heard + 1
+            if result.hushed:
+                # "Added it" after the click failed isn't said; after a step waiting for their yes, a question
+                # still is ("want me to check out too?"), the claim before it ("Bought!") isn't.
+                asks = " ".join(re.findall(r"[^.!?]*\?+", event.text)).strip() if result.pending else ""
+                result.muted[index] = asks
+                if not asks:
+                    return
+                event = SpeechChunk(asks)
             first = "first_speech" not in result.timings
             if first:
                 mark("first_speech")
@@ -624,6 +878,10 @@ class Companion:
         elif isinstance(event, PlanTag):
             result.plan = event.steps
             self.emit("plan", steps=list(event.steps))
+        elif isinstance(event, GoalTag):
+            if event.text != self._goal:
+                self.emit("goal", text=event.text, done=False)
+            self._goal = result.goal = event.text
         elif isinstance(event, ActionTag):
             await self._act(event, result)
         elif isinstance(event, PointTag):
@@ -661,24 +919,47 @@ class Companion:
         self._action_seq = getattr(self, "_action_seq", 0) + 1
         step_id = f"action-{self._action_seq}"
         spec = self.actions.specs.get(tag.name)
+        key = f"{tag.name} {json.dumps(tag.args, sort_keys=True)}"
+        self._trail = [*self._trail[-5:], key]
+        repeats = 0
+        for previous in reversed(self._trail):
+            if previous != key:
+                break
+            repeats += 1
+        if repeats >= 3 and (self._goal or result.hands):
+            result.acted.append(f"note: that's {tag.name} with the same arguments {repeats} times in a row. if it "
+                                "isn't getting you closer, do something different: aim another way, use the keyboard "
+                                "or another control.")
+        if result.settle and spec is not None and (spec.skill == "control" or tag.name in _ON_SCREEN):
+            # An earlier action in this reply is still loading; this one works on what it shows.
+            await self._settle(result.settle)
+            result.settle = None
         label = spec.describe(tag.args) if spec else tag.name.replace("_", " ")
         self.emit("step", id=step_id, label=label, status="active")
         outcome = await self.actions.handle(tag.name, tag.args)
         if outcome.status == "pending":
             preview = outcome.preview
             result.pending = preview.title
+            result.hushed = True                      # "Bought." after it: not until they say yes
             self.emit("step", id=step_id, label=label, status="done", detail="waiting for your OK")
             self.emit("confirm", title=preview.title, lines=preview.lines, confirm=preview.confirm, name=tag.name)
             return
+        if spec is not None and spec.skill == "control":
+            result.hands = True
         if outcome.status == "done":
             action_result = outcome.result
-            result.did.append(label)
+            result.did.append(f"{label} ({action_result.note})" if action_result.note else label)
             if self._meter is not None:
                 self._meter.actions.append(tag.name)    # names only
+            result.acted.append(f"{tag.name}: " + (action_result.report or action_result.note
+                                                   or f"done ({label.lower()})"))
             if action_result.report:
                 result.reports.append(f"{tag.name}: {action_result.report}")
             if action_result.look_after:
                 result.look_after = max(result.look_after or 0.0, action_result.look_after)
+            if action_result.settle:
+                result.settle = max(result.settle or 0.0, action_result.settle)
+            result.opened = label if action_result.opens else ""
             self.emit("step", id=step_id, label=label, status="done", detail=action_result.detail)
             self.emit("action", name=tag.name, status="done", label=label, detail=action_result.detail,
                       items=action_result.items)
@@ -686,12 +967,43 @@ class Companion:
                 self.speaker.speak(action_result.say)
                 self.emit("answer", text=" " + action_result.say)
             return
-        # failed, unknown, disabled: say why, and let the model know if it gets another turn
+        # failed, unknown, disabled: the model hears why (and what to try instead) on its next turn
         result.failed.append(label)
+        hint = f" ({outcome.hint})" if outcome.hint else ""
+        result.acted.append(f"{tag.name} failed: {outcome.message}{hint}")
+        result.hushed = True                          # what it wrote after this assumed it worked
         self.emit("step", id=step_id, label=label, status="failed", detail=outcome.message)
         self.emit("action", name=tag.name, status="failed", label=label, detail=outcome.message)
+        if self._goal:
+            return                  # the next step hears about it and explains in its own words: no saying it twice
         self.speaker.speak(outcome.message)
         self.emit("answer", text=" " + outcome.message)
+
+
+# The whole utterance is "keep going" (give or take an ok or a please), not "go on linkedin and…".
+CONTINUE_RE = re.compile(r"^\W*((ok(ay)?|yes|yeah|sure|alright)\W+)?((you can|please)\s+)?(keep going|continue|go on|"
+                         r"carry on|keep at it|resume|don't stop|finish (it|up|the job)|go ahead and finish)"
+                         r"(\W+(please|then|now|plip))?\W*$", re.IGNORECASE)
+# Actions that work on whatever is on screen right now, so they wait for an earlier one to finish loading.
+_ON_SCREEN = {"type_text", "replace_selection"}
+# Lines in a step's results that mean it didn't get anywhere.
+_STUCK = (" failed: ", "nothing on screen changed", "only the window title", "you ended with [DONE]")
+
+
+def _region(size: tuple[int, int]) -> tuple[float, float, float, float]:
+    """The screen minus its menu bar, so the clock ticking over isn't a change."""
+    width, height = size
+    return 0, height * 0.04, width, height
+
+
+def reply_asks(spoken: str) -> bool:
+    """Does the reply end by asking the user something?"""
+    return "?" in spoken.strip()[-160:]
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _outcome(result: TurnResult) -> str:
@@ -700,8 +1012,14 @@ def _outcome(result: TurnResult) -> str:
         return "stopped"
     if result.state == "error":
         return "failed"
+    if result.outcome:
+        return result.outcome                         # set on the way (paused)
     if result.pending:
         return "waiting"                              # an action is waiting for their yes
+    if result.goal or result.hands:
+        if result.finished:
+            return "unverified" if result.verified is False else "done"
+        return "waiting"                              # it stopped to ask them something
     if result.reports:
         return "unverified"                           # it acted, but ran out of turns to check the results
     if result.steps_total and not result.finished:
@@ -722,6 +1040,8 @@ def _listed(target: Target, context: ScreenContext | None, tolerance: float = 3.
 def _history_text(reply: ReplyStream, targets: list[Target], did: list[str] | None = None) -> str:
     """What the assistant 'said' last turn, including where it pointed and what it did."""
     text = reply.spoken_text
+    if reply.goal:
+        text = f"[GOAL: {reply.goal}] " + text
     if reply.plan:                                    # the checklist they see: later steps follow it
         text = f"[PLAN: {' | '.join(reply.plan)}] " + text
     if reply.steps:

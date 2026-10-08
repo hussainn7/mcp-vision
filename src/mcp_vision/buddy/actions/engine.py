@@ -50,6 +50,7 @@ class Outcome:
     result: ActionResult | None = None
     preview: Preview | None = None
     message: str = ""
+    hint: str = ""                 # for the model: what to try instead (ActionError.hint)
 
     @property
     def label(self) -> str:
@@ -129,7 +130,7 @@ class ActionEngine:
                                                  self.timeout)
                 preview = await maybe_await(preview)
             except ActionError as exc:
-                return Outcome("failed", spec, args, message=str(exc))
+                return Outcome("failed", spec, args, message=str(exc), hint=exc.hint)
             except Exception as exc:
                 return Outcome("failed", spec, args, message=_friendly(exc))
             if preview is None:                         # this one needs no yes (a plain click, an ordinary key)
@@ -160,7 +161,7 @@ class ActionEngine:
             result = await maybe_await(value)
         except ActionError as exc:
             self._log(spec, args, False)
-            return Outcome("failed", spec, args, message=str(exc))
+            return Outcome("failed", spec, args, message=str(exc), hint=exc.hint)
         except asyncio.TimeoutError:
             self._log(spec, args, False)
             return Outcome("failed", spec, args, message="That took too long, so I stopped.")

@@ -34,6 +34,14 @@ _DEEP = re.compile(
     r"why (is|isn't|does|doesn't|did|didn't|won't|can't|am i|do i)|explain (how|why|in))\b",
     re.IGNORECASE,
 )
+# "open spotify and play X", "go to indeed, then find...": a second action after the first.
+_ACT = (r"(open|go|navigate|click|tap|find|search|look|play|send|text|email|type|write|fill|book|buy|order|add|check|"
+        r"tell|show|read|get|download|reply|post|scroll|sort|filter|apply|sign|create|make|put|set|turn|start|pick|"
+        r"choose|select|compare|summari[sz]e|grab|copy|paste|save|share|close|move|rename|upload|attach|watch|list)")
+_THEN_ACT = re.compile(rf"(\band\b|\bthen\b|,|\bafter that\b)\s+(also\s+|please\s+|then\s+)?{_ACT}\b", re.IGNORECASE)
+# "find me good jobs here", "search for a blue lamp on amazon": seek something somewhere, then read what comes up.
+_SEEK_THERE = re.compile(r"\b(find|search|look (up|for|through)|hunt|browse|shop|compare|check out|go through)\b"
+                         r".{0,80}?\b(here|on|at|from|in this|in my)\b", re.IGNORECASE)
 _GENERAL_LEADS = re.compile(
     r"^\s*(what('s| is| are| was| were)|who|when|why|define|tell me (a|about)|explain|how (many|much|far|long|old)|"
     r"translate|convert|calculate)\b",
@@ -41,9 +49,15 @@ _GENERAL_LEADS = re.compile(
 )
 
 
+def multistep(transcript: str) -> bool:
+    """Rough rule: doing this takes several actions. Only used when the model forgets to open a goal."""
+    return bool(_THEN_ACT.search(transcript) or _SEEK_THERE.search(transcript))
+
+
 def rule_route(transcript: str) -> Route:
     started = time.perf_counter()
     text = transcript.strip()
+    several = multistep(text)
     if _CHAT_WORDS.match(text) and len(text.split()) <= 5:
         intent, needs_screen = "chat", False
     elif _POINT_WORDS.search(text):
@@ -54,8 +68,8 @@ def rule_route(transcript: str) -> Route:
         intent, needs_screen = "answer", False
     else:
         intent, needs_screen = "explain", True
-    return Route(needs_screen=needs_screen, intent=intent, provider="rules", confidence=0.6,
-                 detailed=intent != "chat" and bool(_DEEP.search(text)),
+    return Route(needs_screen=needs_screen or several, intent=intent, multistep=several, provider="rules",
+                 confidence=0.6, detailed=intent != "chat" and bool(_DEEP.search(text)),
                  latency_ms=round((time.perf_counter() - started) * 1000, 2))
 
 
@@ -104,6 +118,12 @@ class JevRouter:
                 "detailed": "It needs a step-by-step walkthrough or a longer explanation.",
             }, instructions="How long should a helpful spoken answer be?"),
         }
+        questions["task"] = Choice(criteria={
+            "one": "A single action or a single answer fully handles it: open an app, answer a question, one click.",
+            "several": "It takes several actions in a row, or doing something and then reading what comes up: "
+                       "open an app and do something in it, go to a site and find something there, search this "
+                       "page for something and pick the best.",
+        }, instructions="If a computer assistant did this for the user, how many steps would it take?")
         if multi_screen:
             questions["scope"] = Choice(criteria={
                 "cursor": "Only the screen the user is pointing at or working on matters.",
@@ -121,16 +141,22 @@ class JevRouter:
             intent = result.choice("intent", set(INTENTS))
             depth = result.choice("depth", {"quick", "detailed"})
             scope = result.choice("scope", {"cursor", "all"}) if multi else None
+            try:
+                task = result.choice("task", {"one", "several"})
+                several = task.choice == "several" and task.p("several") >= 0.5
+            except Exception:
+                several = False
         except Exception:
             fallback = await self.fallback.route(transcript, screens)
             return Route(**{**fallback.__dict__, "provider": "rules (jev unavailable)"})
         detailed = depth.choice == "detailed" and depth.p("detailed") >= 0.6
         # A walkthrough starts from where they are: Jev said "no screen" to some of them ("walk me through
         # turning on two factor in github"), and the first step was then guessed blind.
-        needs_screen = (needs >= self.screen_threshold or intent.choice in {"point", "explain"}
+        several = several or multistep(transcript)
+        needs_screen = (needs >= self.screen_threshold or intent.choice in {"point", "explain"} or several
                         or (detailed and bool(_HOWTO.search(transcript))))
         return Route(
-            needs_screen=needs_screen, intent=intent.choice,
+            needs_screen=needs_screen, intent=intent.choice, multistep=several,
             cursor_screen_only=bool(scope and scope.choice == "cursor" and scope.confidence >= 0.6),
             detailed=detailed,
             provider="jev", confidence=intent.confidence,

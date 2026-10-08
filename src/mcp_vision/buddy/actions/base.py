@@ -7,7 +7,15 @@ from typing import Any
 
 
 class ActionError(RuntimeError):
-    """The action ran but couldn't do what was asked; the message is spoken."""
+    """The action ran but couldn't do what was asked; the message is spoken.
+
+    ``hint`` is for the model only (what to try instead, in its terms: ids, x,y, other actions), so a goal
+    can recover by itself instead of the message ending up as instructions for the user.
+    """
+
+    def __init__(self, message: str, hint: str = ""):
+        super().__init__(message)
+        self.hint = hint
 
 
 @dataclass
@@ -26,6 +34,10 @@ class ActionResult:
     say: str = ""                           # spoken after the action when the model didn't cover it
     report: str = ""                        # handed to the model in a follow-up turn
     look_after: float | None = None         # take a fresh look this many seconds later
+    settle: float | None = None             # screen is changing (app launching, page loading): if the task goes
+                                            # on, wait up to this long for the screen map to stop changing first
+    opens: bool = False                     # it opened something (a link, a page, an app): rarely the end of a task
+    note: str = ""                          # what the model should know next, without asking for another turn
     detail: str = ""                        # one line for the island step
     items: list[dict] = field(default_factory=list)    # results to list in the island
     undo: dict | None = None                # how to reverse it (kept by the engine)
