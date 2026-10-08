@@ -146,8 +146,15 @@ def user_turn_text(transcript: str, shots: list[Screenshot], context: ScreenCont
     return "\n".join(parts) + f"\n\nthe user said: {transcript}"
 
 
-GUIDE_FOLLOWUP = ("(walkthrough check-in) i did step {done} of {total}. here's my screen now. "
-                  "check it worked, then give me the next step, or confirm we're finished and end with [DONE].")
+GUIDE_FOLLOWUP = ("(walkthrough check-in) my screen changed after step {done} of {total}{step}. here's my screen now. "
+                  "check it worked, then give me the next step{next}, or confirm we're finished and end with [DONE].")
+
+
+def guide_followup(done: int, total: int, plan: tuple[str, ...] = ()) -> str:
+    """A walkthrough check-in, naming the step just done and the next one from the checklist the user sees."""
+    step = f' ("{plan[done - 1]}")' if 0 < done <= len(plan) else ""
+    upcoming = f' ("{plan[done]}")' if done < len(plan) else ""
+    return GUIDE_FOLLOWUP.format(done=done, total=total, step=step, next=upcoming)
 ACTION_FOLLOWUP = ("(action results, not from the user)\n{reports}\n"
                    "use these to answer me now in a sentence or two. don't repeat an action unless it failed.")
 LOOK_FOLLOWUP = ("(action results, not from the user)\n{reports}\n"

@@ -26,7 +26,7 @@ from mcp_vision.buddy.conversation import Conversation, Turn
 from mcp_vision.buddy.geometry import Rect, ScreenInfo, Screenshot
 from mcp_vision.buddy.pointing import ActionTag, DoneTag, PlanTag, PointTag, ReplyStream, SpeechChunk, StepsTag
 from mcp_vision.buddy.prompt import (
-    ACTION_FOLLOWUP, GUIDE_FOLLOWUP, LOOK_FOLLOWUP, SYSTEM_PROMPT, system_prompt, user_turn_text,
+    ACTION_FOLLOWUP, LOOK_FOLLOWUP, SYSTEM_PROMPT, guide_followup, system_prompt, user_turn_text,
 )
 from mcp_vision.buddy.screen_context import ScreenContext
 from mcp_vision.buddy.usage import Request, Usage, estimate, image_tokens, text_tokens
@@ -346,7 +346,7 @@ class Companion:
             if not await self.watcher.wait_for_change(self.guide_timeout):
                 self.emit("walkthrough", index=done_steps - 1, total=total, label=label, waiting=False, timed_out=True)
                 break
-            followup = await self._turn(GUIDE_FOLLOWUP.format(done=done_steps, total=total), guide=True,
+            followup = await self._turn(guide_followup(done_steps, total, result.plan), guide=True,
                                         screen=True, route=route)
             turns += 1
             if followup.state != "done":
@@ -354,6 +354,7 @@ class Companion:
             done_steps += 1
             total = max(total, followup.steps_total or total)
             followup.steps_total = total
+            followup.plan = followup.plan or result.plan
             followup.turns = turns
             result = followup
         if total and result.finished:
@@ -702,6 +703,8 @@ def _outcome(result: TurnResult) -> str:
 def _history_text(reply: ReplyStream, targets: list[Target], did: list[str] | None = None) -> str:
     """What the assistant 'said' last turn, including where it pointed and what it did."""
     text = reply.spoken_text
+    if reply.plan:                                    # the checklist they see: later steps follow it
+        text = f"[PLAN: {' | '.join(reply.plan)}] " + text
     if reply.steps:
         text = f"[STEPS:{reply.steps}] " + text
     if targets:

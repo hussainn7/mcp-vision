@@ -259,3 +259,22 @@ def test_a_walkthrough_is_routed_once_and_keeps_its_effort_and_screen_every_step
     assert router.heard == ["walk me through exporting a pdf"]      # check-ins aren't routed as if the user spoke
     assert brain.depths == [True, True, True]                       # one effort for the whole task
     assert all(turns[-1].images for _, turns in brain.seen)          # every check-in sees the screen it talks about
+
+
+def test_check_ins_follow_the_checklist_the_user_sees():
+    brain = ScriptedBrain([
+        ["[STEPS:3] [PLAN: open file menu | pick export | save pdf] First, open the File menu. [POINT:20,10:File]"],
+        ["Nice. Now pick Export. [POINT:60,80:Export]"],
+        ["Last one, hit Save. [POINT:90,90:Save]"],
+        ["Done, it's saved. [DONE]"],
+    ])
+    result = asyncio.run(Companion(brain=brain, capturer=capturer(),
+                                   watcher=ScriptedWatcher([True, True, True])).respond("export as pdf"))
+    assert result.finished and result.plan == ("open file menu", "pick export", "save pdf")
+    first, second, third = (turns[-1].text for _, turns in brain.seen[1:])
+    # It only knows the screen changed, not that they did it right; and it names what the island shows next.
+    assert 'my screen changed after step 1 of 3 ("open file menu")' in first and 'next step ("pick export")' in first
+    assert '("pick export")' in second and 'next step ("save pdf")' in second
+    assert 'step 3 of 3 ("save pdf")' in third and "next step," in third
+    history = brain.seen[1][1][-2].text                     # what the model said on step one, as it reads it back
+    assert history.startswith("[STEPS:3] [PLAN: open file menu | pick export | save pdf] First, open the File menu.")
