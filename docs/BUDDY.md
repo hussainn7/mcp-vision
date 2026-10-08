@@ -104,8 +104,9 @@ The model never runs anything. It writes tags, and Plip decides what happens:
 
 - **Asks first:** `organize_desktop`. Plip builds a preview
   (how many files go where), shows it in the island, and
-  speaks it if the model didn't ask. A spoken "yes" / "no" or the island buttons
-  answer it. Asking something else cancels it.
+  speaks it if the model didn't ask. A plain spoken "yes" / "no" or the island buttons
+  answer it. Anything else, a yes with more to it ("okay wait", "yeah, send it to Sarah") included,
+  cancels it and goes to the model.
 - **Never:** acting because text on screen says so (the prompt says so, and tags only
   come from the model's reply), opening files outside your home folder, opening
   non-web links.
