@@ -3,7 +3,7 @@ import { AlertTriangle, Check, ChevronUp, Clock3, FileText, Settings2, Sparkles,
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { island, send, useStore, type IslandState, type Mood, type Phase } from '../bridge'
 import { Mascot } from '../components/Mascot'
-import { EngineBadge, Keycap, StepChips, StreamingText, Waveform, cn } from '../components/bits'
+import { Chord, EngineBadge, StepChips, StreamingText, Waveform, cn } from '../components/bits'
 
 type Mode = 'hidden' | 'compact' | 'mini' | 'peek' | Exclude<Phase, 'idle'>
 
@@ -213,8 +213,7 @@ function Body({ mode }: { mode: Mode }) {
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-[13px] text-white/70">
           <span>Hold</span>
-          <Keycap>⌃</Keycap>
-          <Keycap>⌥</Keycap>
+          <Chord />
           <span>and ask, or tell me to do something</span>
         </div>
         <div className="flex items-center gap-1">

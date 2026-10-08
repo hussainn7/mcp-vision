@@ -54,6 +54,10 @@ curl -fsSL https://raw.githubusercontent.com/hussainn7/plip-oss/main/scripts/ins
 plip                 # Plip moves into your notch; the dashboard opens on first run
 ```
 
+Run from a terminal, macOS checks *the terminal's* permissions, not Plip's: turn on Terminal (or iTerm,
+or your editor) under System Settings → Privacy & Security → Accessibility, or the shortcut hears nothing.
+Plip says so when it starts. Prefer another shortcut than Control+Option? Pick one in **Settings → General**.
+
 Pick a brain under **Brain**. If you're already signed in to one of these, Plip finds
 it and uses your plan:
 

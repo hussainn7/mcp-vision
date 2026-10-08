@@ -1,6 +1,7 @@
 import { motion } from 'motion/react'
 import { AudioLines, Contact, Download, Hand, LoaderCircle, MessageSquareText, Mic, MonitorUp, RotateCw, WandSparkles } from 'lucide-react'
 import { send, type ParakeetModel, type SettingsState } from '../../bridge'
+import { useShortcutLabel } from '../../components/bits'
 import { Button, Card, Empty, Header, KeyField, Pill, Section, Segmented } from './ui'
 
 /** One permission's button: Allow, then "finish in System Settings" while the card is up there, then Granted. */
@@ -32,6 +33,7 @@ export function RestartBanner({ state }: { state: SettingsState }) {
 }
 
 export function VoiceTab({ state }: { state: SettingsState }) {
+  const talk = useShortcutLabel()
   return (
     <div>
       <Header eyebrow="Voice" title="How Plip sounds and listens" subtitle="Works out of the box with macOS voices and on-device recognition. Add keys for a more natural voice, or download Parakeet for sharper listening that stays on your Mac." />
@@ -57,7 +59,7 @@ export function VoiceTab({ state }: { state: SettingsState }) {
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-[13.5px] font-semibold">Listening</div>
-              <div className="text-[12px] text-white/40">Only while you hold Control + Option</div>
+              <div className="text-[12px] text-white/40">Only while you hold {talk}</div>
             </div>
             <Segmented
               value={state.voice.stt}
@@ -120,7 +122,7 @@ function ParakeetPanel({ model }: { model: ParakeetModel }) {
 export function PermissionsTab({ state }: { state: SettingsState }) {
   const core = [
     { key: 'screen', icon: MonitorUp, title: 'Screen Recording', why: 'So Plip can see what you’re asking about.' },
-    { key: 'accessibility', icon: Hand, title: 'Accessibility', why: 'The ⌃⌥ shortcut, precise pointing, typing and form filling.' },
+    { key: 'accessibility', icon: Hand, title: 'Accessibility', why: 'The hold-to-talk shortcut, precise pointing, typing and form filling.' },
     { key: 'microphone', icon: Mic, title: 'Microphone', why: 'Only while you hold the shortcut. Audio is never saved.' },
     { key: 'speech', icon: MessageSquareText, title: 'Speech Recognition', why: 'On-device transcription when AssemblyAI is off.' },
   ] as const
@@ -171,10 +173,11 @@ export function PermissionsTab({ state }: { state: SettingsState }) {
 
 /** Activity → History: recent questions and answers. */
 export function HistoryPanel({ state }: { state: SettingsState }) {
+  const talk = useShortcutLabel()
   return (
     <div>
       {!state.history.length ? (
-        <Empty title="Nothing yet" text="Hold Control + Option and ask Plip something." />
+        <Empty title="Nothing yet" text={`Hold ${talk} and ask Plip something.`} />
       ) : (
         <div className="space-y-2">
           <div className="mb-3 flex items-center justify-between gap-6">

@@ -429,3 +429,36 @@ def test_cursor_style_still_trails_the_cursor():
     animator = BuddyAnimator()
     render = animator.tick(0.0, (100.0, 100.0))
     assert (render.x, render.y) == (100 + FOLLOW_OFFSET[0], 100 + FOLLOW_OFFSET[1]) and not animator.docked
+
+
+def test_the_talk_shortcut_is_picked_in_settings_and_applied_without_a_rebuild(service):
+    svc, calls, tmp_path = service
+    applied, works = [], [True]
+    svc.apply_hotkey, svc.hotkey_works = applied.append, lambda: works[0]
+    svc.handle({"cmd": "settings-ready"})
+    hotkey = calls["posted"][-1]["state"]["hotkey"]
+    assert (hotkey["id"], hotkey["keys"], hotkey["label"], hotkey["works"]) == \
+        ("control+option", ["⌃", "⌥"], "Control + Option", True)
+    assert [choice["id"] for choice in hotkey["choices"]] == ["control+option", "option+command", "control+shift",
+                                                              "control+command"]
+    svc.handle({"cmd": "set-hotkey", "id": "option+command"})
+    svc.handle({"cmd": "set-hotkey", "id": "command+q"})          # not on offer: ignored
+    assert applied == ["option+command"] and calls["reload"] == 0
+    assert Prefs.load(tmp_path / "prefs.json").hotkey == "option+command"
+    works[0] = False
+    svc.handle({"cmd": "refresh"})
+    hotkey = calls["posted"][-1]["state"]["hotkey"]
+    assert hotkey["id"] == "option+command" and hotkey["keys"] == ["⌥", "⌘"] and hotkey["works"] is False
+
+
+def test_the_controller_says_the_shortcut_they_picked():
+    view = Recorder()
+    statuses = []
+    controller = BuddyController(companion=None, overlay=Overlay(), loop=None, call_later=lambda d, f: None,
+                                 on_main=lambda f, *a: f(*a), presenter=view, status=statuses.append,
+                                 say=lambda text: None)
+    controller.shortcut, controller.shortcut_keys = "Option+Command", "⌥⌘"
+    controller.state = "finalizing"
+    controller.on_final("")
+    assert statuses[-1] == "Didn't catch that - hold Option+Command and talk"
+    assert view.calls[-1] == ("failed", "I didn't catch that. Hold ⌥⌘ and try again.")

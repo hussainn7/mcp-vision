@@ -117,7 +117,7 @@ export function Pill({ tone, children, dot = true }: { tone: Tone; children: Rea
   )
 }
 
-export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
+export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string; hint?: string }[]; onChange: (value: T) => void }) {
   const group = options.map((option) => option.value).join()
   return (
     <div className="inline-flex shrink-0 whitespace-nowrap rounded-full bg-black/40 p-1 hairline">
@@ -125,6 +125,8 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
         <button
           key={option.value}
           onClick={() => onChange(option.value)}
+          title={option.hint}
+          aria-label={option.hint}
           className={cn('relative rounded-full px-3 py-1 text-[12px] font-semibold transition', value === option.value ? 'text-slate-950' : 'text-white/50 hover:text-white/80')}
         >
           {value === option.value && (

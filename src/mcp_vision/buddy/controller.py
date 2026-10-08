@@ -57,6 +57,8 @@ class BuddyController:
         self.transcript = ""
         self.generation = 0
         self.hotkey_mode = "none"
+        self.shortcut = "Control+Option"     # the talk shortcut picked in Settings, in words and in keys
+        self.shortcut_keys = "⌃⌥"
         self.last_result = None
 
     # -- hotkey -------------------------------------------------------------------
@@ -95,7 +97,7 @@ class BuddyController:
     def on_cancel(self) -> None:
         if self.state in {"listening", "finalizing"}:
             self.listener.cancel()
-            self._idle("Ready - hold Control+Option")
+            self._idle(f"Ready - hold {self.shortcut}")
             self.presenter.idle()
 
     # -- speech -------------------------------------------------------------------
@@ -116,8 +118,8 @@ class BuddyController:
             return
         text = " ".join((text or "").split())
         if not text:
-            self._idle("Didn't catch that - hold Control+Option and talk")
-            self.presenter.failed("I didn't catch that. Hold ⌃⌥ and try again.")
+            self._idle(f"Didn't catch that - hold {self.shortcut} and talk")
+            self.presenter.failed(f"I didn't catch that. Hold {self.shortcut_keys} and try again.")
             return
         self.state = "responding"
         self.transcript = text
@@ -142,8 +144,8 @@ class BuddyController:
     def _final_timeout(self, generation: int) -> None:
         if generation == self.generation and self.state == "finalizing":
             self.listener.cancel()
-            self._idle("Didn't catch that - hold Control+Option and talk")
-            self.presenter.failed("I didn't catch that. Hold ⌃⌥ and try again.")
+            self._idle(f"Didn't catch that - hold {self.shortcut} and talk")
+            self.presenter.failed(f"I didn't catch that. Hold {self.shortcut_keys} and try again.")
 
     def _finished(self, future, generation: int) -> None:
         if generation != self.generation:

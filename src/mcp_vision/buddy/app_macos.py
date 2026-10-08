@@ -92,7 +92,8 @@ class StatusMenu:
         menu.setAutoenablesItems_(False)
         self.status = self._add(menu, "Starting...", None)
         self.status.setEnabled_(False)
-        self._add(menu, "Hold ⌃⌥ and ask anything", None).setEnabled_(False)
+        self.hint = self._add(menu, "Hold ⌃⌥ and ask anything", None)
+        self.hint.setEnabled_(False)
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         self._add(menu, "Open Plip...", "settings", ",")
         self.update_item = self._add(menu, "Download the new Plip...", "update")
@@ -118,6 +119,13 @@ class StatusMenu:
 
     def set_status(self, text: str) -> None:
         self.status.setTitle_(text[:80])
+
+    def set_shortcut(self, chord) -> None:
+        """The talk shortcut picked in Settings (hotkey.Chord)."""
+        self.hint.setTitle_(f"Hold {chord.symbols} and ask anything")
+        button = self.item.button()
+        if button is not None:
+            button.setToolTip_(f"Plip - hold {chord.label} and ask")
 
     def set_brain(self, text: str) -> None:
         self.brain_item.setTitle_(f"Brain: {text}"[:60])
@@ -275,7 +283,7 @@ def run_buddy_app() -> None:
     from mcp_vision.buddy.actions import ActionLog
     from mcp_vision.buddy.engines import EngineRegistry
     from mcp_vision.buddy.factory import SetupError, apply_prefs, make_companion
-    from mcp_vision.buddy.hotkey import ChordDetector, MacHotkeyListener
+    from mcp_vision.buddy.hotkey import ChordDetector, MacHotkeyListener, chord, keyboard_owner
     from mcp_vision.buddy.overlay_macos import BuddyOverlay, MainThreadPointer
     from mcp_vision.buddy.presenter import Presenter
     from mcp_vision.buddy.settings import load_settings
@@ -356,6 +364,7 @@ def run_buddy_app() -> None:
     def guide_done(permission: str, granted: bool) -> None:
         if granted and permission == "screen":
             state["restart_for_screen"] = True         # macOS applies it to the next launch
+        update_setup_error()                           # Accessibility on: the shortcut starts working
         service.push()
         if granted and state["settings_window"] is not None:
             state["settings_window"].front()           # back to Plip, where you left off
@@ -445,10 +454,26 @@ def run_buddy_app() -> None:
         controller.setup_error = account.blocker or state["brain_error"] or state["listener_error"]
         if controller.setup_error:
             menu.set_status("Needs setup: " + controller.setup_error)
-        elif controller.hotkey_mode == "none":
-            menu.set_status("Grant Accessibility so ⌃⌥ works")
+        elif hotkey_mode() == "none":
+            menu.set_status(f"Allow Accessibility for {keyboard_owner()} so {controller.shortcut_keys} works")
         else:
-            menu.set_status("Ready - hold ⌃⌥ and ask")
+            menu.set_status(f"Ready - hold {controller.shortcut_keys} and ask")
+
+    def hotkey_mode() -> str:
+        """Asked fresh: Accessibility granted since launch starts listening again (hotkeys.mode)."""
+        hotkeys = state.get("hotkeys")
+        controller.hotkey_mode = hotkeys.mode() if hotkeys is not None else "none"
+        return controller.hotkey_mode
+
+    def apply_hotkey(name: str | None = None) -> None:
+        """Listen for the talk shortcut from Settings, and say it everywhere Plip says "hold ⌃⌥"."""
+        picked = chord(name if name is not None else Prefs.load().hotkey)
+        detector.set_chord(picked.mask)
+        controller.shortcut, controller.shortcut_keys = picked.label.replace(" + ", "+"), picked.symbols
+        menu.set_shortcut(picked)
+        if island is not None:
+            island.post([{"type": "shortcut", "state": picked.card()}])
+        update_setup_error()
 
     def build(probe: bool) -> None:
         """Worker thread: probe engines (spawns CLIs) and assemble a companion."""
@@ -594,6 +619,8 @@ def run_buddy_app() -> None:
         account=account,
         updates=updates,
         check_updates=lambda: check_updates(force=True),
+        hotkey_works=lambda: hotkey_mode() != "none",
+        apply_hotkey=lambda name: apply_hotkey(name),
     )
 
     def handle_command(command: dict[str, Any]) -> None:
@@ -612,7 +639,9 @@ def run_buddy_app() -> None:
             if controller.companion is not None:
                 loop.call_soon_threadsafe(controller.companion.interrupt, None)
             presenter.idle()
-        elif name not in {"ready", "island-rect"}:
+        elif name == "ready" and island is not None:          # the island loaded: show it the talk shortcut
+            island.post([{"type": "shortcut", "state": chord(Prefs.load().hotkey).card()}])
+        elif name != "island-rect":
             service.handle(command)
 
     def record_answer(future) -> None:
@@ -647,9 +676,10 @@ def run_buddy_app() -> None:
     controller.status = menu.set_status
 
     detector = ChordDetector(on_press=controller.on_press, on_release=controller.on_release,
-                             on_cancel=controller.on_cancel)
-    hotkeys = MacHotkeyListener(detector)
+                             on_cancel=controller.on_cancel, chord=chord(prefs.hotkey).mask)
+    hotkeys = state["hotkeys"] = MacHotkeyListener(detector)
     controller.hotkey_mode = hotkeys.start()
+    apply_hotkey(prefs.hotkey)
     _request_startup_permissions()
     rebuild(probe=True)
     threading.Thread(target=account.refresh, daemon=True, name="plip-account").start()   # renew the sign-in once
@@ -660,7 +690,12 @@ def run_buddy_app() -> None:
         AppHelper.callLater(0.8, lambda: open_settings("home"))
 
     log.info("plip running (hotkey=%s, web=%s)", controller.hotkey_mode, web)
-    print("Plip is in your menu bar and notch. Hold Control+Option and ask.", flush=True)
+    if controller.hotkey_mode == "none":
+        owner = keyboard_owner()
+        print(f"Plip can't hear {controller.shortcut} yet: macOS isn't passing keystrokes to {owner}. Turn {owner} "
+              "on in System Settings > Privacy & Security > Accessibility, then start Plip again.", flush=True)
+    else:
+        print(f"Plip is in your menu bar and notch. Hold {controller.shortcut} and ask.", flush=True)
     import atexit
 
     # Quitting: drop the warm brain process so nothing is left waiting for a question.

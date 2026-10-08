@@ -2,7 +2,7 @@ import { motion } from 'motion/react'
 import { ArrowDownToLine, CalendarClock, Check, ChevronRight, Clock3, FolderSearch, Plane, Type, TrendingUp, WandSparkles, Zap } from 'lucide-react'
 import { send, type SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
-import { Keycap, cn } from '../../components/bits'
+import { Chord, cn } from '../../components/bits'
 import type { Tab } from './index'
 import { Button, Card, Section, Stat } from './ui'
 
@@ -58,7 +58,7 @@ export function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) =>
           <div className="mb-1 text-[13px] font-medium text-white/45">{greeting()}{first ? `, ${first}` : ''}</div>
           <h1 className="text-gradient text-[34px] font-semibold leading-[1.05] tracking-[-0.04em]">What should we get done?</h1>
           <div className="mt-3 flex items-center gap-2 text-[13px] text-white/50">
-            Hold <Keycap>⌃</Keycap><Keycap>⌥</Keycap> and ask, or tell Plip to do it for you.
+            Hold <Chord /> and ask, or tell Plip to do it for you.
           </div>
         </div>
       </div>

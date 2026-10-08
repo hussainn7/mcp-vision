@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp_vision import __version__
+from mcp_vision.buddy.hotkey import CHORDS, chord, keyboard_owner
 from mcp_vision.buddy.store import History, Prefs, config_dir
 
 KEY_NAMES = {"ANTHROPIC_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
@@ -57,6 +58,8 @@ class SettingsService:
     check_updates: Callable[[], None] = lambda: None       # ask GitHub now, in the background
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
     report_note: str = ""                                  # "sent" | "failed" after a bug report or feature request
+    hotkey_works: Callable[[], bool] = lambda: True        # macOS passes Plip the keys (see hotkey.can_listen)
+    apply_hotkey: Callable[[str], None] = lambda name: None   # listen for a new talk shortcut right away
 
     @property
     def prefs(self) -> Prefs:
@@ -97,6 +100,8 @@ class SettingsService:
             else {"available": False, "required": False},
             "update": self.updates.snapshot() if self.updates is not None
             else {"enabled": prefs.update_check, "current": __version__, "available": None},
+            "hotkey": {**chord(prefs.hotkey).card(), "works": bool(self.hotkey_works()), "owner": keyboard_owner(),
+                       "choices": [chord(name).card() for name in CHORDS]},
         }
 
     def _stats(self) -> dict:
@@ -156,6 +161,16 @@ class SettingsService:
     def _cmd_set_depth(self, command):
         if command.get("depth") in DEPTHS:
             self._update_prefs(depth=command["depth"])
+
+    def _cmd_set_hotkey(self, command):
+        name = str(command.get("id", ""))
+        if name not in CHORDS:
+            return
+        prefs = self.prefs
+        prefs.hotkey = name
+        prefs.save(self.prefs_path)
+        self.apply_hotkey(name)                    # no rebuild: the brain doesn't care which keys you hold
+        self.push()
 
     def _cmd_set_walkthroughs(self, command):
         self._update_prefs(walkthroughs=bool(command.get("enabled")))

@@ -195,6 +195,20 @@ export interface AccountState {
   user?: { name: string; email: string; provider: string; since: number | null } | null
 }
 
+/** The hold-to-talk shortcut, as keys (⌃⌥) and words (Control + Option). */
+export interface Shortcut {
+  id: string
+  keys: string[]
+  label: string
+}
+
+/** The shortcut picker in General: what's picked, what it can be, and whether macOS lets Plip hear it. */
+export interface HotkeyState extends Shortcut {
+  works: boolean
+  owner: string              // whose Accessibility it needs: "Plip", or the terminal it was started from
+  choices: Shortcut[]
+}
+
 /** A newer Plip on GitHub (asked once a day, unless they turned it off). */
 export interface UpdateState {
   enabled: boolean
@@ -228,6 +242,7 @@ export interface SettingsState {
   report: '' | 'sent' | 'failed'     // a bug report or feature request, after Send
   account: AccountState
   update: UpdateState
+  hotkey: HotkeyState
 }
 
 export const defaultIsland: IslandState = {
@@ -271,7 +286,18 @@ export const defaultSettings: SettingsState = {
   report: '',
   account: { available: false, required: false },
   update: { enabled: true, current: '0.9.0', available: null },
+  hotkey: {
+    id: 'control+option', keys: ['⌃', '⌥'], label: 'Control + Option', works: true, owner: 'Plip',
+    choices: [
+      { id: 'control+option', keys: ['⌃', '⌥'], label: 'Control + Option' },
+      { id: 'option+command', keys: ['⌥', '⌘'], label: 'Option + Command' },
+      { id: 'control+shift', keys: ['⌃', '⇧'], label: 'Control + Shift' },
+      { id: 'control+command', keys: ['⌃', '⌘'], label: 'Control + Command' },
+    ],
+  },
 }
+
+export const defaultShortcut: Shortcut = { id: 'control+option', keys: ['⌃', '⌥'], label: 'Control + Option' }
 
 // -- tiny external store ------------------------------------------------------
 
@@ -303,6 +329,7 @@ export const island = new Store<IslandState>(defaultIsland)
 export const mascot = new Store<MascotState>(defaultMascot)
 export const settings = new Store<SettingsState>(defaultSettings)
 export const guide = new Store<GuideState>(defaultGuide)
+export const shortcut = new Store<Shortcut>(defaultShortcut)   // every "Hold ⌃⌥" follows it
 
 export function useStore<T extends object>(store: Store<T>): T {
   return useSyncExternalStore(store.subscribe, store.get, store.get)
@@ -315,6 +342,7 @@ export type Inbound =
   | { type: 'mascot'; state: Partial<MascotState> }
   | { type: 'settings'; state: Partial<SettingsState> }
   | { type: 'guide'; state: Partial<GuideState> }
+  | { type: 'shortcut'; state: Shortcut }
   | { type: 'append'; field: 'answer' | 'transcript'; text: string }
   | { type: 'step'; step: Step }
   | { type: 'reset' }
@@ -329,6 +357,13 @@ export function receive(message: Inbound) {
       break
     case 'settings':
       settings.set(message.state)
+      if (message.state.hotkey) {
+        const { id, keys, label } = message.state.hotkey
+        shortcut.set({ id, keys, label })
+      }
+      break
+    case 'shortcut':
+      shortcut.set(message.state)
       break
     case 'guide':
       guide.set(message.state)

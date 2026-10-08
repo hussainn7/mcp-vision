@@ -5,7 +5,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
-import { Keycap, cn } from '../../components/bits'
+import { Chord, cn } from '../../components/bits'
 import { AccountTab, Avatar, SignIn } from './account'
 import { HistoryPanel, PermissionsTab, VoiceTab } from './basics'
 import { BrainTab } from './brain'
@@ -135,8 +135,7 @@ export function Settings() {
             <span className="text-white/60">{ready ? `Ready · ${engine?.label}` : 'Needs a brain'}</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Keycap className="h-6 min-w-6 text-[12px]">⌃</Keycap>
-            <Keycap className="h-6 min-w-6 text-[12px]">⌥</Keycap>
+            <Chord className="h-6 min-w-6 text-[12px]" />
             <span className="ml-1 text-[11px] text-white/35">hold to talk</span>
           </div>
         </div>

@@ -3,7 +3,7 @@ import { Check, CircleDashed, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import type { EngineBadge as Badge, Step } from '../bridge'
+import { shortcut, useStore, type EngineBadge as Badge, type Step } from '../bridge'
 
 export const cn = (...parts: Parameters<typeof clsx>) => twMerge(clsx(parts))
 
@@ -35,6 +35,27 @@ export function Waveform({ level, bars = 18, className, color = 'bg-white' }: {
       })}
     </div>
   )
+}
+
+/** The hold-to-talk shortcut as keycaps (⌃ ⌥ unless they picked another in General). */
+export function Chord({ className, words = false }: { className?: string; words?: boolean }) {
+  const { keys, label } = useStore(shortcut)
+  const names = label.split(' + ')
+  return (
+    <>
+      {keys.map((key, index) => (
+        <span key={key} className="contents">
+          {words && index > 0 && <span>+</span>}
+          <Keycap className={className}>{words ? `${key} ${names[index]?.toLowerCase() ?? ''}` : key}</Keycap>
+        </span>
+      ))}
+    </>
+  )
+}
+
+/** The shortcut in words, for running text: "Control + Option". */
+export function useShortcutLabel() {
+  return useStore(shortcut).label
 }
 
 export function Keycap({ children, className }: { children: React.ReactNode; className?: string }) {

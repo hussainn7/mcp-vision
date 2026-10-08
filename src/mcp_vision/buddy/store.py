@@ -25,6 +25,7 @@ class Prefs:
     stt: str = ""
     onboarded: bool = False
     update_check: bool = True        # once a day, ask GitHub whether a newer Plip is out
+    hotkey: str = "control+option"   # hold to talk: one of hotkey.CHORDS
 
     @classmethod
     def load(cls, path: Path | None = None) -> Prefs:

@@ -2,7 +2,7 @@ import { motion } from 'motion/react'
 import { CircleCheck, CircleHelp, CircleX, Hand, Square } from 'lucide-react'
 import { useState } from 'react'
 import { send, type Outcome, type SettingsState, type UsagePeriod } from '../../bridge'
-import { cn } from '../../components/bits'
+import { cn, useShortcutLabel } from '../../components/bits'
 import { Button, Card, Section, Segmented } from './ui'
 
 type Period = '7' | '30' | 'all'
@@ -59,11 +59,12 @@ export function UsagePanel({ state }: { state: SettingsState }) {
 }
 
 function Empty() {
+  const talk = useShortcutLabel()
   return (
     <Card className="py-10 text-center">
       <div className="text-[14px] font-semibold text-white/80">Nothing yet</div>
       <p className="mx-auto mt-1.5 max-w-[380px] text-[12.5px] leading-relaxed text-white/45">
-        Hold ⌃⌥ and ask Plip something. Every request shows up here with the tokens it used and what that would cost.
+        Hold {talk} and ask Plip something. Every request shows up here with the tokens it used and what that would cost.
       </p>
     </Card>
   )

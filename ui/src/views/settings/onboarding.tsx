@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Check, Hand, Mic, MonitorUp } from 'lucide-react
 import { useState } from 'react'
 import { send, type SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
-import { Keycap, cn } from '../../components/bits'
+import { Chord, cn } from '../../components/bits'
 import { ConnectAI } from './connect'
 import { Button } from './ui'
 
@@ -11,7 +11,7 @@ export const PRIVACY_URL = 'https://plip.dev/privacy'
 
 const PERMS = [
   { key: 'screen', icon: MonitorUp, title: 'Screen Recording', why: 'So Plip can see what you’re asking about.' },
-  { key: 'accessibility', icon: Hand, title: 'Accessibility', why: 'For the ⌃⌥ shortcut and pointing at things.' },
+  { key: 'accessibility', icon: Hand, title: 'Accessibility', why: 'For the hold-to-talk shortcut and pointing at things.' },
   { key: 'microphone', icon: Mic, title: 'Microphone', why: 'Only while you hold the shortcut. Never saved.' },
 ] as const
 
@@ -64,7 +64,7 @@ export function Onboarding({ state }: { state: SettingsState }) {
       body: (
         <div className="space-y-4 text-[13.5px] text-white/65">
           <div className="flex items-center gap-2">
-            Hold <Keycap>⌃ control</Keycap> + <Keycap>⌥ option</Keycap>, talk, then let go.
+            Hold <Chord words />, talk, then let go.
           </div>
           <div className="space-y-1.5 text-white/50">
             <div>Try: “What does this button do?”</div>
