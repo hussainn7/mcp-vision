@@ -102,7 +102,7 @@ worth). It stays on your Mac.
 **Permissions in one click.** **Allow** opens the exact page in System Settings with a small
 card docked under it: drag Plip into the list and it's on.
 
-### Try it from the terminal (any OS)
+### Try it from the terminal (macOS and Linux)
 
 ```bash
 plip ask --image screenshot.png "where's the export button?"
