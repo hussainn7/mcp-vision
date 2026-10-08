@@ -19,7 +19,7 @@ import asyncio
 import concurrent.futures
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from mcp_vision.buddy.conversation import Conversation, Turn
@@ -320,6 +320,7 @@ class Companion:
                 self.actions.cancel_pending()          # they moved on to something else
                 self.emit("confirm", cleared=True)
         result = await self._turn(transcript)
+        route = result.route                   # Plip's own follow-ups aren't routed again: same depth, same screens
         turns, followups = 1, 0
         while result.state == "done" and (result.reports or result.look_after) and followups < self.max_followups:
             if result.look_after:
@@ -327,7 +328,7 @@ class Companion:
                 await self._settle(result.look_after)
             prompt = (LOOK_FOLLOWUP if result.look_after else ACTION_FOLLOWUP).format(
                 reports="\n".join(f"- {report}" for report in result.reports) or "- (nothing else)")
-            followup = await self._turn(prompt, guide=True, screen=bool(result.look_after))
+            followup = await self._turn(prompt, guide=True, screen=bool(result.look_after), route=route)
             turns += 1
             followups += 1
             followup.did = result.did + followup.did
@@ -345,7 +346,8 @@ class Companion:
             if not await self.watcher.wait_for_change(self.guide_timeout):
                 self.emit("walkthrough", index=done_steps - 1, total=total, label=label, waiting=False, timed_out=True)
                 break
-            followup = await self._turn(GUIDE_FOLLOWUP.format(done=done_steps, total=total), guide=True)
+            followup = await self._turn(GUIDE_FOLLOWUP.format(done=done_steps, total=total), guide=True,
+                                        screen=True, route=route)
             turns += 1
             if followup.state != "done":
                 return followup
@@ -454,7 +456,8 @@ class Companion:
                 extra = ""
         return f"now: {now}" + (f"\n{extra}" if extra else "")
 
-    async def _turn(self, transcript: str, *, guide: bool = False, screen: bool | None = None) -> TurnResult:
+    async def _turn(self, transcript: str, *, guide: bool = False, screen: bool | None = None,
+                    route: Route | None = None) -> TurnResult:
         transcript = " ".join(transcript.split())
         result = TurnResult(transcript=transcript)
         started = self.clock()
@@ -473,7 +476,7 @@ class Companion:
         cancelled = called = False
         meter = self._meter                    # this request's, even if a newer press replaces self._meter
         try:
-            shots, context, result.route = await self._look(transcript, result, screen)
+            shots, context, result.route = await self._look(transcript, result, screen, route)
             mark("looked")
             self._shots, self._context = shots, context
             if self.actions is not None and (shots or context is not None):
@@ -541,19 +544,23 @@ class Companion:
                 self.pointer.set_state("idle")
         return result
 
-    async def _look(self, transcript: str, result: TurnResult,
-                    screen: bool | None = None) -> tuple[list[Screenshot], ScreenContext | None, Route]:
-        """Route, capture, and read screen context concurrently."""
+    async def _look(self, transcript: str, result: TurnResult, screen: bool | None = None,
+                    routed: Route | None = None) -> tuple[list[Screenshot], ScreenContext | None, Route]:
+        """Route, capture, and read screen context concurrently.
+
+        ``routed``: the request's route, for Plip's own follow-ups. They keep its effort and screens rather than
+        routing Plip's words as if the user said them (a router call each, and an effort that changed mid-task).
+        """
         if screen is False:                     # e.g. handing search results back: no need to look
-            return [], None, Route(needs_screen=False, provider="followup")
+            return [], None, replace(routed or Route(provider="followup"), needs_screen=False)
         started = self.clock()
         prefetched = self._take_prefetch()
         capture = (asyncio.wrap_future(prefetched) if prefetched is not None
                    else asyncio.create_task(asyncio.to_thread(self.capturer.capture)))
         context_task = (asyncio.create_task(asyncio.to_thread(self.context.snapshot))
                         if self.context is not None else None)
-        route = Route()
-        if self.router is not None:
+        route = routed or Route()
+        if self.router is not None and routed is None:
             try:
                 screens = await asyncio.wait_for(asyncio.to_thread(self.capturer.screens), self.capture_timeout)
                 route = await self.router.route(transcript, screens)
@@ -577,8 +584,7 @@ class Companion:
             except Exception:
                 context = None
         if screen:
-            route = Route(needs_screen=True, intent=route.intent, detailed=route.detailed, provider=route.provider,
-                          confidence=route.confidence, latency_ms=route.latency_ms)
+            route = replace(route, needs_screen=True)
         if not route.needs_screen:
             shots, context = [], None
         elif route.cursor_screen_only and len(shots) > 1:

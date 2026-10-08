@@ -228,3 +228,34 @@ def test_the_screen_map_says_where_typing_goes_but_never_what_is_typed():
     text = ScreenContext(app="Chrome", focused=_focused(FakeAX(), search)).describe(
         [Screenshot(screen=screen, data=b"jpg", width=1280, height=831)])
     assert 'typing goes into: text field "Address and search bar"' in text and "secret" not in text
+
+
+def test_a_walkthrough_is_routed_once_and_keeps_its_effort_and_screen_every_step():
+    from mcp_vision.buddy.companion import Route
+    from mcp_vision.buddy.router import rule_route
+
+    class Router:
+        """Like Jev: the user's question is a deep one, Plip's own check-in words read as a quick one."""
+
+        def __init__(self):
+            self.heard = []
+
+        async def route(self, transcript, screens):
+            self.heard.append(transcript)
+            return Route(needs_screen=True, detailed=len(self.heard) == 1, provider="jev", latency_ms=120)
+
+    class Brain(ScriptedBrain):
+        async def stream(self, *, system, turns, detailed=False):
+            self.depths = [*getattr(self, "depths", []), detailed]
+            async for chunk in super().stream(system=system, turns=turns, detailed=detailed):
+                yield chunk
+
+    brain = Brain([["[STEPS:3] First, open the File menu. [POINT:20,10:File menu]"],
+                   ["Nice. Now pick Export. [POINT:60,80:Export]"], ["Perfect, that's exported. [DONE]"]])
+    router = Router()
+    result = asyncio.run(Companion(brain=brain, capturer=capturer(), router=router,
+                                   watcher=ScriptedWatcher([True, True])).respond("walk me through exporting a pdf"))
+    assert result.finished and result.turns == 3
+    assert router.heard == ["walk me through exporting a pdf"]      # check-ins aren't routed as if the user spoke
+    assert brain.depths == [True, True, True]                       # one effort for the whole task
+    assert all(turns[-1].images for _, turns in brain.seen)          # every check-in sees the screen it talks about
