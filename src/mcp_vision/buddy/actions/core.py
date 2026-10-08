@@ -293,6 +293,10 @@ def type_text(ctx: ActionContext, args: dict) -> ActionResult:
 
 def replace_selection(ctx: ActionContext, args: dict) -> ActionResult:
     text = _need(args, "text", "the new text")
+    context = ctx.screen[1] if isinstance(ctx.screen, tuple) and len(ctx.screen) > 1 else None
+    if getattr(context, "selection_cut", False):
+        # It only saw the start: swapping the whole selection for a rewrite of that part would lose the rest.
+        raise ActionError("That's more text than I can rewrite in one go. Select a smaller part and ask me again.")
     ctx.host.replace_selection(text)
     return ActionResult(detail="text replaced")
 

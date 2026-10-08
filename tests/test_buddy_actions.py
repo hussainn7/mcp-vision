@@ -500,3 +500,26 @@ def test_a_hung_screen_grab_times_out_and_still_answers(stuck_in):
         return result, elapsed
     result, elapsed = run(timed())
     assert result.spoken == "Here you go." and elapsed < 2
+
+
+def test_a_rewrite_sees_the_whole_email_and_never_replaces_more_than_it_saw():
+    from mcp_vision.buddy.geometry import Rect, ScreenInfo, Screenshot
+    from mcp_vision.buddy.screen_context import SELECTION_LIMIT, ScreenContext
+
+    shot = Screenshot(screen=ScreenInfo(1, Rect(0, 0, 1512, 982), is_cursor_screen=True), data=b"", width=1280,
+                      height=831)
+    email = "Hi Sam,\n\nThanks for the   notes on the deck.\r\n\n\n\nBest,\nAda " + "and more. " * 70
+    text = ScreenContext(app="Mail", selection=email, selection_chars=len(email)).describe([shot])
+    # The model gets every paragraph back, not the first 600 characters run together.
+    assert 'selected text:\n"""\nHi Sam,\n\nThanks for the notes on the deck.\n\nBest,\nAda and more.' in text
+    assert text.rstrip().endswith('and more.\n"""') and "only the first" not in text
+
+    host = FakeHost()
+    e = engine(host)
+    long = "x" * (SELECTION_LIMIT + 500)
+    e.ctx.screen = ([shot], ScreenContext(selection=long[:SELECTION_LIMIT], selection_chars=len(long)))
+    assert "only the first 3,000 of 3,500 characters" in e.ctx.screen[1].describe([shot])
+    outcome = asyncio.run(e.handle("replace_selection", {"text": "shorter"}))
+    assert outcome.status == "failed" and "smaller part" in outcome.message
+    e.ctx.screen = ([shot], ScreenContext(selection=email, selection_chars=len(email)))
+    assert asyncio.run(e.handle("replace_selection", {"text": "Hey Sam!"})).status == "done"

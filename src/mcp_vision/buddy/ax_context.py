@@ -18,7 +18,7 @@ from typing import Any
 
 from mcp_vision.buddy.ax_locator import _ROLE_NAMES, CONTROL_ROLES, _bounds, _copy, _name
 from mcp_vision.buddy.geometry import Rect
-from mcp_vision.buddy.screen_context import Control, ScreenContext
+from mcp_vision.buddy.screen_context import SELECTION_LIMIT, Control, ScreenContext
 
 _SKIP_ROLES = {"AXStaticText", "AXImage", "AXRow", "AXCell"}     # too noisy for a map
 _CONTAINER_ROLES = {"AXWindow", "AXGroup", "AXToolbar", "AXScrollArea", "AXSplitGroup", "AXTabGroup",
@@ -66,7 +66,7 @@ class MacAXContext:
             if _copy(AX, focused, "AXSubrole") != "AXSecureTextField":
                 selected = _copy(AX, focused, "AXSelectedText")
                 if isinstance(selected, str):
-                    context.selection = selected[:2000]
+                    context.selection, context.selection_chars = selected[:SELECTION_LIMIT], len(selected)
         roots = [root for root in (_copy(AX, app, "AXMenuBar"), window) if root is not None]
         context.controls = self._walk(AX, roots)
         return context

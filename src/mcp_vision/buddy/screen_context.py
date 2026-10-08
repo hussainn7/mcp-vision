@@ -7,12 +7,14 @@ of estimating; text-only engines (no image input) use it to point at all.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from mcp_vision.buddy.geometry import Screenshot
 
 MAX_CONTROLS = 70
+SELECTION_LIMIT = 3000        # characters of selected text the model sees (about 750 tokens at most)
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,13 @@ class ScreenContext:
     selection: str = ""
     controls: list[Control] = field(default_factory=list)
     focused: str = ""             # the text box typing goes into, like 'search field "Search"'
+    selection_chars: int = 0      # how long the selection really is; ``selection`` keeps SELECTION_LIMIT of it
     ids: dict[int, Control] = field(default_factory=dict, compare=False, repr=False)   # [n] in the last describe
+
+    @property
+    def selection_cut(self) -> bool:
+        """The model sees only the start of what's selected, so it can't rewrite it in place."""
+        return self.selection_chars > len(self.selection)
 
     @property
     def empty(self) -> bool:
@@ -60,8 +68,13 @@ class ScreenContext:
             lines.append(f"frontmost app: {self.app}" + (f' (window "{self.window[:80]}")' if self.window else ""))
         if self.focused:
             lines.append(f"typing goes into: {self.focused}")
-        if self.selection.strip():
-            lines.append(f'selected text: "{" ".join(self.selection.split())[:600]}"')
+        selected = _tidy(self.selection[:SELECTION_LIMIT])
+        if selected:
+            # Line breaks kept: "rewrite this" on an email has to give its paragraphs back.
+            cut = (f" (only the first {len(self.selection):,} of {self.selection_chars:,} characters)"
+                   if self.selection_cut else "")
+            quoted = f' "{selected}"' if "\n" not in selected else f'\n"""\n{selected}\n"""'
+            lines.append(f"selected text{cut}:{quoted}")
         mapped = _map_controls(self.controls, shots)
         self.ids = {}
         if mapped:
@@ -73,6 +86,12 @@ class ScreenContext:
                     self.ids[number] = control
                     lines.append(f"    [{number}] {label} | {role} | {x},{y}")
         return "\n".join(lines)
+
+
+def _tidy(text: str) -> str:
+    """Selected text with its line breaks, minus runs of spaces and blank lines."""
+    lines = [" ".join(line.split()) for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def _map_controls(controls: list[Control], shots: list[Screenshot]
