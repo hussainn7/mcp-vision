@@ -11,10 +11,6 @@ build/
 venv/
 env/
 
-# Model weights (too large for git, download via scripts/download_weights.py)
-weights/icon_detect/model.pt
-weights/icon_caption_florence/model.safetensors
-
 # Runtime outputs (screenshots, element JSONs)
 outputs/*.png
 outputs/*.jpg
@@ -51,7 +47,7 @@ bench/golden/
 *.swp
 
 
-# weights
+# Model weights (too large for git)
 /weights/*
 # Local contextual app builds and live demo evidence
 /outputs/MCP-Vision*.app/
