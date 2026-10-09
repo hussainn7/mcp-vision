@@ -20,6 +20,7 @@ from mcp_vision.buddy.store import History, Prefs, config_dir
 
 KEY_NAMES = {"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
 DEPTHS = {"fast", "balanced", "deep"}
+TOUR_STEPS = ("welcome", "permissions", "brain", "try", "done")
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
 # What a pasted key looks like, by whose it is: a free Google AI Studio key, or an Anthropic one.
@@ -70,6 +71,7 @@ class SettingsService:
     updates: Any = None                                    # buddy.updates.Updates (a newer Plip is out)
     check_updates: Callable[[], None] = lambda: None       # ask GitHub now, in the background
     connector: Any = None                                  # buddy.connect.Connector (one-click Connect, no Terminal)
+    live: Callable[[], dict | None] = lambda: None         # the last request as it goes (the tour's "try it" step)
     check_key: Callable[[str, str], str] = _check_key      # "" when the provider takes a pasted key
     key_check: dict = field(default_factory=dict)          # {name, state: checking | ok | bad, message}
     main: Callable[[Callable[[], None]], None] = lambda job: job()       # run on the UI thread
@@ -116,6 +118,8 @@ class SettingsService:
             "stats": self._stats(),
             "usage": self._usage(),
             "onboarded": prefs.onboarded,
+            "tour": {"step": prefs.tour_step if prefs.tour_step in TOUR_STEPS else "welcome"},
+            "live": self.live(),
             "connect": self.connect_note,
             "keyCheck": dict(self.key_check) or None,
             "report": self.report_note,
@@ -273,11 +277,22 @@ class SettingsService:
 
     def _cmd_tour_start(self, _command):
         """General → Replay the welcome tour: the walkthrough again, everything set up stays."""
-        self._save_onboarded(False)
+        self._save_onboarded(False, step="welcome")
 
-    def _save_onboarded(self, done: bool) -> None:
+    def _cmd_tour_go(self, command):
+        """The walkthrough moved on (or back): kept, so quitting for Screen Recording comes back to the same step."""
+        step = str(command.get("step") or "")
+        if step in TOUR_STEPS:
+            prefs = self.prefs
+            prefs.tour_step = step
+            prefs.save(self.prefs_path)
+            self.push()
+
+    def _save_onboarded(self, done: bool, step: str | None = None) -> None:
         prefs = self.prefs
         prefs.onboarded = done
+        if step is not None:
+            prefs.tour_step = step
         prefs.save(self.prefs_path)
         self.push()
 

@@ -94,6 +94,16 @@ export interface Engine {
   connect?: ConnectProgress  // while Plip installs its app and waits for the browser sign-in
 }
 
+export type TourStep = 'welcome' | 'permissions' | 'brain' | 'try' | 'done'
+
+export interface LiveState {
+  phase: 'idle' | 'listening' | 'thinking' | 'answering' | 'done' | 'error'
+  transcript: string
+  answer: string
+  error: string
+  at: number                 // seconds (epoch) when it reached this phase
+}
+
 export interface KeyCheck {
   name: string               // GEMINI_API_KEY, ANTHROPIC_API_KEY, or '' when no key was found to check
   state: 'checking' | 'ok' | 'bad'
@@ -255,6 +265,8 @@ export interface SettingsState {
   stats: { actionsWeek: number; answers: number; minutesSaved: number }
   usage: UsageState | null
   onboarded: boolean
+  tour: { step: TourStep }   // where the welcome walkthrough is (kept across a restart)
+  live: LiveState | null     // the request as it goes, for the walkthrough's "try it" step
   connect: string
   keyCheck?: KeyCheck | null  // a pasted key being checked with its provider, or what was wrong with it
   report: '' | 'sent' | 'failed'     // a bug report or feature request, after Send
@@ -303,6 +315,8 @@ export const defaultSettings: SettingsState = {
   stats: { actionsWeek: 0, answers: 0, minutesSaved: 0 },
   usage: null,
   onboarded: true,
+  tour: { step: 'welcome' },
+  live: null,
   connect: '',
   report: '',
   account: { available: false, required: false },

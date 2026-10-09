@@ -28,7 +28,7 @@ if (!isNative()) {
       }))
     }
     if (command.cmd === 'finish-onboarding') settings.set({ onboarded: true })
-    if (command.cmd === 'tour-start') settings.set({ onboarded: false })
+    if (command.cmd === 'tour-start') settings.set({ onboarded: false, tour: { step: 'welcome' } })
     if (command.cmd === 'quick-connect') settings.set({ connect: 'Pick the AI you use below, or get a free one from Google.' })
     if (command.cmd === 'engine-connect') {
       // Browser preview: walk through what the app does (install, browser sign-in, connected).

@@ -224,6 +224,40 @@ await test('settings: general (companion style, walkthroughs, tour)', async () =
   await page.close()
 })
 
+await test('onboarding: plain steps, a brain without a terminal, practice, kept across a restart', async () => {
+  const { page, take } = await open('settings?tab=home')
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { onboarded: false, tour: { step: 'welcome' },
+    permissions: { screen: true, accessibility: null, microphone: true, speech: null }, voice: { tts: 'say', stt: 'apple', elevenlabs: false, assemblyai: false },
+    engines: [
+      { id: 'claude-code', label: 'Claude', via: 'Claude Pro / Max via Claude Code', kind: 'subscription', status: 'not-installed' },
+      { id: 'codex', label: 'ChatGPT', via: 'ChatGPT Plus / Pro via Codex CLI', kind: 'subscription', status: 'logged-out' },
+      { id: 'gemini-api', label: 'Gemini', via: 'Free key from Google AI Studio', kind: 'api', status: 'missing-key', keyName: 'GEMINI_API_KEY' },
+    ] } }))
+  await page.getByText('Hi, I’m Plip').waitFor()
+  await page.getByRole('button', { name: 'Set me up' }).click()
+  assert.deepEqual(await take('tour-go'), { cmd: 'tour-go', step: 'permissions' })    // kept: a restart comes back here
+  await page.getByText('Let Plip see and hear you').waitFor()
+  await page.getByText('Microphone and Speech Recognition').waitFor()               // Apple's listening needs both
+  await page.getByRole('button', { name: 'Allow', exact: true }).first().click()
+  assert.deepEqual(await take('grant'), { cmd: 'grant', permission: 'accessibility' })
+  await page.getByRole('button', { name: 'Skip for now' }).click()
+  await page.getByText('Give Plip a brain').waitFor()
+  assert.equal(await page.getByText(/terminal|npm i/i).count(), 0)                   // no commands to run, anywhere
+  await page.getByRole('button', { name: 'Connect', exact: true }).first().click()
+  assert.deepEqual(await take('engine-connect'), { cmd: 'engine-connect', id: 'claude-code' })
+  await page.getByText('No AI plan? Use Google’s for free').waitFor()
+  await page.getByRole('button', { name: 'Paste key' }).click()
+  await page.getByText('Hold Control + Option and ask').waitFor({ timeout: 8000 })   // a working brain moves it on
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { live: { phase: 'done', transcript: 'what can you do',
+    answer: 'I can see your screen and point at things.', error: '', at: Date.now() / 1000 + 5 } } }))
+  await page.getByText('That’s all there is to it').waitFor()
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await page.getByText('You’re all set').waitFor()
+  await page.getByRole('button', { name: 'Start using Plip' }).click()
+  assert.ok(await take('finish-onboarding'))
+  await page.close()
+})
+
 await test('general: the talk shortcut is picked here, and every "hold" hint follows it', async () => {
   const { page, take } = await open('settings?tab=general')
   await page.getByText('Hold Control + Option, talk, then let go.').waitFor()

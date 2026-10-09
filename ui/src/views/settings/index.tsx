@@ -90,7 +90,7 @@ export function Settings() {
   const user = state.account.user
 
   return (
-    <div className="relative flex h-full overflow-hidden bg-ink text-white noise">
+    <div className="relative flex h-full overflow-clip bg-ink text-white noise">
       <div className="pointer-events-none absolute -left-48 -top-64 size-[560px] rounded-full bg-plip-500/[0.14] blur-[130px] animate-aurora" />
       <div className="pointer-events-none absolute -right-56 top-56 size-[460px] rounded-full bg-sky-glow/[0.08] blur-[130px] animate-aurora [animation-delay:-7s]" />
 

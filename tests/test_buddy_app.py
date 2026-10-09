@@ -220,7 +220,8 @@ ENGINES = [{"id": "claude-code", "label": "Claude", "login": "claude auth login"
 def service(tmp_path, monkeypatch):
     from mcp_vision.buddy.memory import Memory
 
-    for name in ("ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY", "TYPESAFE_API_KEY"):
+    for name in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY",
+                 "TYPESAFE_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     calls = {"reload": 0, "posted": [], "platform": [], "refresh": 0}
     platform = Platform(
@@ -252,6 +253,31 @@ def test_settings_snapshot_shape(service):
                                        "restart": False, "guiding": ""}
     assert snapshot["voice"]["tts"] == "say" and snapshot["voice"]["stt"] == "apple"
     assert snapshot["keys"]["ANTHROPIC_API_KEY"] is False and snapshot["history"] == []
+
+
+def test_the_welcome_walkthrough_keeps_its_step_and_watches_the_practice_ask(service):
+    from mcp_vision.buddy.presenter import Presenter
+
+    svc, calls, tmp_path = service
+    svc.handle({"cmd": "tour-go", "step": "brain"})
+    svc.handle({"cmd": "tour-go", "step": "nowhere"})
+    assert Prefs.load(tmp_path / "prefs.json").tour_step == "brain"            # a restart for Screen Recording resumes
+    assert calls["posted"][-1]["state"]["tour"] == {"step": "brain"}
+    svc.handle({"cmd": "tour-start"})
+    assert calls["posted"][-1]["state"]["tour"] == {"step": "welcome"} and not calls["posted"][-1]["state"]["onboarded"]
+    told = []
+    view = Presenter(post_island=lambda messages: None, on_live=lambda: told.append(dict(view.live)))
+    svc.live = lambda: dict(view.live)
+    view.listening()
+    view.transcript("what can you do")
+    view.thinking()
+    view("phase", {"phase": "answering"})
+    view("answer", {"text": "I can see your screen."})
+    view("done", {"latency_ms": 900})
+    assert [entry["phase"] for entry in told] == ["listening", "thinking", "answering", "done"]   # phases, not words
+    svc.push()
+    live = calls["posted"][-1]["state"]["live"]
+    assert live["phase"] == "done" and live["transcript"] == "what can you do" and live["answer"] == "I can see your screen."
 
 
 def test_settings_commands_persist_and_reload(service):

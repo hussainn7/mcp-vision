@@ -358,10 +358,16 @@ def run_buddy_app() -> None:
         log.warning("WebKit bridge unavailable; using the native cursor overlay (pip install pyobjc-framework-WebKit)")
         mascot = BuddyOverlay(visible=prefs.buddy)
 
+    def touring() -> None:
+        """The welcome tour's "try it" step shows the request as it goes: only while the tour is open."""
+        if state["settings_window"] is not None and not Prefs.load().onboarded:
+            service.push()
+
     presenter = Presenter(
         post_island=(lambda messages: AppHelper.callAfter(island.post, messages)) if island else (lambda _m: None),
         set_mood=(lambda mood, level: AppHelper.callAfter(mascot.set_mood, mood, level))
-        if hasattr(mascot, "set_mood") else None)
+        if hasattr(mascot, "set_mood") else None,
+        on_live=lambda: AppHelper.callAfter(touring))
 
     def settings_window():
         if state["settings_window"] is None:
@@ -655,6 +661,7 @@ def run_buddy_app() -> None:
         usage=usage_log,
         parakeet=parakeet,
         connector=connector,
+        live=lambda: dict(presenter.live),
         account=account,
         updates=updates,
         check_updates=lambda: check_updates(force=True),

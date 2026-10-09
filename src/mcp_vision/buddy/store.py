@@ -24,6 +24,7 @@ class Prefs:
     tts: str = ""                    # "" = follow settings/env
     stt: str = ""
     onboarded: bool = False
+    tour_step: str = ""              # where the welcome walkthrough is, so a restart (Screen Recording) resumes there
     update_check: bool = True        # once a day, ask GitHub whether a newer Plip is out
     hotkey: str = "control+option"   # hold to talk: one of hotkey.CHORDS
 

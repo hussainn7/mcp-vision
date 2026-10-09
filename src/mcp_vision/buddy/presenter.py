@@ -18,10 +18,12 @@ class Presenter:
 
     def __init__(self, post_island: Callable[[list[Message]], None],
                  set_mood: Callable[[str, float], None] | None = None,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, on_live: Callable[[], None] = lambda: None):
         self.post_island = post_island
         self.set_mood = set_mood or (lambda mood, level: None)
         self.clock = clock
+        self.on_live = on_live         # the request moved to a new phase (the welcome tour's "try it" step watches)
+        self.live: dict[str, Any] = {"phase": "idle", "transcript": "", "answer": "", "error": "", "at": 0.0}
         self._last_level = 0.0
         self.phase = "idle"
         self.walkthrough: dict[str, Any] | None = None
@@ -31,6 +33,14 @@ class Presenter:
     def _island(self, **state: Any) -> None:
         self.post_island([{"type": "island", "state": state}])
 
+    def _live(self, **changes: Any) -> None:
+        """Where the request is, in a few words, for Settings. Only phase changes are passed on (not every word)."""
+        self.live.update(changes, at=time.time())
+        try:
+            self.on_live()
+        except Exception:
+            pass
+
     # -- push-to-talk ------------------------------------------------------------
     def listening(self) -> None:
         self.phase = "listening"
@@ -39,6 +49,7 @@ class Presenter:
         self.goal = None
         self.post_island([{"type": "reset"}, {"type": "island", "state": {"phase": "listening"}}])
         self.set_mood("listening", 0.0)
+        self._live(phase="listening", transcript="", answer="", error="")
 
     def asked(self, text: str) -> None:
         """A request from a button (Yes, Keep going), as if they'd held the keys and said it."""
@@ -61,11 +72,13 @@ class Presenter:
 
     def transcript(self, text: str) -> None:
         self._island(transcript=text)
+        self.live["transcript"] = text
 
     def thinking(self) -> None:
         self.phase = "thinking"
         self._island(phase="thinking", level=0)
         self.set_mood("thinking", 0.0)
+        self._live(phase="thinking")
 
     def idle(self) -> None:
         self.phase = "idle"
@@ -78,6 +91,7 @@ class Presenter:
         fixable = "settings" in message.lower() if setup is None else setup
         self._island(phase="error", error=message, fixable=fixable)
         self.set_mood("error", 0.0)
+        self._live(phase="error", error=message)
 
     # -- companion observer ------------------------------------------------------------
     def __call__(self, kind: str, data: dict[str, Any]) -> None:
@@ -106,6 +120,7 @@ class Presenter:
             self.phase = "answering"
             self._island(phase="answering", done=False, speaking=True, offer=None)
             self.set_mood("speaking", 0.5)
+            self._live(phase="answering")
 
     def _on_step(self, data: dict[str, Any]) -> None:
         step = {key: data[key] for key in ("id", "label", "status", "detail") if data.get(key)}
@@ -116,6 +131,7 @@ class Presenter:
 
     def _on_answer(self, data: dict[str, Any]) -> None:
         self.post_island([{"type": "append", "field": "answer", "text": data.get("text", "")}])
+        self.live["answer"] = (self.live["answer"] + data.get("text", ""))[:400]
 
     def _on_walkthrough(self, data: dict[str, Any]) -> None:
         self.walkthrough = {"index": int(data.get("index", 0)), "total": int(data.get("total", 1)),
@@ -138,6 +154,7 @@ class Presenter:
         self._island(done=True, latencyMs=round(latency) if isinstance(latency, (int, float)) else None)
         working = self.walkthrough or (self.goal is not None and self.goal["status"] == "active")
         self.set_mood("happy" if not working else "idle", 0.0)
+        self._live(phase="done")
 
     def _on_offer(self, data: dict[str, Any]) -> None:
         """It ended on a yes-or-no suggestion: the island answers it with a click."""

@@ -5,8 +5,8 @@
 **Personal staff that lives in your MacBook's notch.** Hold **Control+Option** and
 talk. Plip looks at your screen, explains things step by step, and does the busywork
 for you: finds files, tidies your desktop, pulls up flights, sets reminders,
-rewrites your text. It thinks with the **Claude, ChatGPT,
-Cursor or Gemini plan you already pay for**.
+rewrites your text. It thinks with the **Claude, ChatGPT or
+Cursor plan you already pay for**, or **free with a Google account**.
 
 ![Plip walking through a five-step checklist in the notch while Plip points at the next click](docs/img/plip-plan.jpg)
 
@@ -58,16 +58,19 @@ Run from a terminal, macOS checks *the terminal's* permissions, not Plip's: turn
 or your editor) under System Settings → Privacy & Security → Accessibility, or the shortcut hears nothing.
 Plip says so when it starts. Prefer another shortcut than Control+Option? Pick one in **Settings → General**.
 
-Pick a brain under **Brain**. If you're already signed in to one of these, Plip finds
-it and uses your plan:
+The first-run walkthrough asks for three macOS switches, then gives Plip a brain. Nothing
+to type into a terminal:
 
-| Your plan | One-time sign-in | Sees screenshots |
+| You have | What to click | Sees screenshots |
 |---|---|---|
-| Claude Pro / Max | `claude auth login` ([Claude Code](https://claude.com/claude-code)) | yes |
-| ChatGPT Plus / Pro | `codex login` → *Sign in with ChatGPT* ([Codex CLI](https://github.com/openai/codex)) | yes |
-| Cursor | `agent login` ([Cursor CLI](https://cursor.com/cli)) | text only (Plip reads it the screen map) |
-| Google account | run `gemini` once → *Login with Google* ([Gemini CLI](https://github.com/google-gemini/gemini-cli)) | yes |
-| none of these | paste an `ANTHROPIC_API_KEY` | yes, fastest first word |
+| Claude Pro / Max | **Connect** next to Claude: Plip installs [Claude Code](https://claude.com/claude-code) and opens the browser to sign in | yes |
+| ChatGPT Plus / Pro | **Connect** next to ChatGPT: Plip downloads the [Codex CLI](https://github.com/openai/codex) from GitHub (checked against its SHA-256) and opens the browser to sign in | yes |
+| Cursor | **Connect** next to Cursor ([Cursor CLI](https://cursor.com/cli)) | text only (Plip reads it the screen map) |
+| no AI plan | **Get my free key** (Google AI Studio, any Google account), then **Paste key**. Plip checks it with Google | yes |
+| an API key | paste an `ANTHROPIC_API_KEY` under **Brain** | yes, fastest first word |
+
+Already signed in to one of these? Plip finds it and uses it. The [Gemini CLI](https://github.com/google-gemini/gemini-cli)
+works too if it's installed. The free Google key has a daily limit; it resets every day.
 
 Plip runs the CLI once per question in an empty scratch folder with its own tools
 switched off, so the model only ever sends back words and Plip's action tags. Plip
@@ -81,7 +84,10 @@ Then hold **Control+Option**, talk, and let go.
   what Plip is doing (looked at 2 screens, searched files, snapped to "Export").
 - Click **⌃** on the island to minimize it back into the notch; hover to peek.
 - Press the shortcut again while Plip is talking to interrupt it.
-- Menu bar: *Open Plip*, *Brain*, *Show Plip by my cursor*, *Forget this conversation*.
+- Plip ends on a yes-or-no suggestion ("want me to add it to your cart?"): click **Yes** on
+  the island, or hold the keys and say it.
+- Menu bar: *Stop* while Plip is working, *Keep going* when a task paused, *Open Plip*, *Brain*,
+  *Show Plip by my cursor*, *Forget this conversation*.
 
 ### Optional extras
 
