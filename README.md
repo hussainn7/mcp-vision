@@ -235,6 +235,6 @@ Plip sends one anonymous ping per day (random install id, version, macOS version
 one event per setup step reached, once each: a walkthrough step shown or skipped, a permission granted (which one),
 an AI connected (which provider), the first task finished, sign-in offered / done / put off (at which moment, after
 how many tasks). All of it is keyed on the install id and carries your account id once you have one (see
-[Your account](#your-account)), so we can see where setup loses people. Until 0.9.0 the install id was never
+[Your account](#your-account)), so we can see where setup loses people. Before 0.10.0 the install id was never
 linked to an account; it is now, for that funnel. No screens, files, or prompts are ever sent, and nothing about
 what you ask. Opt out of all of it with `MCP_VISION_NO_ANALYTICS=1` or `DO_NOT_TRACK=1`.
