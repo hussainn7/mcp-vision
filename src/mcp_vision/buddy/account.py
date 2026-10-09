@@ -5,11 +5,12 @@ browser at Supabase's authorize page, Google sends the person back to Supabase, 
 one-shot page Plip serves on 127.0.0.1 with a code. Plip swaps that code (plus the secret only it holds)
 for a session. Supabase keeps the list of accounts: Authentication → Users in its dashboard.
 
-On this Mac, ``~/.config/mcp-vision/account.json`` (readable only by you) keeps who you are and the session.
-When Plip starts it renews the session once, so an account removed in Supabase signs out here.
+On this Mac, ``~/.config/mcp-vision/account.json`` (readable only by you) keeps who you are, your Google picture
+(fetched once, for Settings) and the session. When Plip starts it renews the session once, so an account
+removed in Supabase signs out here.
 
-What leaves the Mac: the sign-in itself (Google tells Supabase your name, email and picture) and that one
-renewal per launch. Nothing about what you ask Plip. Usage stats stay anonymous and are never tied to it.
+What leaves the Mac: the sign-in itself (Google tells Supabase your name, email and picture), that one
+renewal per launch, and fetching the picture from Google when it's new. Nothing about what you ask Plip. Usage stats stay anonymous and are never tied to it.
 
 No config (``PLIP_SUPABASE_URL`` + ``PLIP_SUPABASE_KEY``: the environment, ``~/.config/mcp-vision/.env``,
 or baked into a release build) means no sign-in at all, and Plip works the same (running from source).
@@ -21,6 +22,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -46,6 +48,9 @@ PROVIDERS = {"google"}
 SIGN_IN_FIRST = "Sign in to Plip to start using it."
 # Supabase saying "this session is over" (account deleted, banned, signed out everywhere): sign out here too.
 GONE = {400, 401, 403, 404}
+PICTURE_SIZE = 192                              # px asked of Google: sharp at 52 pt on retina
+PICTURE_MAX = 2_000_000                         # bytes; Google's are ~10 KB
+IMAGE_TYPES = {b"\xff\xd8\xff": "image/jpeg", b"\x89PNG\r\n\x1a\n": "image/png", b"GIF8": "image/gif"}
 
 Transport = Callable[[str, str, dict[str, str], dict[str, Any] | None], tuple[int, dict[str, Any]]]
 
@@ -67,6 +72,25 @@ def urllib_transport(method: str, url: str, headers: dict[str, str], body: dict[
     return status, parsed if isinstance(parsed, dict) else {}
 
 
+def fetch_picture(url: str) -> bytes | None:
+    """The picture's bytes, or None (https only, capped)."""
+    if not url.startswith("https://"):
+        return None
+    request = urllib.request.Request(url, headers={"User-Agent": f"Plip/{__version__}"})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = response.read(PICTURE_MAX + 1)
+    except Exception:
+        return None
+    return data if len(data) <= PICTURE_MAX else None
+
+
+def _image_type(data: bytes) -> str:
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return next((kind for magic, kind in IMAGE_TYPES.items() if data.startswith(magic)), "")
+
+
 def pkce_pair() -> tuple[str, str]:
     """A fresh secret (verifier) and what the browser may see of it (the S256 challenge)."""
     verifier = secrets.token_urlsafe(64)
@@ -75,7 +99,7 @@ def pkce_pair() -> tuple[str, str]:
 
 
 def _profile(user: dict[str, Any]) -> dict[str, Any]:
-    """What Plip shows and keeps about the person: name, email, how they signed in, since when."""
+    """What Plip shows and keeps about the person: name, email, picture link, how they signed in, since when."""
     meta = user.get("user_metadata") or {}
     created = str(user.get("created_at") or "")
     try:
@@ -84,6 +108,7 @@ def _profile(user: dict[str, Any]) -> dict[str, Any]:
         since = None
     return {"id": str(user.get("id") or ""), "email": str(user.get("email") or meta.get("email") or ""),
             "name": str(meta.get("full_name") or meta.get("name") or ""),
+            "picture_url": str(meta.get("avatar_url") or meta.get("picture") or ""),
             "provider": str((user.get("app_metadata") or {}).get("provider") or "google"), "since": since}
 
 
@@ -96,7 +121,8 @@ class Account:
     def __init__(self, url: str | None = "", key: str | None = "", *, path: Path | None = None,
                  open_url: Callable[[str], Any] = lambda url: None, transport: Transport = urllib_transport,
                  on_change: Callable[[], None] = lambda: None, on_signed_in: Callable[[], None] = lambda: None,
-                 ports: tuple[int, ...] = PORTS, wait: float = WAIT):
+                 fetch: Callable[[str], bytes | None] = fetch_picture, ports: tuple[int, ...] = PORTS,
+                 wait: float = WAIT):
         from mcp_vision.buddy.store import config_dir
 
         self.base = (url or "").strip().rstrip("/")
@@ -106,6 +132,7 @@ class Account:
         self.transport = transport
         self.on_change = on_change                 # status moved (the Settings window shows it)
         self.on_signed_in = on_signed_in           # signed in: Plip starts working
+        self.fetch = fetch
         self.ports = ports
         self.wait = wait
         self.status = ""                           # "" | waiting | failed
@@ -114,6 +141,7 @@ class Account:
         self._server: HTTPServer | None = None
         self._verifier = ""
         self._lock = threading.Lock()
+        self._writing = threading.Lock()           # account.json: sign-in, the picture, sign-out
 
     # -- state -----------------------------------------------------------------------------------
     @property
@@ -145,16 +173,21 @@ class Account:
 
     def snapshot(self) -> dict[str, Any]:
         user = self.user
+        shown = {key: user.get(key) for key in ("name", "email", "provider", "since")} if user else None
+        if shown is not None:
+            shown["picture"] = str(self._session().get("picture") or "")       # a data: url, or "" for the initial
         return {"available": self.available, "required": self.required, "status": self.status, "error": self.error,
-                "url": self.link if self.status == "waiting" else "",
-                "user": {key: user.get(key) for key in ("name", "email", "provider", "since")} if user else None}
+                "url": self.link if self.status == "waiting" else "", "user": shown}
 
     def _save(self, session: dict[str, Any]) -> None:
+        """Whole or not at all: Settings may be reading it while the picture lands."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        temp = self.path.with_name(self.path.name + ".tmp")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as handle:
             json.dump(session, handle)
-        os.chmod(self.path, 0o600)
+        os.chmod(temp, 0o600)
+        os.replace(temp, self.path)
 
     def _keep(self, body: dict[str, Any]) -> bool:
         """Keep a session Supabase handed over. False when it isn't one."""
@@ -164,9 +197,31 @@ class Account:
         profile = _profile(user)
         if not profile["email"]:
             return False
-        self._save({"user": profile, "access_token": body["access_token"],
-                    "refresh_token": body.get("refresh_token") or "", "expires_at": body.get("expires_at")})
+        with self._writing:
+            old = self._session()
+            same = (old.get("user") or {}).get("picture_url") == profile["picture_url"]
+            picture = str(old.get("picture") or "") if same else ""
+            self._save({"user": profile, "access_token": body["access_token"],
+                        "refresh_token": body.get("refresh_token") or "", "expires_at": body.get("expires_at"),
+                        "picture": picture})
+        if profile["picture_url"] and not picture:
+            threading.Thread(target=self._get_picture, args=(profile["picture_url"],), daemon=True,
+                             name="plip-picture").start()
         return True
+
+    def _get_picture(self, url: str) -> None:
+        """Download their Google picture once and keep it here, so Settings never loads it from Google."""
+        data = self.fetch(re.sub(r"=s\d+-c$", f"=s{PICTURE_SIZE}-c", url)) or b""
+        kind = _image_type(data)
+        if not kind:
+            return
+        with self._writing:
+            session = self._session()
+            if (session.get("user") or {}).get("picture_url") != url:
+                return                                              # signed out or changed meanwhile
+            session["picture"] = f"data:{kind};base64,{base64.b64encode(data).decode()}"
+            self._save(session)
+        self.on_change()
 
     def _headers(self, token: str = "") -> dict[str, str]:
         return {"apikey": self.key, **({"Authorization": f"Bearer {token}"} if token else {})}
@@ -308,10 +363,11 @@ class Account:
             threading.Thread(target=tell, daemon=True, name="plip-sign-out").start()
 
     def _forget(self) -> None:
-        try:
-            self.path.unlink()
-        except OSError:
-            pass
+        with self._writing:
+            try:
+                self.path.unlink()
+            except OSError:
+                pass
 
 
 def _close(server: HTTPServer) -> None:

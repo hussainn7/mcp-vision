@@ -15,7 +15,7 @@ from mcp_vision.buddy.store import Prefs
 
 URL, KEY = "https://abc.supabase.co", "sb_publishable_test"
 USER = {"id": "u1", "email": "ada@example.com", "created_at": "2026-10-06T12:00:00.5Z",
-        "user_metadata": {"full_name": "Ada Lovelace", "avatar_url": "https://lh3.example/a.png"},
+        "user_metadata": {"full_name": "Ada Lovelace", "avatar_url": "https://lh3.example/a=s96-c"},
         "app_metadata": {"provider": "google"}}
 SESSION = {"access_token": "at1", "refresh_token": "rt1", "expires_at": 1, "user": USER}
 
@@ -43,7 +43,7 @@ def account(tmp_path, *answers, **kwargs):
     supabase, opened, events = Supabase(*answers), [], []
     made = Account(URL, KEY, path=tmp_path / "account.json", open_url=opened.append, transport=supabase,
                    on_change=lambda: events.append("change"), on_signed_in=lambda: events.append("in"),
-                   ports=kwargs.pop("ports", (0,)), **kwargs)
+                   ports=kwargs.pop("ports", (0,)), fetch=kwargs.pop("fetch", lambda url: None), **kwargs)
     return made, supabase, opened, events
 
 
@@ -92,9 +92,9 @@ def test_google_sign_in_with_pkce_keeps_the_session_private(tmp_path):
     assert challenge.decode() == query["code_challenge"]                   # only Plip had the verifier
     assert not acct.required and not acct.blocker and acct.status == "" and events[-1] == "in"
     assert acct.snapshot()["user"] == {"name": "Ada Lovelace", "email": "ada@example.com", "provider": "google",
-                                       "since": 1791288000}
+                                       "since": 1791288000, "picture": ""}
     saved = json.loads((tmp_path / "account.json").read_text())
-    assert saved["refresh_token"] == "rt1" and "avatar_url" not in json.dumps(saved)
+    assert saved["refresh_token"] == "rt1" and "at1" in json.dumps(saved)
     assert oct((tmp_path / "account.json").stat().st_mode & 0o777) == "0o600"
     assert wait_closed(int(urlparse(query["redirect_to"]).port))           # one-shot: the port is free again
 
@@ -187,6 +187,43 @@ def test_launch_renews_the_session_and_a_removed_account_signs_out(tmp_path):
     assert acct.user is not None and supabase.calls[1][3] == {"refresh_token": "rt2"}
     acct.refresh()                                                           # Supabase says no: signed out
     assert acct.user is None and acct.required
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 24
+
+
+def picture(acct):
+    for _ in range(100):
+        if acct.snapshot()["user"]["picture"]:
+            break
+        time.sleep(0.01)
+    return acct.snapshot()["user"]["picture"]
+
+
+def test_the_google_picture_is_fetched_once_and_kept_here(tmp_path):
+    fetched = []
+    acct, _supabase, _opened, events = account(tmp_path, (200, SESSION), (200, SESSION),
+                                               fetch=lambda url: fetched.append(url) or PNG)
+    acct._keep(SESSION)
+    assert picture(acct) == "data:image/png;base64," + base64.b64encode(PNG).decode()
+    assert fetched == ["https://lh3.example/a=s192-c"] and "change" in events      # sharp enough for the card
+    acct.refresh()                                                                  # same picture: not again
+    assert len(fetched) == 1 and picture(acct)
+    moved = {**SESSION, "user": {**USER, "user_metadata": {"avatar_url": "https://lh3.example/b=s96-c"}}}
+    acct._keep(moved)                                                               # a new one replaces it
+    assert picture(acct) and fetched[-1] == "https://lh3.example/b=s192-c"
+    acct.sign_out()
+    assert not (tmp_path / "account.json").exists()
+
+
+def test_no_picture_or_a_bad_one_keeps_the_initial(tmp_path):
+    for answer in (None, b"<html>not an image</html>"):
+        acct, *_ = account(tmp_path, fetch=lambda url, answer=answer: answer)
+        acct._keep(SESSION)
+        time.sleep(0.05)
+        assert acct.snapshot()["user"]["picture"] == ""
+    from mcp_vision.buddy.account import fetch_picture
+    assert fetch_picture("http://lh3.example/a") is None and fetch_picture("file:///etc/passwd") is None
 
 
 def test_sign_out_forgets_here_and_tells_supabase(tmp_path):

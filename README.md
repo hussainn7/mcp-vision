@@ -205,8 +205,8 @@ Plip's account server: Google tells it your name, email address and profile pict
 (name, email, the link to your Google profile picture, when you joined and when you last signed in). That's how
 we know who uses Plip.
 
-- On this Mac, `~/.config/mcp-vision/account.json` (readable only by you) keeps your name, email and the sign-in
-  session. Plip doesn't download or keep your picture.
+- On this Mac, `~/.config/mcp-vision/account.json` (readable only by you) keeps your name, email, your Google
+  picture (downloaded once, to show in Settings) and the sign-in session.
 - Each time Plip starts, it renews the session with Supabase once. If your account was removed, Plip signs out.
 - What you ask Plip, your screen, memory and history are never sent to the account server or tied to your account.
 - **Settings → Account → Sign out** forgets the account on this Mac and ends the session. To have the account

@@ -220,7 +220,7 @@ export interface AccountState {
   status?: '' | 'waiting' | 'failed'
   error?: string
   url?: string               // the sign-in page, while waiting
-  user?: { name: string; email: string; provider: string; since: number | null } | null
+  user?: { name: string; email: string; provider: string; since: number | null; picture?: string } | null  // picture: their Google one, as a data: url
 }
 
 /** Hold-to-talk shortcut: keys (⌃⌥) and words. */

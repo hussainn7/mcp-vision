@@ -457,6 +457,12 @@ await test('sign in: google comes first, then plip; sign out brings it back', as
   await account.waitFor({ timeout: 4000 })                                // the preview "comes back" signed in
   await account.click()
   await page.getByText('hussain@plip.dev').waitFor()
+  assert.equal(await page.locator('img').count(), 0)                      // no picture: their initial
+  const picture = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  await page.evaluate((src) => window.__plip({ type: 'settings', state: { account: { available: true, required: false, status: '',
+    user: { name: 'Hussain Syed', email: 'hussain@plip.dev', provider: 'google', since: 1789862400, picture: src } } } }), picture)
+  await page.locator('nav img').waitFor()                                   // their Google picture, sidebar and card
+  assert.equal(await page.locator('main img').getAttribute('src'), picture)
   await page.getByRole('button', { name: 'Sign out' }).click()
   assert.ok(await take('account-sign-out'))
   await page.getByRole('button', { name: 'Continue with Google' }).waitFor()

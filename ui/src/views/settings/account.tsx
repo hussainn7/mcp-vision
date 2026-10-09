@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { LoaderCircle, Lock } from 'lucide-react'
+import { useState } from 'react'
 import { send, type AccountState, type SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { cn } from '../../components/bits'
@@ -20,9 +21,21 @@ export function GoogleMark({ className }: { className?: string }) {
   )
 }
 
-/** Their initial in a circle: no picture is fetched or kept. */
+/** Their Google picture (kept on this Mac), or their initial in a circle. */
 export function Avatar({ user, size = 20, className }: { user: User; size?: number; className?: string }) {
+  const [broken, setBroken] = useState('')
   const initial = (user.name || user.email || '?').trim().charAt(0).toUpperCase()
+  if (user.picture && user.picture !== broken)
+    return (
+      <img
+        src={user.picture}
+        alt=""
+        draggable={false}
+        onError={() => setBroken(user.picture ?? '')}
+        className={cn('shrink-0 rounded-full object-cover ring-1 ring-white/10', className)}
+        style={{ width: size, height: size }}
+      />
+    )
   return (
     <span
       className={cn('grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-plip-300 to-plip-600 font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]', className)}
@@ -94,7 +107,7 @@ export function SignIn({ state }: { state: SettingsState }) {
 
       <footer className="relative z-10 flex items-center justify-center gap-1.5 px-8 pb-7 text-[11.5px] text-white/35">
         <Lock className="size-3.5 shrink-0 text-mint" />
-        Your account is your name and email. What you ask, your screen and your memory stay on this Mac.
+        Your account is your name, email and picture. What you ask, your screen and your memory stay on this Mac.
         <button className="text-white/45 underline-offset-2 hover:text-white/75 hover:underline" onClick={() => send('open-url', { url: PRIVACY_URL })}>Privacy</button>
       </footer>
     </div>
@@ -134,7 +147,7 @@ export function AccountTab({ state }: { state: SettingsState }) {
 
       <Section title="What your account holds">
         <Rows>
-          <Row title="Your name and email" detail="From Google, so we know who uses Plip. No picture, no contacts, nothing else." />
+          <Row title="Your name, email and picture" detail="From Google, so we know who uses Plip. No contacts, nothing else." />
           <Row
             title="Not what you do with Plip"
             detail="What you ask, your screen, memory and history stay on this Mac and are never tied to your account."
