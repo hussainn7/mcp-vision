@@ -1,7 +1,8 @@
 import { ArrowRight, Check, Gauge, Plug, RotateCcw, Zap } from 'lucide-react'
 import { send, type Engine, type KeyCheck, type SettingsState } from '../../bridge'
 import { cn } from '../../components/bits'
-import { ConnectAI, Connecting, ENGINE_GLYPH } from './connect'
+import { EngineMark } from '../../components/marks'
+import { ConnectAI, Connecting } from './connect'
 import { money } from './usage'
 import { Button, Card, Header, KeyField, Pill, Section, Segmented } from './ui'
 
@@ -11,7 +12,6 @@ const STATUS: Record<Engine['status'], [string, 'good' | 'warn' | 'muted']> = {
 }
 
 function EngineCard({ engine, check }: { engine: Engine; check?: KeyCheck | null }) {
-  const glyph = ENGINE_GLYPH[engine.id] ?? { bg: 'bg-white/10', text: 'text-white', glyph: '•' }
   const connect = engine.connect
   const busy = connect?.state === 'installing' || connect?.state === 'signing-in'
   const [label, tone] = busy ? (['Connecting', 'muted'] as const) : STATUS[engine.status]
@@ -21,7 +21,7 @@ function EngineCard({ engine, check }: { engine: Engine; check?: KeyCheck | null
   return (
     <Card active={engine.selected} className="flex flex-col gap-3">
       <div className="flex items-start gap-3">
-        <span className={cn('grid size-10 shrink-0 place-items-center rounded-xl text-[18px] font-bold shadow-lg', glyph.bg, glyph.text)}>{glyph.glyph}</span>
+        <EngineMark id={engine.id} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-[14px] font-semibold tracking-tight">{engine.label}</span>

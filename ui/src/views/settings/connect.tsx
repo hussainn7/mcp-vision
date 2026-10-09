@@ -2,16 +2,8 @@ import { Check, ExternalLink, LoaderCircle, Plug, RotateCcw } from 'lucide-react
 import { useState } from 'react'
 import { send, type ConnectProgress, type Engine, type SettingsState } from '../../bridge'
 import { cn } from '../../components/bits'
+import { EngineMark } from '../../components/marks'
 import { Button, Card, Input, Pill } from './ui'
-
-export const ENGINE_GLYPH: Record<string, { bg: string; text: string; glyph: string }> = {
-  'claude-code': { bg: 'bg-[#d97757]', text: 'text-white', glyph: '✳' },
-  codex: { bg: 'bg-white', text: 'text-black', glyph: '◎' },
-  cursor: { bg: 'bg-[#111114] hairline', text: 'text-white', glyph: '▲' },
-  gemini: { bg: 'bg-gradient-to-br from-[#4f7cff] to-[#b46bff]', text: 'text-white', glyph: '✦' },
-  'gemini-api': { bg: 'bg-gradient-to-br from-[#4f7cff] to-[#b46bff]', text: 'text-white', glyph: '✦' },
-  anthropic: { bg: 'bg-[#e8dccf]', text: 'text-[#1f1b16]', glyph: 'A' },
-}
 
 export const GOOGLE_KEY_PAGE = 'https://aistudio.google.com/apikey'
 
@@ -62,7 +54,6 @@ export function ConnectAI({ state, compact = false }: { state: SettingsState; co
 }
 
 function PlanRow({ engine, plan }: { engine: Engine; plan: string }) {
-  const glyph = ENGINE_GLYPH[engine.id] ?? { bg: 'bg-white/10', text: 'text-white', glyph: '•' }
   const connect = engine.connect
   const busy = connect?.state === 'installing' || connect?.state === 'signing-in'
   const usable = !busy && (engine.status === 'ready' || engine.status === 'unknown')
@@ -70,7 +61,7 @@ function PlanRow({ engine, plan }: { engine: Engine; plan: string }) {
   return (
     <div className="px-5 py-3">
       <div className="flex items-center gap-4">
-        <span className={cn('grid size-9 shrink-0 place-items-center rounded-xl text-[16px] font-bold shadow-lg', glyph.bg, glyph.text)}>{glyph.glyph}</span>
+        <EngineMark id={engine.id} size={36} />
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold tracking-tight">{engine.label}</div>
           <div className="truncate text-[12px] text-white/45">{plan}</div>
@@ -103,7 +94,7 @@ export function FreeGoogleKey({ state }: { state: SettingsState }) {
   return (
     <Card>
       <div className="flex items-start gap-4">
-        <span className={cn('grid size-9 shrink-0 place-items-center rounded-xl text-[16px] font-bold shadow-lg', ENGINE_GLYPH.gemini.bg, ENGINE_GLYPH.gemini.text)}>{ENGINE_GLYPH.gemini.glyph}</span>
+        <EngineMark id="gemini-api" size={36} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-[13.5px] font-semibold tracking-tight">No AI plan? Use Google’s for free</span>
