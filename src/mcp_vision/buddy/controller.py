@@ -66,6 +66,7 @@ class BuddyController:
         self.press_delay = press_delay
         self._pressing = 0                   # a press waiting out press_delay (its number), 0 = none
         self._presses = 0
+        self._early = False                  # mic started at the press
 
     # -- hotkey -------------------------------------------------------------------
     def on_press(self) -> None:
@@ -74,7 +75,28 @@ class BuddyController:
             return
         self._presses += 1
         self._pressing = press = self._presses
+        self._listen_early()
         self.call_later(self.press_delay, lambda: self._press(press))
+
+    def _listen_early(self) -> None:
+        # mic on now so the first word isn't lost; voice off so it isn't heard
+        self._early = False
+        if self.setup_error or self.companion is None or self.listener is None or \
+                self.state in {"listening", "finalizing"}:
+            return
+        try:
+            self.listener.start()
+        except Exception:
+            return
+        self._early = True
+        hush = getattr(self.companion, "hush", None)
+        if hush is not None and self.loop is not None:
+            self.loop.call_soon_threadsafe(hush)
+
+    def _drop_early(self) -> None:
+        if self._early:
+            self._early = False
+            self.listener.cancel()
 
     def _press(self, press: int = 0) -> None:
         if press:
@@ -98,6 +120,9 @@ class BuddyController:
         self.overlay.set_state("listening")
         self.presenter.listening()
         self.status("Listening...")
+        if self._early:                              # mic already on
+            self._early = False
+            return
         try:
             self.listener.start()
         except Exception as exc:
@@ -138,6 +163,7 @@ class BuddyController:
         self._pressing = 0
         if self.state in {"listening", "finalizing"} and self.listener is not None:
             self.listener.cancel()
+        self._drop_early()
         self.generation += 1
         if self.companion is not None and self.loop is not None:
             self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
@@ -147,6 +173,7 @@ class BuddyController:
     def on_cancel(self) -> None:
         if self._pressing:                   # the chord was part of another app's shortcut: leave Plip alone
             self._pressing = 0
+            self._drop_early()
             return
         if self.state in {"listening", "finalizing"}:
             self.listener.cancel()

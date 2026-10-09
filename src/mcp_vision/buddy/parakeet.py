@@ -77,6 +77,7 @@ PIECE = 10.0                         # seconds read at once, at most: the model'
 PIECE_SEARCH = 4.0                   # a piece ends at the quietest frame in its last 4 s
 PIECE_FRAME = 0.03                   # seconds per frame there
 IDLE_UNLOAD = 300.0                  # seconds unused before the loaded model (about 1.2 GB) is let go
+TAIL = 0.2                           # seconds of mic after release, for the last word
 _SCALE = 1 / 32768                   # int16 -> -1..1
 _GLUED_MONEY = re.compile(r"(?<=[A-Za-z])(?=[$€£]\d)")
 
@@ -310,7 +311,7 @@ def recognizer(directory: Path | None = None, threads: int | None = None):
                 encoder=str(directory / "encoder.int8.onnx"), decoder=str(directory / "decoder.int8.onnx"),
                 joiner=str(directory / "joiner.int8.onnx"), tokens=str(directory / "tokens.txt"),
                 num_threads=threads or max(2, min(8, (os.cpu_count() or 4) - 2)), sample_rate=SAMPLE_RATE,
-                feature_dim=80, decoding_method="greedy_search", model_type="nemo_transducer")
+                feature_dim=128, decoding_method="greedy_search", model_type="nemo_transducer")   # the model's feat_dim
             _RECOGNIZER[str(directory)] = loaded
         return loaded
 
@@ -402,8 +403,9 @@ class ParakeetListener:
     def __init__(self, callbacks: ListenerCallbacks, *, model: Callable[[], Any] = recognizer,
                  unload: Callable[[], None] = forget_recognizer,
                  mic_factory: Callable[[Callable[[bytes], None]], Any] = MicStream,
-                 partial_every: float = PARTIAL_EVERY, idle_unload: float = IDLE_UNLOAD):
+                 partial_every: float = PARTIAL_EVERY, idle_unload: float = IDLE_UNLOAD, tail: float = TAIL):
         self.callbacks = callbacks
+        self.tail = tail
         self._model = model
         self._unload = unload
         self._mic_factory = mic_factory
@@ -476,9 +478,20 @@ class ParakeetListener:
                 self.callbacks.partial(text)
 
     def release(self) -> None:
+        generation = self._generation
+        if self.tail <= 0:
+            self._finish(generation)
+            return
+        timer = threading.Timer(self.tail, self._finish, args=(generation,))
+        timer.daemon = True
+        timer.start()
+
+    def _finish(self, generation: int) -> None:
+        if generation != self._generation:
+            return                                        # cancelled or pressed again
         self._stop_mic()                                  # the live loop stops before its next read
         with self._lock:
-            generation, audio, texts = self._generation, bytes(self._audio), self._texts
+            audio, texts = bytes(self._audio), self._texts
         threading.Thread(target=self._final, args=(generation, audio, texts), daemon=True,
                          name="plip-parakeet-final").start()
 

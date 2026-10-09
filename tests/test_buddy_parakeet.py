@@ -225,7 +225,7 @@ class FakeMic:
         self.stopped = True
 
 
-def listener(model, load=None, **kw):
+def listener(model, load=None, tail=0.0, **kw):
     heard = {"partial": [], "final": [], "level": [], "error": []}
     callbacks = ListenerCallbacks(partial=heard["partial"].append, final=heard["final"].append,
                                   level=heard["level"].append, error=heard["error"].append)
@@ -234,7 +234,7 @@ def listener(model, load=None, **kw):
     def mic(on_audio):
         mics.append(FakeMic(on_audio))
         return mics[-1]
-    return ParakeetListener(callbacks, model=load or (lambda: model), mic_factory=mic, **kw), heard, mics
+    return ParakeetListener(callbacks, model=load or (lambda: model), mic_factory=mic, tail=tail, **kw), heard, mics
 
 
 def wait_until(check, timeout=3.0):
@@ -254,6 +254,23 @@ def test_push_to_talk_shows_it_live_then_the_whole_thing_on_release():
     talk.release()
     assert wait_until(lambda: heard["final"]) and mics[0].stopped
     assert heard["final"] == ["heard 1.0 seconds, at least $5"] and heard["error"] == []
+
+
+def test_the_last_word_said_as_you_let_go_still_counts():
+    talk, heard, mics = listener(FakeModel(), partial_every=10, tail=0.15)
+    talk.start()
+    mics[0].on_audio(pcm(1.0))
+    talk.release()
+    mics[0].on_audio(pcm(0.1))                                      # still talking as the keys come up
+    assert not mics[0].stopped
+    assert wait_until(lambda: heard["final"]) and mics[0].stopped
+    assert heard["final"] == ["heard 1.1 seconds, at least $5"]
+    talk.start()
+    mics[1].on_audio(pcm(1.0))
+    talk.release()
+    talk.cancel()                                                   # cancelled in the tail: nothing
+    time.sleep(0.3)
+    assert len(heard["final"]) == 1
 
 
 def test_letting_go_of_another_shortcut_hears_nothing():

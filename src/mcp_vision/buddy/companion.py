@@ -338,6 +338,10 @@ class Companion:
         """The task that stopped before it was done (out of steps, or stopped), for "Keep going"; "" otherwise."""
         return self._goal if self._goal and not self.busy else ""
 
+    def hush(self) -> None:
+        """Stop talking, keep working."""
+        self.speaker.stop()
+
     def interrupt(self, token: int | None = None) -> None:
         """Push-to-talk pressed again: stop talking, pointing, and guiding right away.
 

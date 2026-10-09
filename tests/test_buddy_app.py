@@ -167,11 +167,14 @@ def test_controller_hooks_and_result_callback():
 
 
 def test_another_apps_control_option_shortcut_never_cuts_plip_off_and_a_tap_still_does():
-    interrupts, later = [], []
+    interrupts, later, hushed = [], [], []
 
     class Companion:
         def interrupt(self, token=None):
             interrupts.append(token)
+
+        def hush(self):
+            hushed.append(1)
 
         def prefetch(self):
             pass
@@ -182,32 +185,35 @@ def test_another_apps_control_option_shortcut_never_cuts_plip_off_and_a_tap_stil
 
     class Listener:
         def __init__(self):
-            self.started = 0
+            self.started = self.cancelled = 0
 
         def start(self):
             self.started += 1
 
         def release(self): pass
-        def cancel(self): pass
+
+        def cancel(self):
+            self.cancelled += 1
 
     view, listener = Recorder(), Listener()
     controller = BuddyController(companion=Companion(), overlay=Overlay(), loop=Loop(), listener=listener,
                                  call_later=lambda delay, fn: later.append((delay, fn)), on_main=lambda f, *a: f(*a),
                                  presenter=view, press_delay=BuddyController.PRESS_DELAY)
     controller.on_press()                              # Rectangle's ⌃⌥→: the chord, then an arrow key
+    assert listener.started == 1 and hushed == [1]     # mic on at once (no lost first word), voice off
     controller.on_cancel()
     controller.on_release()
     later.pop()[1]()
-    assert interrupts == [] and listener.started == 0 and view.calls == []          # the answer plays on
+    assert interrupts == [] and listener.cancelled == 1 and view.calls == []        # the task goes on
     controller.on_press()                              # a quick tap: just stop talking
     controller.on_release()
     later.pop()[1]()
-    assert len(interrupts) == 1 and listener.started == 0 and [c[0] for c in view.calls] == ["idle"]
-    assert controller.state == "idle"                  # not stuck "responding" (the menu bar thought it was busy)
+    assert len(interrupts) == 1 and listener.cancelled == 2 and [c[0] for c in view.calls] == ["idle"]
+    assert controller.state == "idle"                  # not stuck "responding"
     controller.on_press()                              # held: a request
     delay, fn = later.pop()
     fn()
-    assert delay == 0.15 and listener.started == 1 and view.calls[-1][0] == "listening"
+    assert delay == 0.15 and listener.started == 3 and view.calls[-1][0] == "listening"   # not started twice
     controller.on_release()                            # let go; then Stop before the words come back
     controller.stop()
     controller.on_final("play some music")
