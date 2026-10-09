@@ -138,10 +138,6 @@ class IslandWindow:
         panel.setReleasedWhenClosed_(False)
         panel.setIgnoresMouseEvents_(True)
         panel.setAcceptsMouseMovedEvents_(True)
-        try:
-            panel.setSharingType_(AppKit.NSWindowSharingNone)
-        except Exception:
-            pass
         self.surface = WebSurface("island", rect, self._command)
         panel.setContentView_(self.surface.view)
         self.panel = panel

@@ -231,10 +231,6 @@ class BuddyOverlay:
             | AppKit.NSWindowCollectionBehaviorStationary
             | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
             | AppKit.NSWindowCollectionBehaviorIgnoresCycle)
-        try:
-            window.setSharingType_(AppKit.NSWindowSharingNone)   # keep the buddy out of screenshots
-        except Exception:
-            pass
         self.view = _view_class().alloc().initWithFrame_(rect)
         window.setContentView_(self.view)
         self.window = window

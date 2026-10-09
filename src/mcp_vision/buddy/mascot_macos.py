@@ -92,10 +92,6 @@ class MascotWindow:
             | AppKit.NSWindowCollectionBehaviorStationary
             | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
             | AppKit.NSWindowCollectionBehaviorIgnoresCycle)
-        try:
-            window.setSharingType_(AppKit.NSWindowSharingNone)     # never in Plip's own screenshots
-        except Exception:
-            pass
         self.surface = WebSurface("mascot", rect, lambda _command: None)
         window.setContentView_(self.surface.view)
         self.window = window
