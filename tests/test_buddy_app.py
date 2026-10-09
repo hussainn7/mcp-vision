@@ -642,3 +642,43 @@ def test_sounds_never_raise():
 
     Sounds(player=broken).play("open")
     Sounds(enabled=lambda: 1 / 0, player=broken).play("done")
+
+
+def test_controller_tosses_the_question_once_the_mic_is_off():
+    order = []
+
+    class Listener:
+        def start(self): order.append("mic on")
+        def release(self): order.append("mic off")
+        def cancel(self): order.append("mic off")
+
+    companion = SimpleNamespace(interrupt=lambda token=None: None, prefetch=lambda: None)
+    loop = SimpleNamespace(call_soon_threadsafe=lambda *a: None)
+    controller = BuddyController(companion=companion, overlay=Overlay(), loop=loop, listener=Listener(),
+                                 call_later=lambda d, f: None, on_main=lambda f, *a: None,
+                                 sound=lambda name: order.append(name))
+    controller.on_press()
+    controller.on_release()
+    assert order == ["mic on", "mic off", "sent"]
+    controller.on_press()
+    controller.on_cancel()                                # let go to cancel: nothing was sent
+    assert order[-2:] == ["mic on", "mic off"]
+
+
+def test_the_toss_waits_out_parakeets_tail_and_skips_a_new_press():
+    played, later = [], []
+    listener = SimpleNamespace(tail=0.2, start=lambda: None, release=lambda: None, cancel=lambda: None)
+    companion = SimpleNamespace(interrupt=lambda token=None: None, prefetch=lambda: None)
+    controller = BuddyController(companion=companion, overlay=Overlay(), loop=SimpleNamespace(
+        call_soon_threadsafe=lambda *a: None), listener=listener, call_later=lambda d, f: later.append((d, f)),
+        on_main=lambda f, *a: None, sound=played.append)
+    controller.on_press()
+    controller.on_release()
+    assert played == [] and later[0][0] == 0.22          # the mic's still on for the last word
+    later[0][1]()
+    assert played == ["sent"]
+    controller.on_press()
+    controller.on_release()
+    controller.on_press()                                 # pressed again inside the tail: its mic is on
+    later[-2][1]()
+    assert played == ["sent"]

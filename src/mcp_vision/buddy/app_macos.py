@@ -474,6 +474,7 @@ def run_buddy_app() -> None:
             "home" if account.required else "brain"),
         setup_error="Plip is still waking up. Try again in a second.",
         press_delay=BuddyController.PRESS_DELAY,
+        sound=sounds.play,
     )
 
     def record(transcript: str, result) -> None:

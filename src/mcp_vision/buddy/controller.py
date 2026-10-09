@@ -43,7 +43,8 @@ class BuddyController:
                  on_main: Callable[..., Any], listener: Any = None, setup_error: str = "",
                  status: Callable[[str], None] | None = None, say: Callable[[str], None] = _say,
                  presenter: Any = None, on_result: Callable[[str, Any], None] | None = None,
-                 on_setup_needed: Callable[[str], None] | None = None, press_delay: float = 0.0):
+                 on_setup_needed: Callable[[str], None] | None = None, press_delay: float = 0.0,
+                 sound: Callable[[str], None] | None = None):
         self.companion = companion
         self.overlay = overlay
         self.loop = loop
@@ -64,6 +65,7 @@ class BuddyController:
         self.shortcut_keys = "⌃⌥"
         self.last_result = None
         self.press_delay = press_delay
+        self.sound = sound or (lambda name: None)
         self._pressing = 0                   # a press waiting out press_delay (its number), 0 = none
         self._presses = 0
         self._early = False                  # mic started at the press
@@ -155,7 +157,16 @@ class BuddyController:
         self.companion.prefetch()
         self.listener.release()
         generation = self.generation
+        tail = getattr(self.listener, "tail", 0) or 0       # parakeet keeps the mic on a beat longer
+        if tail > 0:
+            self.call_later(tail + 0.02, lambda: self._toss(generation))
+        else:
+            self.sound("sent")                           # after release: the mic is off, it can't hear it
         self.call_later(self.FINAL_TIMEOUT, lambda: self._final_timeout(generation))
+
+    def _toss(self, generation: int) -> None:
+        if generation == self.generation and self.state != "listening":
+            self.sound("sent")
 
     def stop(self) -> None:
         """Stop (the island's, the menu bar's, or a quick tap): whatever Plip is doing, and an answer to words it
