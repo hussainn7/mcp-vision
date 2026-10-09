@@ -337,11 +337,11 @@ def run_buddy_app() -> None:
     usage_log = UsageLog()                # the Usage tab: one row per request
     from mcp_vision.buddy.account import Account
 
-    # Sign in once with Google, at the tour's end (only in builds with a sign-in project).
+    # Accounts (only in builds with a Supabase project): a guest after the walkthrough, Google when they're
+    # ready. Never between the person and the hotkey.
     account = Account(state["settings"].supabase_url, state["settings"].supabase_key, open_url=_open_url,
                       on_change=lambda: AppHelper.callAfter(account_changed),
-                      on_signed_in=lambda: AppHelper.callAfter(signed_in), trying=lambda: Prefs.load().trying)
-    state["signed_in"] = not account.required
+                      on_signed_in=lambda: AppHelper.callAfter(signed_in))
 
     def main(fn):
         return lambda *args: AppHelper.callAfter(fn, *args)
@@ -421,7 +421,22 @@ def run_buddy_app() -> None:
 
     def show_update(found) -> None:
         menu.set_update(found["version"] if found else None)
-        service.push()
+        if found:
+            service.update_found()                     # the one update moment to ask for Google (it pushes)
+        else:
+            service.push()
+
+    def ask_for_google(moment: str, tries: int = 0) -> None:
+        """The service found a moment to ask (service.on_ask). Never over a question in progress, and never
+        a window in their face right after the first answer: a notch line then, Settings from the third on."""
+        if controller.state != "idle" or presenter.phase != "idle":
+            if tries < 30:
+                AppHelper.callLater(20.0, lambda: ask_for_google(moment, tries + 1))
+            return
+        if moment == "first_task":
+            presenter("notice", {"text": "Nice one. Want to keep this Plip as yours? Settings → Account, when you like."})
+        else:
+            open_settings("home")
 
     def tell_update(release, tries: int = 0) -> None:
         if controller.state != "idle" or presenter.phase != "idle":     # never over a question in progress
@@ -443,18 +458,14 @@ def run_buddy_app() -> None:
             time.sleep(6 * 60 * 60)
             ping("app")                               # Plip stays open for days: still one anonymous ping a day
 
-    # -- the account: Plip starts working once they're signed in, and stops if they sign out ------------
+    # -- the account: Settings follows it; the hotkey never waits for it -----------------------------
     def account_changed() -> None:
-        signed = not account.required
-        if signed != state["signed_in"]:
-            state["signed_in"] = signed
-            update_setup_error()                       # ⌃⌥ follows: "I need a little setup first" while signed out
         service.push()
 
     def signed_in() -> None:
-        account_changed()
+        service.signed_in()                            # the funnel's last event, then Settings shows who
         if state["settings_window"] is not None:
-            state["settings_window"].front()           # back from the browser, on to the walkthrough
+            state["settings_window"].front()           # back from the browser
 
     def restart() -> None:
         if not _relaunch():
@@ -477,24 +488,11 @@ def run_buddy_app() -> None:
     )
 
     def setup_needed() -> None:
-        if not account.required:
-            open_settings("brain")
-            return
-        if not Prefs.load().onboarded:
-            service.handle({"cmd": "tour-go", "step": "signin"})      # free tries used up: the tour's sign-in step
-        open_settings("home")
-
-    def count_try() -> None:
-        """Signed out in the tour: each answered ask uses a free try."""
-        prefs = Prefs.load()
-        prefs.tries += 1
-        prefs.save()
-        if not prefs.trying:
-            update_setup_error()
+        open_settings("brain")
 
     def record(transcript: str, result) -> None:
-        if result.state == "done" and account.required:
-            AppHelper.callAfter(count_try)
+        if result.state == "done":
+            AppHelper.callAfter(service.task_done)     # the 1st and 3rd finished task: a moment to ask for Google
         if result.state == "done" and result.spoken:
             badge = getattr(controller.companion, "brain", None)
             history.add(transcript, result.spoken, engine=getattr(badge, "label", ""))
@@ -502,7 +500,7 @@ def run_buddy_app() -> None:
             AppHelper.callAfter(service.push)     # an open History / Usage tab shows it right away
 
     def update_setup_error() -> None:
-        controller.setup_error = account.blocker or state["brain_error"] or state["listener_error"]
+        controller.setup_error = state["brain_error"] or state["listener_error"]
         if controller.setup_error:
             menu.set_status("Needs setup: " + controller.setup_error)
         elif hotkey_mode() == "none":
@@ -703,6 +701,7 @@ def run_buddy_app() -> None:
         connector=connector,
         live=lambda: dict(presenter.live),
         account=account,
+        on_ask=ask_for_google,
         updates=updates,
         check_updates=lambda: check_updates(force=True),
         hotkey_works=lambda: hotkey_mode() != "none",
@@ -785,11 +784,15 @@ def run_buddy_app() -> None:
     apply_hotkey(prefs.hotkey)
     _request_startup_permissions()
     rebuild(probe=True)
-    threading.Thread(target=account.refresh, daemon=True, name="plip-account").start()   # renew the sign-in once
+    def account_launch() -> None:
+        account.refresh()                              # renew the sign-in once
+        account.ensure_anonymous(retry_only=True)      # the walkthrough ended offline: the account it chose, now
+
+    threading.Thread(target=account_launch, daemon=True, name="plip-account").start()
     threading.Thread(target=watch_updates, daemon=True, name="plip-updates").start()      # a newer Plip?
 
-    if account.required or not prefs.onboarded:
-        # The welcome walkthrough (sign-in is its last step), or the sign-in screen if they signed out.
+    if not prefs.onboarded:
+        # The welcome walkthrough, until it calls finish-onboarding. Sign-in comes after the first task.
         AppHelper.callLater(0.8, lambda: open_settings("home"))
 
     log.info("plip running (hotkey=%s, web=%s)", controller.hotkey_mode, web)

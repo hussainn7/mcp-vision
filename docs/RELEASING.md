@@ -13,7 +13,8 @@ Mac, the Xcode command line tools and `uv`. The DMG window's background comes fr
 `cd ui && npm run brand`.
 
 With `PLIP_SUPABASE_URL` and `PLIP_SUPABASE_KEY` set (your environment or `~/.config/mcp-vision/.env`), the app
-asks people to sign in with Google first; it prints which project it baked in.
+gives people a guest account after the walkthrough and offers Google after their first task; it prints which
+project it baked in.
 
 Without your Apple certificate it is signed **ad hoc**: the first time people open it,
 macOS says it can't check Plip, and they go to System Settings → Privacy & Security →
@@ -76,7 +77,7 @@ Add these repository secrets (Settings → Secrets and variables → Actions):
 | `PLIP_SUPABASE_URL` | the sign-in project, `https://<project>.supabase.co` ([CONTRIBUTING.md](../CONTRIBUTING.md#sign-in)) |
 | `PLIP_SUPABASE_KEY` | its **publishable** key (`sb_publishable_…`); the build refuses a secret one |
 
-Without the two Supabase secrets the DMG doesn't ask anyone to sign in.
+Without the two Supabase secrets the DMG has no accounts and never asks anyone to sign in.
 
 Without the Apple secrets a tag stops instead of publishing an unsigned DMG. Run the workflow by hand
 (Actions → release dmg → Run workflow) for an ad hoc test build; its DMG is kept on the run's page.

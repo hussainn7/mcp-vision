@@ -9,6 +9,9 @@ import { Button, Card, Header, Pill, Row, Rows, Section } from './ui'
 
 type User = NonNullable<AccountState['user']>
 
+/** Why sign in at all: the one reason Plip gives, everywhere it asks. */
+export const WHY_SIGN_IN = 'Pro is coming, and signed-in people get it first. Google only, one click, nothing else shared.'
+
 /** Google's "G", as its sign-in buttons show it. */
 export function GoogleMark({ className }: { className?: string }) {
   return (
@@ -21,10 +24,12 @@ export function GoogleMark({ className }: { className?: string }) {
   )
 }
 
-/** Their Google picture (kept on this Mac), or their initial in a circle. */
+/** Their Google picture (kept on this Mac), or their initials in a circle. A guest ("Quiet Nomad") gets a quieter one. */
 export function Avatar({ user, size = 20, className }: { user: User; size?: number; className?: string }) {
   const [broken, setBroken] = useState('')
-  const initial = (user.name || user.email || '?').trim().charAt(0).toUpperCase()
+  const guest = !user.email
+  const words = (user.name || user.email || '?').trim().split(/\s+/)
+  const initial = (words.length > 1 ? words[0].charAt(0) + words[1].charAt(0) : words[0].charAt(0)).toUpperCase()
   if (user.picture && user.picture !== broken)
     return (
       <img
@@ -38,39 +43,41 @@ export function Avatar({ user, size = 20, className }: { user: User; size?: numb
     )
   return (
     <span
-      className={cn('grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-plip-300 to-plip-600 font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]', className)}
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.46) }}
+      className={cn('grid shrink-0 place-items-center rounded-full font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]',
+        guest ? 'bg-gradient-to-br from-white/25 to-white/10 text-white/80' : 'bg-gradient-to-br from-plip-300 to-plip-600', className)}
+      style={{ width: size, height: size, fontSize: Math.round(size * (initial.length > 1 ? 0.36 : 0.46)) }}
     >
       {initial}
     </span>
   )
 }
 
-/** Continue with Google, and what's happening while the browser is out. */
-export function GoogleSignIn({ state, className }: { state: SettingsState; className?: string }) {
+/** Continue with Google, and what's happening while the browser is out. Large and centered, or compact in a card. */
+export function GoogleSignIn({ state, className, size = 'lg' }: { state: SettingsState; className?: string; size?: 'md' | 'lg' }) {
   const { status, error } = state.account
   const waiting = status === 'waiting'
   const failed = status === 'failed'
   return (
-    <div className={cn('flex flex-col items-center', className)}>
+    <div className={cn('flex flex-col', size === 'lg' ? 'items-center' : 'items-start', className)}>
       <button
         onClick={() => send('account-sign-in', { provider: 'google' })}
         disabled={waiting}
         className={cn(
-          'inline-flex h-12 w-full max-w-[320px] items-center justify-center gap-3 rounded-full bg-white px-6 text-[15px] font-semibold tracking-tight text-slate-950 transition',
+          'inline-flex items-center justify-center gap-3 rounded-full bg-white font-semibold tracking-tight text-slate-950 transition',
           'shadow-[inset_0_-2px_0_rgba(0,0,0,0.08),0_10px_30px_-10px_rgba(156,194,250,0.55)] hover:bg-plip-50 active:scale-[0.98] disabled:cursor-default disabled:opacity-70 disabled:active:scale-100',
+          size === 'lg' ? 'h-12 w-full max-w-[320px] px-6 text-[15px]' : 'h-10 px-5 text-[13.5px]',
         )}
       >
         {waiting ? <LoaderCircle className="size-5 animate-spin text-plip-500" /> : <GoogleMark />}
         {waiting ? 'Waiting for Google…' : failed ? 'Try again with Google' : 'Continue with Google'}
       </button>
 
-      <div className="mt-4 min-h-[44px] text-center">
+      <div className={cn('mt-4 min-h-[44px]', size === 'lg' && 'text-center')}>
         <AnimatePresence mode="wait">
           {waiting && (
             <motion.div key="waiting" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-white/45">
               Finish signing in in your browser, then come back here.
-              <div className="mt-1.5 flex items-center justify-center gap-1">
+              <div className={cn('mt-1.5 flex items-center gap-1', size === 'lg' && 'justify-center')}>
                 <Button size="sm" variant="quiet" onClick={() => send('account-open')}>Open the page again</Button>
                 <span className="text-white/20">·</span>
                 <Button size="sm" variant="quiet" onClick={() => send('account-cancel')}>Cancel</Button>
@@ -89,38 +96,29 @@ export function GoogleSignIn({ state, className }: { state: SettingsState; class
   )
 }
 
-/** Signed out after the tour: sign in with Google before Plip works again. */
-export function SignIn({ state }: { state: SettingsState }) {
-  const waiting = state.account.status === 'waiting'
-  const failed = state.account.status === 'failed'
+/** The card Home shows after the first task (and the third, and when an update is out): one button, one Later. */
+export function SignInCard({ state }: { state: SettingsState }) {
+  const account = state.account
+  const name = account.user?.name || 'you'
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-ink text-white noise">
-      <div className="pointer-events-none absolute -left-48 -top-64 size-[560px] rounded-full bg-plip-500/[0.14] blur-[130px] animate-aurora" />
-      <div className="pointer-events-none absolute -right-56 top-56 size-[460px] rounded-full bg-sky-glow/[0.08] blur-[130px] animate-aurora [animation-delay:-7s]" />
-
-      <main className="relative z-10 flex flex-1 items-center justify-center px-8">
-        <motion.div
-          initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
-          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-          transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}
-          className="flex w-full max-w-[440px] flex-col items-center text-center"
-        >
-          <div className="relative mb-8">
-            <div className="absolute inset-0 -z-10 scale-[1.9] rounded-full bg-plip-400/25 blur-3xl" />
-            <Mascot size={92} mood={waiting ? 'thinking' : failed ? 'error' : 'happy'} />
-          </div>
-          <h1 className="text-gradient text-[36px] font-semibold leading-none tracking-[-0.045em]">Welcome to Plip.</h1>
-          <p className="mt-3 text-[15px] text-white/50">A little helper that lives in your notch.</p>
-          <GoogleSignIn state={state} className="mt-12 w-full" />
-        </motion.div>
-      </main>
-
-      <footer className="relative z-10 flex items-center justify-center gap-1.5 px-8 pb-7 text-[11.5px] text-white/35">
-        <Lock className="size-3.5 shrink-0 text-mint" />
-        Your account is your name, email and picture. What you ask, your screen and your memory stay on this Mac.
-        <button className="text-white/45 underline-offset-2 hover:text-white/75 hover:underline" onClick={() => send('open-url', { url: PRIVACY_URL })}>Privacy</button>
-      </footer>
-    </div>
+    <Card className="mb-6 flex items-start gap-4 glow-ring">
+      <div className="relative mt-0.5 shrink-0">
+        <div className="absolute inset-0 -z-10 scale-[1.6] rounded-full bg-plip-400/25 blur-2xl" />
+        <Mascot size={52} mood={account.status === 'failed' ? 'error' : account.status === 'waiting' ? 'thinking' : 'happy'} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[15px] font-semibold tracking-tight">Make this Plip yours</div>
+        <div className="mt-1 text-[12.5px] leading-relaxed text-white/50">
+          You’re <span className="font-medium text-white/75">{name}</span> for now, and Plip works fully like this. {WHY_SIGN_IN}
+        </div>
+        <div className="mt-4 flex items-start gap-3">
+          <GoogleSignIn state={state} size="md" />
+          {account.status !== 'waiting' && (
+            <Button variant="quiet" className="h-10" onClick={() => send('account-later')}>Later</Button>
+          )}
+        </div>
+      </div>
+    </Card>
   )
 }
 
@@ -129,41 +127,67 @@ function joined(since: number | null): string {
 }
 
 export function AccountTab({ state }: { state: SettingsState }) {
-  const user = state.account.user
-  if (!user) return null
-  const since = joined(user.since)
+  const account = state.account
+  const user = account.user
+  if (!account.available) return null
+  const since = joined(user?.since ?? null)
+  const signedIn = Boolean(user?.email)
   return (
     <div>
-      <Header eyebrow="Account" title="Your Plip account" />
+      <Header eyebrow="Account" title={signedIn ? 'Your Plip account' : 'Your Plip, so far'} />
       <Card className="mb-7 flex items-center gap-4 p-5">
-        <Avatar user={user} size={52} />
+        {user ? <Avatar user={user} size={52} /> : <Mascot size={52} mood="idle" />}
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[17px] font-semibold tracking-tight">{user.name || user.email}</div>
-          {user.name && <div className="truncate text-[13px] text-white/50">{user.email}</div>}
+          <div className="truncate text-[17px] font-semibold tracking-tight">
+            {user ? (user.name || user.email) : 'Setting up your account…'}
+          </div>
+          {signedIn && user?.name && <div className="truncate text-[13px] text-white/50">{user.email}</div>}
+          {!signedIn && user && <div className="text-[13px] text-white/50">Guest{since ? ` · since ${since}` : ''}. Plip works fully like this.</div>}
         </div>
-        <Pill tone="good">Signed in</Pill>
+        <Pill tone={signedIn ? 'good' : 'muted'}>{signedIn ? 'Signed in' : 'Guest'}</Pill>
       </Card>
 
-      <Section title="Sign-in">
-        <Rows>
-          <Row title="Google" detail={`You sign in to Plip with your Google account${since ? `. Member since ${since}` : ''}.`} action={<GoogleMark />} />
-          <Row
-            title="Sign out"
-            detail="Plip stops working on this Mac until you sign in again. Your memory, history and settings stay."
-            action={<Button variant="ghost" onClick={() => send('account-sign-out')}>Sign out</Button>}
-          />
-        </Rows>
-      </Section>
+      {!signedIn && (
+        <Card className="mb-7 p-5">
+          <div className="flex items-start gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white shadow-[0_6px_20px_-8px_rgba(156,194,250,0.6)]"><GoogleMark className="size-[18px]" /></span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] font-semibold tracking-tight">Sign in with Google</div>
+              <div className="mt-1 text-[12.5px] leading-relaxed text-white/50">{WHY_SIGN_IN} It links to this account, so what you’ve done stays yours.</div>
+              <div className="mt-4"><GoogleSignIn state={state} size="md" /></div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {signedIn && (
+        <Section title="Sign-in">
+          <Rows>
+            <Row title="Google" detail={`You sign in to Plip with your Google account${since ? `. Member since ${since}` : ''}.`} action={<GoogleMark />} />
+            <Row
+              title="Sign out"
+              detail="Plip keeps working on this Mac as a guest. Your memory, history and settings stay."
+              action={<Button variant="ghost" onClick={() => send('account-sign-out')}>Sign out</Button>}
+            />
+          </Rows>
+        </Section>
+      )}
 
       <Section title="What your account holds">
         <Rows>
-          <Row title="Your name, email and picture" detail="From Google, so we know who uses Plip. No contacts, nothing else." />
+          <Row title={signedIn ? 'Your name, email and picture' : 'A name like Quiet Nomad'}
+            detail={signedIn ? 'From Google, so we know who uses Plip. No contacts, nothing else.'
+              : 'Picked at random here, so you count as one person using Plip. Google adds your real name, email and picture when you sign in.'} />
           <Row
             title="Not what you do with Plip"
-            detail="What you ask, your screen, memory and history stay on this Mac and are never tied to your account."
+            detail="What you ask, your screen, memory and history stay on this Mac and are never tied to your account. Only which setup steps you reached are counted."
           />
         </Rows>
       </Section>
+      <div className="mt-6 flex items-center gap-1.5 text-[11.5px] text-white/35">
+        <Lock className="size-3.5 shrink-0 text-mint" />
+        <button className="text-white/45 underline-offset-2 hover:text-white/75 hover:underline" onClick={() => send('open-url', { url: PRIVACY_URL })}>Privacy policy</button>
+      </div>
     </div>
   )
 }

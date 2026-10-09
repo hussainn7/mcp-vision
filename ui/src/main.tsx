@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { isNative, onMockCommand, send, settings, type Engine, type SettingsState } from './bridge'
-import { DEMO_USER, loadDemoSettings } from './demo'
+import { DEMO_GUEST, DEMO_USER, loadDemoSettings } from './demo'
 import './styles.css'
 import { Guide } from './views/Guide'
 import { Island } from './views/Island'
@@ -17,9 +17,9 @@ document.body.dataset.surface = surface
 if (!isNative()) {
   // Browser preview: show realistic data and log commands the app would send.
   loadDemoSettings()
-  // #settings?signin opens the sign-in screen.
+  // #settings?signin: a guest, with the Google card up on Home (as after the first task).
   if (new URLSearchParams(location.hash.split('?')[1]).has('signin'))
-    settings.set((current) => ({ account: { ...current.account, required: true, user: null } }))
+    settings.set((current) => ({ account: { ...current.account, identified: false, anonymous: true, prompt: true, user: DEMO_GUEST } }))
   onMockCommand((command) => {
     console.debug('[plip] command', command)
     if (command.cmd === 'select-engine') {
@@ -27,7 +27,13 @@ if (!isNative()) {
         engines: current.engines.map((engine) => ({ ...engine, selected: engine.id === command.id })),
       }))
     }
-    if (command.cmd === 'finish-onboarding') settings.set({ onboarded: true })
+    const account = (patch: Partial<SettingsState['account']>) => settings.set((current) => ({ account: { ...current.account, ...patch } }))
+    if (command.cmd === 'finish-onboarding') {
+      settings.set({ onboarded: true })
+      if (!settings.get().account.user)                   // Skip or Start: a guest account either way
+        account({ identified: false, anonymous: true, prompt: false, user: DEMO_GUEST })
+    }
+    if (command.cmd === 'account-later') account({ prompt: false })
     if (command.cmd === 'tour-start') settings.set({ onboarded: false, tour: { step: 'welcome' } })
     if (command.cmd === 'quick-connect') settings.set({ connect: 'Pick the AI you use below, or get a free one from Google.' })
     if (command.cmd === 'engine-connect') {
@@ -60,17 +66,16 @@ if (!isNative()) {
     if (command.cmd === 'report-issue' || command.cmd === 'request-feature') settings.set({ report: 'sent' })
     if (command.cmd === 'report-reset') settings.set({ report: '' })
     // Browser preview: the browser "comes back" from Google after a moment.
-    const account = (patch: Partial<SettingsState['account']>) => settings.set((current) => ({ account: { ...current.account, ...patch } }))
     if (command.cmd === 'account-sign-in') {
       account({ status: 'waiting', error: '', url: 'https://example.supabase.co/auth/v1/authorize?provider=google' })
       window.setTimeout(() => {
-        if (settings.get().account.status === 'waiting') account({ status: '', url: '', required: false, user: DEMO_USER })
+        if (settings.get().account.status === 'waiting') account({ status: '', url: '', identified: true, anonymous: false, prompt: false, user: DEMO_USER })
       }, 1600)
     }
     if (command.cmd === 'set-update-check')
       settings.set((current) => ({ update: { ...current.update, enabled: Boolean(command.enabled), available: command.enabled ? current.update.available : null } }))
     if (command.cmd === 'account-cancel') account({ status: '', url: '' })
-    if (command.cmd === 'account-sign-out') account({ status: '', required: true, user: null })
+    if (command.cmd === 'account-sign-out') account({ status: '', identified: false, anonymous: true, prompt: false, user: DEMO_GUEST })
     if (command.cmd === 'set-depth') settings.set({ depth: command.depth as 'fast' | 'balanced' | 'deep' })
     if (command.cmd === 'set-walkthroughs') settings.set({ walkthroughs: Boolean(command.enabled) })
     if (command.cmd === 'set-voice') {

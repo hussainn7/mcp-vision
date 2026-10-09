@@ -269,17 +269,6 @@ def test_history_keeps_the_latest_items(tmp_path):
     assert history.items() == []
 
 
-def test_a_new_person_gets_a_few_asks_before_signing_in(tmp_path):
-    from mcp_vision.buddy.store import FREE_TRIES
-
-    path = tmp_path / "prefs.json"
-    assert Prefs().trying and FREE_TRIES == 3                                 # first run, in the tour
-    assert not Prefs(tries=FREE_TRIES).trying                                 # used them up
-    assert not Prefs(onboarded=True).trying                                   # set up (or signed out later): no freebies
-    Prefs(tries=2).save(path)
-    assert Prefs.load(path).tries == 2 and Prefs.load(path).trying
-
-
 def test_apply_prefs_maps_depth_and_voice():
     settings = BuddySettings(_env_file=None)
     changed = apply_prefs(settings, Prefs(engine="codex", depth="deep", tts="say", stt="apple"))
@@ -337,8 +326,8 @@ def test_the_welcome_walkthrough_keeps_its_step_and_watches_the_practice_ask(ser
     from mcp_vision.buddy.presenter import Presenter
 
     svc, calls, tmp_path = service
-    svc.handle({"cmd": "tour-go", "step": "signin"})                          # sign-in is the tour's last ask
-    assert calls["posted"][-1]["state"]["tour"] == {"step": "signin"}
+    svc.handle({"cmd": "tour-go", "step": "try"})                             # the practice ask is the tour's last step
+    assert calls["posted"][-1]["state"]["tour"] == {"step": "try"}
     svc.handle({"cmd": "tour-go", "step": "brain"})
     svc.handle({"cmd": "tour-go", "step": "nowhere"})
     assert Prefs.load(tmp_path / "prefs.json").tour_step == "brain"            # survives a restart

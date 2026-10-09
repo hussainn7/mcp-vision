@@ -4,18 +4,17 @@ import { useEffect, useRef } from 'react'
 import { send, settings, type LiveState, type SettingsState, type TourStep } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Chord, cn, useShortcutLabel } from '../../components/bits'
-import { Avatar, GoogleSignIn } from './account'
 import { PermissionAction, RestartBanner } from './basics'
 import { ConnectAI } from './connect'
 import { Button, Card } from './ui'
 
 export const PRIVACY_URL = 'https://plip.dev/privacy'
 
-const ALL: TourStep[] = ['welcome', 'permissions', 'brain', 'try', 'signin', 'done']
+const ALL: TourStep[] = ['welcome', 'permissions', 'brain', 'try', 'done']
 
-/** Sign-in comes last, after they've seen Plip work (a build without sign-in skips it). */
-function stepsFor(state: SettingsState): TourStep[] {
-  return state.account.available ? ALL : ALL.filter((step) => step !== 'signin')
+/** No sign-in step: Plip asks for Google after the first task, from Home. */
+function stepsFor(_state: SettingsState): TourStep[] {
+  return ALL
 }
 
 /** Move the walkthrough; Plip saves it for restarts. */
@@ -41,7 +40,7 @@ export function readiness(state: SettingsState) {
   }
 }
 
-/** First run: intro, permissions, a brain, one practice ask, then sign in. */
+/** First run: intro, permissions, a brain, one practice ask. Sign-in comes after the first task, not here. */
 export function Onboarding({ state }: { state: SettingsState }) {
   const order = stepsFor(state)
   const counted = order.slice(1, -1)
@@ -49,7 +48,7 @@ export function Onboarding({ state }: { state: SettingsState }) {
   const index = order.indexOf(step)
   const next = () => tour(order[Math.min(index + 1, order.length - 1)])
   const back = () => tour(order[Math.max(index - 1, 0)])
-  const skip = () => (state.account.required ? tour('signin') : send('finish-onboarding'))
+  const skip = () => send('finish-onboarding', { skipped: true })
   const props = { state, steps: counted, next, back }
 
   return (
@@ -75,7 +74,7 @@ export function Onboarding({ state }: { state: SettingsState }) {
           </div>
         )}
         <div className="flex w-40 justify-end">
-          {step !== 'done' && step !== 'signin' && <Button variant="quiet" onClick={skip}>Skip setup</Button>}
+          {step !== 'done' && <Button variant="quiet" onClick={skip}>Skip setup</Button>}
         </div>
       </header>
 
@@ -94,8 +93,7 @@ export function Onboarding({ state }: { state: SettingsState }) {
             {step === 'permissions' && <SeeAndHear {...props} />}
             {step === 'brain' && <PickBrain {...props} />}
             {step === 'try' && <TryIt {...props} />}
-            {step === 'signin' && <SignInStep {...props} />}
-            {step === 'done' && <AllSet />}
+            {step === 'done' && <AllSet state={state} />}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -178,7 +176,7 @@ function Welcome({ next }: { next: () => void }) {
       </ul>
       <div className="mt-8 flex flex-col items-center gap-2.5">
         <Button variant="brand" onClick={next} className="px-6 py-2.5 text-[14px]">Set me up <ArrowRight className="size-4" /></Button>
-        <span className="text-[12px] text-white/35">About two minutes. No tech skills needed.</span>
+        <span className="text-[12px] text-white/35">About two minutes. No tech skills, no sign-in needed.</span>
       </div>
       <div className="mt-6 flex items-center justify-center gap-1.5 text-[11.5px] text-white/35">
         <Lock className="size-3.5 shrink-0 text-mint" /> I only look and listen while you hold the keys.
@@ -368,40 +366,7 @@ function LiveLine({ live }: { live: LiveState | null }) {
   )
 }
 
-// -- 4. sign in ------------------------------------------------------------------------------------
-
-function SignInStep({ state, steps, next, back }: StepProps) {
-  const user = state.account.user
-  useAdvance(Boolean(user), next)
-  return (
-    <Frame
-      step="signin"
-      steps={steps}
-      title={user ? 'You’re signed in' : 'Last step: sign in'}
-      subtitle="Sign in with Google to keep using Plip. It’s free, and your account is only your name, email and picture."
-      footer={<><Back onClick={back} />{user && <Forward onClick={next} glow />}</>}
-    >
-      {user ? (
-        <Card className="flex items-center gap-4 p-5">
-          <Avatar user={user} size={44} />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[15px] font-semibold tracking-tight">{user.name || user.email}</div>
-            {user.name && <div className="truncate text-[12.5px] text-white/50">{user.email}</div>}
-          </div>
-          <Check className="size-5 text-emerald-300" strokeWidth={3} />
-        </Card>
-      ) : (
-        <Card className="px-6 pb-3 pt-7"><GoogleSignIn state={state} /></Card>
-      )}
-      <div className="mt-4 flex items-center gap-1.5 text-[11.5px] text-white/35">
-        <Lock className="size-3.5 shrink-0 text-mint" /> What you ask, your screen and your memory stay on this Mac.
-        <button className="text-white/45 underline-offset-2 hover:text-white/70 hover:underline" onClick={() => send('open-url', { url: PRIVACY_URL })}>Privacy</button>
-      </div>
-    </Frame>
-  )
-}
-
-// -- 5. all set ------------------------------------------------------------------------------------
+// -- 4. all set ------------------------------------------------------------------------------------
 
 const EXAMPLES = [
   { icon: Eye, text: 'What does this error mean?', hint: 'Reads your screen and explains' },
@@ -410,7 +375,7 @@ const EXAMPLES = [
   { icon: Hand, text: 'Remind me to call Mom at 6', hint: 'Reminders and timers' },
 ]
 
-function AllSet() {
+function AllSet({ state }: { state: SettingsState }) {
   return (
     <div>
       <div className="flex items-center gap-5">
@@ -440,6 +405,11 @@ function AllSet() {
         ))}
       </div>
       <div className="mt-4 text-[12px] text-white/35">You can change anything later in Settings, from the Plip icon in your menu bar.</div>
+      {state.account.available && (
+        <div className="mt-2 text-[12px] text-white/35">
+          Plip gives you a guest name now (something like Quiet Nomad, no email) so one more person using it gets counted. Nothing you ask is ever tied to it. Sign in with Google later if you want to.
+        </div>
+      )}
       <div className="mt-7 flex items-center">
         <Forward onClick={() => send('finish-onboarding')} glow>Start using Plip</Forward>
       </div>

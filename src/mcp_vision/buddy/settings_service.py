@@ -20,7 +20,13 @@ from mcp_vision.buddy.store import History, Prefs, config_dir
 
 KEY_NAMES = {"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
 DEPTHS = {"fast", "balanced", "deep"}
-TOUR_STEPS = ("welcome", "permissions", "brain", "try", "signin", "done")
+TOUR_STEPS = ("welcome", "permissions", "brain", "try", "done")
+ASK_AFTER_TASKS = (1, 3)      # the finished tasks after which Plip asks for Google (plus once when an update is out)
+MAX_ASKS = 3                  # Laters before Plip stops asking (the Account tab still offers it)
+
+
+def _in_background(work: Callable[[], None]) -> None:
+    threading.Thread(target=work, daemon=True, name="plip-settings-work").start()
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
 # pasted key shapes: Google AI Studio, Anthropic
@@ -67,7 +73,9 @@ class SettingsService:
     action_log: Any = None                                 # buddy.actions.ActionLog (for stats)
     usage: Any = None                                      # buddy.usage.UsageLog (the Usage tab)
     parakeet: Any = None                                   # buddy.parakeet.ParakeetModel (the opt-in download)
-    account: Any = None                                    # buddy.account.Account (sign in at the tour's end)
+    account: Any = None                                    # buddy.account.Account (a guest first, Google later)
+    background: Callable[[Callable[[], None]], None] = _in_background   # network work, off the UI thread
+    on_ask: Callable[[str], None] = lambda moment: None    # a moment to ask for Google: the app shows it, when idle
     updates: Any = None                                    # buddy.updates.Updates (a newer Plip is out)
     check_updates: Callable[[], None] = lambda: None       # ask GitHub now, in the background
     connector: Any = None                                  # buddy.connect.Connector (one-click Connect)
@@ -125,7 +133,7 @@ class SettingsService:
             "keyCheck": dict(self.key_check) or None,
             "report": self.report_note,
             "account": self.account.snapshot() if self.account is not None
-            else {"available": False, "required": False},
+            else {"available": False, "identified": False, "anonymous": False, "prompt": False},
             "update": self.updates.snapshot() if self.updates is not None
             else {"enabled": prefs.update_check, "current": __version__, "available": None},
             "hotkey": {**chord(prefs.hotkey).card(), "works": bool(self.hotkey_works()), "owner": keyboard_owner(),
@@ -147,7 +155,9 @@ class SettingsService:
         return summary(self.usage.rows())
 
     def push(self) -> None:
-        self.post([{"type": "settings", "state": self.snapshot()}])
+        snapshot = self.snapshot()
+        self._funnel(snapshot, self.prefs)
+        self.post([{"type": "settings", "state": snapshot}])
 
     def handle(self, command: dict[str, Any]) -> None:
         name = command.get("cmd", "")
@@ -284,20 +294,28 @@ class SettingsService:
         else:
             self.push()
 
-    def _cmd_finish_onboarding(self, _command):
+    def _cmd_finish_onboarding(self, command):
+        """Start using Plip, or Skip setup: either way they get an account (a guest, like Quiet Nomad) right now."""
+        self._milestone("onboarding:" + ("skipped" if command.get("skipped") else "done"), "onboarding_step",
+                        step="skipped" if command.get("skipped") else "done")
         self._save_onboarded(True)
+        if self.account is not None and self.account.available and not self.account.user:
+            def make() -> None:
+                self.account.ensure_anonymous()        # its on_change pushes the new name to Settings
+            self.background(make)
 
     def _cmd_tour_start(self, _command):
         """General → Replay the welcome tour: the walkthrough again, everything set up stays."""
         self._save_onboarded(False, step="welcome")
 
     def _cmd_tour_go(self, command):
-        """Tour step changed: saved, so a restart resumes there."""
+        """Tour step changed: saved, so a restart resumes there (and the funnel's first events)."""
         step = str(command.get("step") or "")
         if step in TOUR_STEPS:
             prefs = self.prefs
             prefs.tour_step = step
             prefs.save(self.prefs_path)
+            self._milestone("onboarding:" + step, "onboarding_step", step=step)
             self.push()
 
     def _save_onboarded(self, done: bool, step: str | None = None) -> None:
@@ -325,8 +343,90 @@ class SettingsService:
 
     def _cmd_account_sign_out(self, _command):
         if self.account is not None:
-            self.account.sign_out()                    # its on_change stops Plip until they sign in again
+            self.account.sign_out()                    # Plip keeps working; a new guest account follows
             self.push()
+
+    def _cmd_account_later(self, _command):
+        if self.account is None or not self.account.prompt:
+            return
+        prefs = self.prefs
+        prefs.signin_asks += 1
+        prefs.save(self.prefs_path)
+        self.account.later()
+        self._track("signin_skipped", asks=prefs.signin_asks, tasks=prefs.tasks_done)
+        self.push()
+
+    # -- the setup funnel: each step once per install, with the account along (analytics.track) ---------
+    def _milestone(self, key: str, event: str, prefs: Prefs | None = None, **properties) -> bool:
+        """Send ``event`` the first time ``key`` is reached on this install. True when it was new."""
+        prefs = prefs or self.prefs
+        if key in prefs.milestones:
+            return False
+        prefs.milestones.append(key)
+        prefs.save(self.prefs_path)
+        self._track(event, **properties)
+        return True
+
+    def _track(self, event: str, **properties) -> None:
+        from mcp_vision.analytics import track
+
+        account = self.account.distinct_id if self.account is not None else ""
+        track(event, {**properties, "account": account})
+
+    def _funnel(self, snapshot: dict[str, Any], prefs: Prefs) -> None:
+        """What the snapshot shows reached: permissions on, the chosen AI ready."""
+        for name in ("screen", "accessibility", "microphone"):
+            if snapshot["permissions"].get(name) is True:
+                self._milestone(f"permission:{name}", "permission_granted", prefs, permission=name)
+        engine = next((item for item in snapshot["engines"] if item.get("selected")), None)
+        if engine and engine.get("status") == "ready":
+            self._milestone("engine", "engine_connected", prefs, engine=str(engine.get("id", "")))
+
+    # -- the moments Plip asks for Google: never before the first finished task --------------------------
+    def task_done(self) -> None:
+        """A task finished (the app calls this): count it, and on the 1st and 3rd ask for Google."""
+        prefs = self.prefs
+        prefs.tasks_done += 1
+        prefs.save(self.prefs_path)
+        if prefs.tasks_done == 1:
+            self._milestone("first_task", "first_task_done", prefs)
+        if prefs.tasks_done in ASK_AFTER_TASKS:
+            self.ask_sign_in("first_task" if prefs.tasks_done == 1 else "third_task")
+
+    def update_found(self) -> None:
+        """A newer Plip is out (the app calls this): the one update moment to ask for Google."""
+        prefs = self.prefs
+        if prefs.asked_on_update:
+            self.push()
+            return
+        if self.ask_sign_in("update"):              # the moment is spent only when it was used
+            prefs.asked_on_update = True
+            prefs.save(self.prefs_path)
+        else:
+            self.push()
+
+    def ask_sign_in(self, moment: str) -> bool:
+        """Put the Google card up on Home, if they're a guest and haven't said Later three times.
+
+        A card still up from an earlier moment (they closed the window instead of tapping Later) is asked
+        again: only Later counts as an answer. How it's shown is the app's call (``on_ask``): a notch notice
+        after the first task, Settings when they're idle after that.
+        """
+        account = self.account
+        if account is None or not account.anonymous or account.status == "waiting":
+            return False
+        if self.prefs.signin_asks >= MAX_ASKS:
+            return False
+        account.ask()
+        self._track("signin_prompted", moment=moment, tasks=self.prefs.tasks_done)
+        self.push()
+        self.on_ask(moment)
+        return True
+
+    def signed_in(self) -> None:
+        """Google linked (the app calls this from the account's on_signed_in)."""
+        self._track("signin_done", tasks=self.prefs.tasks_done)
+        self.push()
 
     # -- a newer Plip: download it, or stop asking ----------------------------------------------
     def _cmd_update_download(self, _command):

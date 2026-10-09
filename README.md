@@ -38,11 +38,11 @@ happens until you say yes.
 1. Open the `.dmg` and drag **Plip** into **Applications**.
 2. Open Plip from Applications. If macOS says it can't check it for malicious software,
    go to System Settings → Privacy & Security and click **Open Anyway** (only the first time).
-3. Sign in with Google once: your account is your name and email, nothing you do with Plip
-   ([what it holds](#your-account)).
-4. A short welcome walks you through it: allow Screen Recording, Accessibility and
-   Microphone, then click **Connect AI**. Done.
-5. Hold **Control+Option**, ask something, let go.
+3. A short welcome walks you through it: allow Screen Recording, Accessibility and Microphone, then
+   **Connect** the AI you already pay for (or get a free Google key), and try one ask. No sign-in needed.
+4. Hold **Control+Option**, ask something, let go.
+5. After your first task, Plip offers **Continue with Google** once. Say Later if you like: it asks at most
+   three times, and the Account tab has it whenever you want ([what it holds](#your-account)).
 
 Something broken? Click **Report a bug** in Plip's menu bar (or **Settings → General**), or
 [open a GitHub issue](https://github.com/hussainn7/plip-oss/issues).
@@ -200,22 +200,41 @@ memory and sign-in stay. Turn it off in **Settings → General → Tell me about
 
 ## Your account
 
-The download asks you to sign in with Google once, at the end of the welcome tour (you get to try Plip first:
-a few asks). Sign-in goes through Supabase Auth, Plip's account server: Google tells it your name, email address
-and profile picture, and it keeps your account (name, email, the link to your Google profile picture, when you
-joined and when you last signed in). That's how we know who uses Plip.
+Sign-in never stands between you and Plip. When you finish (or skip) the welcome, the download gives you a
+**guest account**: a random name like `Quiet Nomad`, no email, kept by Supabase Auth, Plip's account server
+(its "anonymous sign-in"). That's how we count people using Plip. After your first task (and your third, and once
+when a new version is out) Plip offers **Continue with Google**; after three Laters it stops asking, and
+**Settings → Account** has the button.
 
-- On this Mac, `~/.config/mcp-vision/account.json` (readable only by you) keeps your name, email, your Google
-  picture (downloaded once, to show in Settings) and the sign-in session.
-- Each time Plip starts, it renews the session with Supabase once. If your account was removed, Plip signs out.
+Signing in with Google **links** Google to that same account: Google tells Supabase your name, email address and
+profile picture, and the account (name, email, the link to your picture, when you joined and when you last signed
+in) gains them. If that Google already has a Plip account (your last Mac), you're signed in to that one instead.
+Nobody is counted twice. Why sign in: Pro is coming, and signed-in people get it first. Nothing syncs between
+Macs yet.
+
+- On this Mac, `~/.config/mcp-vision/account.json` (readable only by you) keeps your name, email and Google
+  picture (once you've signed in; the picture is downloaded once, to show in Settings) and the session.
+- Each time Plip starts, it renews the session with Supabase once. If your account was removed, Plip signs out and
+  makes a new guest one. Offline, the name stays here and the account is made next launch.
 - What you ask Plip, your screen, memory and history are never sent to the account server or tied to your account.
-- **Settings → Account → Sign out** forgets the account on this Mac and ends the session. To have the account
-  itself deleted, email team@plip.dev from the address you signed in with (the full policy is at
-  [plip.dev/privacy](https://plip.dev/privacy)).
+  Which setup steps you reached is counted, with the account id ([Analytics](#analytics)).
+- A guest account holds nothing about you but its random name. **Sign out** ends its session; the rows
+  themselves are cleared from the server from time to time, and Plip doesn't make a new one until you sign out or
+  reinstall. The opt-out below covers the analytics, not the account server: a download with a Supabase project
+  talks to it whenever Plip starts.
+- **Settings → Account → Sign out** forgets the Google account on this Mac and ends the session; Plip keeps working
+  as a new guest account. To have an account deleted, email team@plip.dev from the address you signed in with
+  (the full policy is at [plip.dev/privacy](https://plip.dev/privacy)).
 
-Running from source without a sign-in project (the default) never asks you to sign in and never contacts the
+Running from source without a Supabase project (the default) has no accounts at all and never contacts the
 account server. The code is [`src/mcp_vision/buddy/account.py`](src/mcp_vision/buddy/account.py).
 
 ## Analytics
 
-Plip sends one anonymous ping per day (random install id, version, OS) so we can count active users. No screens, files, or prompts are ever sent. Opt out with `MCP_VISION_NO_ANALYTICS=1` or `DO_NOT_TRACK=1`.
+Plip sends one anonymous ping per day (random install id, version, macOS version) so we can count active users, and
+one event per setup step reached, once each: a walkthrough step shown or skipped, a permission granted (which one),
+an AI connected (which provider), the first task finished, sign-in offered / done / put off (at which moment, after
+how many tasks). All of it is keyed on the install id and carries your account id once you have one (see
+[Your account](#your-account)), so we can see where setup loses people. Until 0.9.0 the install id was never
+linked to an account; it is now, for that funnel. No screens, files, or prompts are ever sent, and nothing about
+what you ask. Opt out of all of it with `MCP_VISION_NO_ANALYTICS=1` or `DO_NOT_TRACK=1`.

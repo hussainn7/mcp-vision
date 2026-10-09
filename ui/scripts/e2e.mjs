@@ -307,10 +307,10 @@ await test('settings: general (companion style, walkthroughs, tour)', async () =
   await page.close()
 })
 
-await test('onboarding: plain steps, a brain without a terminal, practice, then sign in last', async () => {
+await test('onboarding: plain steps, a brain without a terminal, practice, then done; no sign-in step', async () => {
   const { page, take } = await open('settings?tab=home')
   await page.evaluate(() => window.__plip({ type: 'settings', state: { onboarded: false, tour: { step: 'welcome' },
-    account: { available: true, required: true, status: '', user: null },
+    account: { available: true, identified: false, anonymous: false, prompt: false, status: '', user: null },
     permissions: { screen: true, accessibility: null, microphone: true, speech: null }, voice: { tts: 'say', stt: 'apple', elevenlabs: false, assemblyai: false },
     engines: [
       { id: 'claude-code', label: 'Claude', via: 'Claude Pro / Max via Claude Code', kind: 'subscription', status: 'not-installed' },
@@ -318,9 +318,11 @@ await test('onboarding: plain steps, a brain without a terminal, practice, then 
       { id: 'gemini-api', label: 'Gemini', via: 'Free key from Google AI Studio', kind: 'api', status: 'missing-key', keyName: 'GEMINI_API_KEY' },
     ] } }))
   await page.getByText('Hi, I’m Plip').waitFor()
+  await page.getByText('no sign-in needed').waitFor()
   await page.getByRole('button', { name: 'Set me up' }).click()
   assert.deepEqual(await take('tour-go'), { cmd: 'tour-go', step: 'permissions' })    // saved for restarts
   await page.getByText('Let Plip see and hear you').waitFor()
+  await page.getByText('Step 1 of 3').waitFor()                                     // permissions, brain, try
   await page.getByText('Microphone and Speech Recognition').waitFor()               // Apple's listening needs both
   await page.getByRole('button', { name: 'Allow', exact: true }).first().click()
   assert.deepEqual(await take('grant'), { cmd: 'grant', permission: 'accessibility' })
@@ -336,30 +338,32 @@ await test('onboarding: plain steps, a brain without a terminal, practice, then 
     answer: 'I can see your screen and point at things.', error: '', at: Date.now() / 1000 + 5 } } }))
   await page.getByText('That’s all there is to it').waitFor()
   await page.getByRole('button', { name: 'Continue' }).click()
-  await page.getByText('Last step: sign in').waitFor()                               // after they've seen it work
-  assert.equal(await page.getByRole('button', { name: 'Skip setup' }).count(), 0)
-  await page.getByRole('button', { name: 'Continue with Google' }).click()
-  assert.deepEqual(await take('account-sign-in'), { cmd: 'account-sign-in', provider: 'google' })
-  await page.getByText('You’re signed in').waitFor({ timeout: 4000 })                 // the preview "comes back" signed in
-  await page.getByText('You’re all set').waitFor({ timeout: 4000 })                  // and moves on by itself
+  await page.getByText('You’re all set').waitFor()                                  // straight to done: no sign-in step
+  assert.equal(await page.getByText('Continue with Google').count(), 0)
+  await page.getByText(/guest name/).waitFor()                                      // and it says the guest account is coming
   await page.getByRole('button', { name: 'Start using Plip' }).click()
-  assert.ok(await take('finish-onboarding'))
+  assert.deepEqual(await take('finish-onboarding'), { cmd: 'finish-onboarding' })
+  await page.locator('nav').getByRole('button', { name: /Account$/ }).click()
+  await page.getByText('Quiet Nomad').first().waitFor()                             // a guest, named
+  await page.getByText('Guest', { exact: true }).waitFor()
   await page.close()
 })
 
-await test('onboarding: skip setup lands on sign-in, and a build without sign-in has no such step', async () => {
+await test('onboarding: skip setup finishes it as a guest, and a build without accounts says nothing about one', async () => {
   const { page, take } = await open('settings?tab=home')
   await page.evaluate(() => window.__plip({ type: 'settings', state: { onboarded: false, tour: { step: 'welcome' },
-    account: { available: true, required: true, status: '', user: null } } }))
-  await page.getByText('Hi, I’m Plip').waitFor()                                     // the tour, not the sign-in wall
+    account: { available: true, identified: false, anonymous: false, prompt: false, status: '', user: null } } }))
+  await page.getByText('Hi, I’m Plip').waitFor()
   await page.getByRole('button', { name: 'Skip setup' }).click()
-  assert.deepEqual(await take('tour-go'), { cmd: 'tour-go', step: 'signin' })
-  await page.getByText('Last step: sign in').waitFor()
-  await page.getByText('Step 4 of 4').waitFor()
-  await page.evaluate(() => window.__plip({ type: 'settings', state: { tour: { step: 'try' }, account: { available: false, required: false } } }))
+  assert.deepEqual(await take('finish-onboarding'), { cmd: 'finish-onboarding', skipped: true })
+  assert.equal(await page.getByText('Hi, I’m Plip').count(), 0)
+  await page.locator('nav').getByRole('button', { name: /Account$/ }).click()
+  await page.getByText('Quiet Nomad').first().waitFor()
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { onboarded: false, tour: { step: 'try' }, account: { available: false, identified: false, anonymous: false, prompt: false } } }))
   await page.getByRole('button', { name: 'Try it later' }).click()
   assert.deepEqual(await take('tour-go'), { cmd: 'tour-go', step: 'done' })
   await page.getByText('You’re all set').waitFor()
+  assert.equal(await page.getByText(/guest name/).count(), 0)
   await page.close()
 })
 
@@ -464,9 +468,17 @@ await test('guide: the permission card says what to drag, closes, and shows the 
   await page.close()
 })
 
-await test('sign in: signed out after setup, the sign-in screen comes first; sign out brings it back', async () => {
+await test('sign in: never a wall; after the first task home asks once, later hides it, google links the account', async () => {
   const { page, take } = await open('settings?signin')
-  assert.equal(await page.locator('nav').count(), 0)                     // nothing else until they sign in
+  await page.locator('nav').waitFor()                                      // settings are all there, no sign-in screen
+  await page.getByText('Make this Plip yours').waitFor()                   // the card, as after the first task
+  await page.getByText('Quiet Nomad').first().waitFor()
+  await page.getByRole('button', { name: 'Later' }).click()
+  assert.ok(await take('account-later'))
+  assert.equal(await page.getByText('Make this Plip yours').count(), 0)
+  await page.locator('nav').getByRole('button', { name: /Account$/ }).click()
+  await page.getByText('Your Plip, so far').waitFor()
+  await page.getByText('Guest', { exact: true }).waitFor()
   await page.getByRole('button', { name: 'Continue with Google' }).click()
   assert.deepEqual(await take('account-sign-in'), { cmd: 'account-sign-in', provider: 'google' })
   await page.getByText('Finish signing in in your browser').waitFor()
@@ -475,30 +487,29 @@ await test('sign in: signed out after setup, the sign-in screen comes first; sig
   await page.getByRole('button', { name: 'Cancel' }).click()
   assert.ok(await take('account-cancel'))
   await page.getByRole('button', { name: 'Continue with Google' }).click()
-  const account = page.locator('nav').getByRole('button', { name: /Account$/ })
-  await account.waitFor({ timeout: 4000 })                                // the preview "comes back" signed in
-  await account.click()
-  await page.getByText('hussain@plip.dev').waitFor()
+  await page.getByText('hussain@plip.dev').waitFor({ timeout: 4000 })      // the preview "comes back" linked
+  await page.getByText('Signed in').waitFor()
   assert.equal(await page.locator('img').count(), 0)                      // no picture: their initial
   const picture = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
-  await page.evaluate((src) => window.__plip({ type: 'settings', state: { account: { available: true, required: false, status: '',
+  await page.evaluate((src) => window.__plip({ type: 'settings', state: { account: { available: true, identified: true, anonymous: false, prompt: false, status: '',
     user: { name: 'Hussain Syed', email: 'hussain@plip.dev', provider: 'google', since: 1789862400, picture: src } } } }), picture)
   await page.locator('nav img').waitFor()                                   // their Google picture, sidebar and card
   assert.equal(await page.locator('main img').getAttribute('src'), picture)
   await page.getByRole('button', { name: 'Sign out' }).click()
   assert.ok(await take('account-sign-out'))
-  await page.getByRole('button', { name: 'Continue with Google' }).waitFor()
+  await page.getByText('Guest', { exact: true }).waitFor()                 // a guest again, still working
   await page.close()
 })
 
-await test('sign in: a failed sign-in says why, and a build without sign-in never shows it', async () => {
+await test('sign in: a failed sign-in says why, and a build without accounts has no account tab', async () => {
   const { page } = await open('settings?signin')
-  await page.evaluate(() => window.__plip({ type: 'settings', state: { account: { available: true, required: true, status: 'failed', error: 'You said no' } } }))
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { account: { available: true, identified: false, anonymous: true, prompt: true, status: 'failed', error: 'You said no', user: { name: 'Quiet Nomad', email: '', provider: 'anonymous', since: null } } } }))
   await page.getByRole('alert').getByText('You said no').waitFor()
   await page.getByRole('button', { name: 'Try again with Google' }).waitFor()
-  await page.evaluate(() => window.__plip({ type: 'settings', state: { account: { available: false, required: false } } }))
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { account: { available: false, identified: false, anonymous: false, prompt: false } } }))
   await page.locator('nav').waitFor()
   assert.equal(await page.locator('nav').getByRole('button', { name: /Account$/ }).count(), 0)
+  assert.equal(await page.getByText('Make this Plip yours').count(), 0)
   await page.close()
 })
 

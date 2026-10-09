@@ -225,7 +225,8 @@ function demoUsage(): UsageState {
 }
 
 export const DEMO_USER = { name: 'Hussain Syed', email: 'hussain@plip.dev', provider: 'google', since: 1789862400 }
+export const DEMO_GUEST = { name: 'Quiet Nomad', email: '', provider: 'anonymous', since: 1789862400 }
 
 export function loadDemoSettings() {
-  settings.set({ ...DEMO_SETTINGS, usage: demoUsage(), account: { available: true, required: false, status: '', user: DEMO_USER } })
+  settings.set({ ...DEMO_SETTINGS, usage: demoUsage(), account: { available: true, identified: true, anonymous: false, prompt: false, status: '', user: DEMO_USER } })
 }

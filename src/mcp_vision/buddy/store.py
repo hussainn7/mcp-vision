@@ -9,7 +9,6 @@ from pathlib import Path
 
 from mcp_vision.paths import state_dir
 
-FREE_TRIES = 3                       # asks before signing in, during the welcome tour (its try step + a retry or two)
 
 
 def config_dir() -> Path:
@@ -28,14 +27,12 @@ class Prefs:
     stt: str = ""
     onboarded: bool = False
     tour_step: str = ""              # welcome tour step, resumed after a restart
-    tries: int = 0                   # asks answered before signing in
     update_check: bool = True        # once a day, ask GitHub whether a newer Plip is out
     hotkey: str = "control+option"   # hold to talk: one of hotkey.CHORDS
-
-    @property
-    def trying(self) -> bool:
-        """First run: Plip works before sign-in for a few asks, so people see it work first."""
-        return not self.onboarded and self.tries < FREE_TRIES
+    tasks_done: int = 0              # finished tasks, ever (the 1st and 3rd are when Plip asks for Google)
+    signin_asks: int = 0             # times they tapped Later on the Google card; after 3, Plip stops asking
+    asked_on_update: bool = False    # the "a newer Plip is out" moment was used
+    milestones: list[str] = field(default_factory=list)   # funnel events sent once per install (analytics)
 
     @classmethod
     def load(cls, path: Path | None = None) -> Prefs:

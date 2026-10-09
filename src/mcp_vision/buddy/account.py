@@ -1,4 +1,9 @@
-"""Plip accounts: sign in once with Google, after a few free asks in the welcome tour.
+"""Plip accounts: sign in with Google when you're ready; Plip works either way.
+
+Sign-in never stands between a person and their first task. Someone who skips it still gets an account: a
+guest one (Supabase's anonymous sign-in), named like ``Quiet Nomad``, so they count and so their tasks stay
+theirs. Later, Continue with Google links Google to that same account (same id, now with an email), so nobody
+is counted twice.
 
 Sign-in goes through Supabase Auth with PKCE, the way a desktop app should (RFC 8252): Plip opens the
 browser at Supabase's authorize page, Google sends the person back to Supabase, and Supabase sends them to a
@@ -10,10 +15,12 @@ On this Mac, ``~/.config/mcp-vision/account.json`` (readable only by you) keeps 
 removed in Supabase signs out here.
 
 What leaves the Mac: the sign-in itself (Google tells Supabase your name, email and picture), that one
-renewal per launch, and fetching the picture from Google when it's new. Nothing about what you ask Plip. Usage stats stay anonymous and are never tied to it.
+renewal per launch, fetching the picture from Google when it's new, and the setup funnel in
+``mcp_vision.analytics`` (which step of setup was reached, never what you asked) with the account id along.
+Nothing about what you ask Plip.
 
 No config (``PLIP_SUPABASE_URL`` + ``PLIP_SUPABASE_KEY``: the environment, ``~/.config/mcp-vision/.env``,
-or baked into a release build) means no sign-in at all, and Plip works the same (running from source).
+or baked into a release build) means no account at all, and Plip works the same (running from source).
 """
 from __future__ import annotations
 
@@ -45,7 +52,12 @@ PORTS = (47823, 47824, 47825)
 CALLBACK = "/callback"
 WAIT = 600.0                                    # seconds to finish in the browser before giving up
 PROVIDERS = {"google"}
-SIGN_IN_FIRST = "Sign in to keep using Plip."
+ANONYMOUS = "anonymous"
+GUEST_FIRST = ("Quiet", "Swift", "Early", "Bright", "Calm", "Bold", "Keen", "Warm", "Lucky", "Wild", "Gentle",
+               "Sunny", "Clever", "Steady", "Brisk", "Merry", "Nimble", "Plucky", "Patient", "Curious")
+GUEST_LAST = ("Nomad", "Traveler", "Wanderer", "Pilot", "Scout", "Voyager", "Drifter", "Rover", "Explorer",
+              "Pathfinder", "Navigator", "Ranger", "Sailor", "Rambler", "Trekker", "Pioneer", "Seeker", "Courier",
+              "Wayfarer", "Stargazer")
 # Supabase saying "this session is over" (account deleted, banned, signed out everywhere): sign out here too.
 GONE = {400, 401, 403, 404}
 PICTURE_SIZE = 192                              # px asked of Google: sharp at 52 pt on retina
@@ -98,18 +110,31 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+def guest_name() -> str:
+    """What an account without a sign-in is called here and in Supabase: two words, like Quiet Nomad."""
+    return f"{secrets.choice(GUEST_FIRST)} {secrets.choice(GUEST_LAST)}"
+
+
 def _profile(user: dict[str, Any]) -> dict[str, Any]:
-    """What Plip shows and keeps about the person: name, email, picture link, how they signed in, since when."""
+    """What Plip shows and keeps about the person: name, email, picture link, how they signed in, since when.
+
+    A guest has no email; its provider says so, whatever Supabase lists (``providers`` keeps ``anonymous`` in
+    the list after Google is linked, but the email settles it).
+    """
     meta = user.get("user_metadata") or {}
+    app = user.get("app_metadata") or {}
     created = str(user.get("created_at") or "")
     try:
         since = int(datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()) if created else None
     except ValueError:
         since = None
-    return {"id": str(user.get("id") or ""), "email": str(user.get("email") or meta.get("email") or ""),
+    email = str(user.get("email") or meta.get("email") or "")
+    providers = [str(item) for item in (app.get("providers") or []) if str(item) != ANONYMOUS]
+    provider = ANONYMOUS if not email else str(providers[0] if providers else app.get("provider") or "google")
+    return {"id": str(user.get("id") or ""), "email": email,
             "name": str(meta.get("full_name") or meta.get("name") or ""),
             "picture_url": str(meta.get("avatar_url") or meta.get("picture") or ""),
-            "provider": str((user.get("app_metadata") or {}).get("provider") or "google"), "since": since}
+            "provider": provider, "since": since}
 
 
 def _error_text(body: dict[str, Any], fallback: str) -> str:
@@ -121,7 +146,7 @@ class Account:
     def __init__(self, url: str | None = "", key: str | None = "", *, path: Path | None = None,
                  open_url: Callable[[str], Any] = lambda url: None, transport: Transport = urllib_transport,
                  on_change: Callable[[], None] = lambda: None, on_signed_in: Callable[[], None] = lambda: None,
-                 fetch: Callable[[str], bytes | None] = fetch_picture, trying: Callable[[], bool] = lambda: False,
+                 fetch: Callable[[str], bytes | None] = fetch_picture,
                  ports: tuple[int, ...] = PORTS, wait: float = WAIT):
         from mcp_vision.buddy.store import config_dir
 
@@ -133,12 +158,12 @@ class Account:
         self.on_change = on_change                 # status moved (the Settings window shows it)
         self.on_signed_in = on_signed_in           # signed in: Plip starts working
         self.fetch = fetch
-        self.trying = trying                       # the tour's free tries: Plip works before sign-in
         self.ports = ports
         self.wait = wait
         self.status = ""                           # "" | waiting | failed
         self.error = ""
         self.link = ""                             # the sign-in page, to open again
+        self.prompt = False                        # the Home card asking for Google is up (ask / later)
         self._server: HTTPServer | None = None
         self._verifier = ""
         self._lock = threading.Lock()
@@ -147,7 +172,7 @@ class Account:
     # -- state -----------------------------------------------------------------------------------
     @property
     def available(self) -> bool:
-        """This build has sign-in (a Supabase project is configured)."""
+        """This build has accounts (a Supabase project is configured)."""
         return bool(self.base and self.key)
 
     def _session(self) -> dict[str, Any]:
@@ -159,25 +184,35 @@ class Account:
 
     @property
     def user(self) -> dict[str, Any] | None:
+        """Who this is: signed in with Google (an email) or a guest (a name like Quiet Nomad)."""
         user = self._session().get("user")
-        return user if isinstance(user, dict) and user.get("email") else None
+        return user if isinstance(user, dict) and (user.get("email") or user.get("name")) else None
 
     @property
-    def required(self) -> bool:
-        """Sign-in stands between this person and Plip."""
-        return self.available and self.user is None
+    def identified(self) -> bool:
+        """Signed in with Google: Plip knows an email."""
+        user = self.user
+        return bool(user and user.get("email"))
 
     @property
-    def blocker(self) -> str:
-        """Why Plip won't take a request yet ("" once signed in, in a build without sign-in, or while trying)."""
-        return SIGN_IN_FIRST if self.required and not self.trying() else ""
+    def anonymous(self) -> bool:
+        """A guest: has an account, but no sign-in yet. The Home card may ask for Google."""
+        user = self.user
+        return bool(user and not user.get("email"))
+
+    @property
+    def distinct_id(self) -> str:
+        """The account id, for the funnel events ("" without an account on the server)."""
+        user = self.user
+        return str(user.get("id") or "") if user else ""
 
     def snapshot(self) -> dict[str, Any]:
         user = self.user
         shown = {key: user.get(key) for key in ("name", "email", "provider", "since")} if user else None
         if shown is not None:
             shown["picture"] = str(self._session().get("picture") or "")       # a data: url, or "" for the initial
-        return {"available": self.available, "required": self.required, "status": self.status, "error": self.error,
+        return {"available": self.available, "identified": self.identified, "anonymous": self.anonymous,
+                "prompt": self.prompt and self.anonymous, "status": self.status, "error": self.error,
                 "url": self.link if self.status == "waiting" else "", "user": shown}
 
     def _save(self, session: dict[str, Any]) -> None:
@@ -197,7 +232,10 @@ class Account:
             return False
         profile = _profile(user)
         if not profile["email"]:
-            return False
+            if not user.get("is_anonymous"):
+                return False
+            # the guest name Plip chose (it was sent along as user_metadata.name; keep it if it got lost)
+            profile["name"] = profile["name"] or str((self.user or {}).get("name") or guest_name())
         with self._writing:
             old = self._session()
             same = (old.get("user") or {}).get("picture_url") == profile["picture_url"]
@@ -231,9 +269,59 @@ class Account:
         self.status, self.error = status, error
         self.on_change()
 
+    # -- the guest account: everyone who skips sign-in still counts, and keeps their tasks ---------------
+    def ensure_anonymous(self, retry_only: bool = False) -> bool:
+        """Give this Mac an account if it has none: a guest (Supabase: anonymous) one, named like Quiet Nomad.
+
+        Offline (or anonymous sign-ins off in the project) keeps the name here only and tries again next
+        launch (``retry_only``: only that case, never a brand-new row), so the person is never stuck. True
+        when an account exists afterwards.
+        """
+        if not self.available or self.identified:
+            return self.identified
+        current = self.user or {}
+        if current and self._session().get("access_token"):
+            return True                                                 # already on the server
+        if retry_only and (not current or current.get("stale")):
+            return False
+        name = str(current.get("name") or guest_name())
+        try:
+            status, body = self.transport("POST", f"{self.base}/auth/v1/signup", self._headers(),
+                                          {"data": {"name": name}})
+        except Exception as exc:
+            log.info("account: couldn't create the guest account (%s), keeping %s here", type(exc).__name__, name)
+            status, body = 0, {}
+        with self._lock:
+            if self.identified:                                         # Google landed while we waited
+                return True
+            kept = 200 <= status < 300 and self._keep(body)
+        if kept:
+            log.info("account: guest account %s", name)
+        elif not current:
+            self._save({"user": {"id": "", "email": "", "name": name, "provider": ANONYMOUS,
+                                 "since": int(time.time())}})
+        self.on_change()
+        return True
+
+    def ask(self) -> None:
+        """A good moment to ask for Google (a task just finished, an update is out): put the card up."""
+        if self.anonymous:
+            self.prompt = True
+            self.on_change()
+
+    def later(self) -> None:
+        """They tapped Later: the card goes away until the next moment."""
+        if self.prompt:
+            self.prompt = False
+            self.on_change()
+
     # -- signing in ------------------------------------------------------------------------------
     def start(self, provider: str = "google") -> bool:
-        """Open the browser at the sign-in page and wait for it to come back. False if it can't start."""
+        """Open the browser at the sign-in page and wait for it to come back. False if it can't start.
+
+        A guest account on the server links Google to itself (same id, now with an email) instead of signing
+        in as somebody new, so tasks done before stay theirs and the user list has one row for them.
+        """
         if not self.available or provider not in PROVIDERS:
             return False
         self.cancel(quiet=True)
@@ -243,17 +331,64 @@ class Account:
             return False
         self._verifier, challenge = pkce_pair()
         redirect = f"http://127.0.0.1:{server.server_address[1]}{CALLBACK}"
-        self.link = f"{self.base}/auth/v1/authorize?" + urlencode({
-            "provider": provider, "redirect_to": redirect, "code_challenge": challenge,
-            "code_challenge_method": "s256"})
+        query = {"provider": provider, "redirect_to": redirect, "code_challenge": challenge,
+                 "code_challenge_method": "s256"}
+        plain = f"{self.base}/auth/v1/authorize?" + urlencode(query)
         with self._lock:
             self._server = server
         threading.Thread(target=server.serve_forever, daemon=True, name="plip-sign-in").start()
         timer = threading.Timer(self.wait, self._expire, args=(server,))
         timer.daemon = True
         timer.start()
+        session = self._session()
+        if not (self.anonymous and session.get("refresh_token")):
+            self.link = plain
+            self._set("waiting")
+            self.open_url(self.link)
+            return True
+        self.link = ""                             # "Open the page again" has nothing to open until link() knows
         self._set("waiting")
-        self.open_url(self.link)
+
+        def link() -> None:                        # network calls: never on the thread that draws Settings
+            try:
+                # the stored token is an hour old at most when fresh and days old on a Mac that stays on:
+                # renew it first, or /user/identities/authorize answers 401 and we'd make a second account
+                status, body = self.transport("POST", f"{self.base}/auth/v1/token?grant_type=refresh_token",
+                                              self._headers(), {"refresh_token": session["refresh_token"]})
+                if 200 <= status < 300 and self._keep(body):
+                    token = str(body.get("access_token") or "")
+                elif status in GONE:               # the guest row is gone (purged): sign in as somebody new
+                    log.info("account: the guest session is over (%s), plain sign-in", status)
+                    self._forget()
+                    token = ""
+                else:
+                    raise OSError(f"refresh {status}")
+                if token:
+                    status, body = self.transport(
+                        "GET", f"{self.base}/auth/v1/user/identities/authorize?" + urlencode(
+                            {**query, "skip_http_redirect": "true"}), self._headers(token), None)
+                    url = str(body.get("url") or "") if 200 <= status < 300 else ""
+                    if not url and status not in GONE:
+                        raise OSError(f"link {status}")
+                    if not url:                    # manual linking off in the project: say so in the log, go plain
+                        log.info("account: linking refused (%s), signing in as a new account", status)
+                else:
+                    url = ""
+            except Exception as exc:
+                log.info("account: couldn't reach Supabase to start sign-in (%s)", type(exc).__name__)
+                with self._lock:
+                    if server is not self._server:    # cancelled meanwhile: nothing to report
+                        return
+                self.cancel(quiet=True)
+                self._set("failed", "Couldn't reach Plip's sign-in server. Check your connection and try again.")
+                return
+            with self._lock:
+                if server is not self._server:    # cancelled or expired meanwhile
+                    return
+                self.link = url or plain
+            self.on_change()
+            self.open_url(self.link)
+        threading.Thread(target=link, daemon=True, name="plip-sign-in-link").start()
         return True
 
     def _listen(self) -> HTTPServer | None:
@@ -293,6 +428,12 @@ class Account:
                 return False, "This sign-in page is out of date. Start again from Plip."
             self._server = None
         _close(server)
+        if query.get("error_code") == "identity_already_exists" and self.anonymous:
+            # this Google account already belongs to another row (their last Mac): sign in as that one
+            log.info("account: Google is already an account here, signing in to it instead of linking")
+            self._forget()
+            self.start()
+            return False, "You already have a Plip account with this Google. Signing you in to it: one more time in the browser."
         if query.get("error") or not query.get("code"):
             message = _error_text(query, "Google sign-in didn't finish.")
             self._set("failed", message)
@@ -308,6 +449,7 @@ class Account:
             self._set("failed", _error_text(body, "Sign-in didn't go through. Try again."))
             return False, self.error
         self._verifier = ""
+        self.prompt = False
         self._set("")
         self.on_signed_in()
         return True, (self.user or {}).get("email", "")
@@ -344,24 +486,37 @@ class Account:
         if 200 <= status < 300 and self._keep(body):
             self.on_change()
         elif status in GONE:
-            log.info("account: Supabase ended the session (%s), signing out", status)
-            self._forget()
+            if self.anonymous:                     # purged on the server: keep the name here, no new row
+                log.info("account: the guest session is over (%s), keeping the name locally", status)
+                user = self._session().get("user") or {}
+                with self._writing:
+                    self._save({"user": {**user, "id": "", "stale": True}})
+            else:
+                log.info("account: Supabase ended the session (%s), signing out", status)
+                self._forget()
             self.on_change()
 
     def sign_out(self) -> None:
-        """Forget the account here right away, then tell Supabase (best effort, in the background)."""
+        """Forget the account here right away, then tell Supabase (best effort, in the background).
+
+        Plip keeps working: a fresh guest account takes the Google one's place (also in the background).
+        """
         session = self._session()
         self._forget()
         self.cancel(quiet=True)
         self._set("")
         token = session.get("access_token")
-        if self.available and token:
-            def tell() -> None:
+        if not self.available:
+            return
+
+        def tell() -> None:
+            if token:
                 try:
                     self.transport("POST", f"{self.base}/auth/v1/logout?scope=local", self._headers(token), None)
                 except Exception:
                     pass
-            threading.Thread(target=tell, daemon=True, name="plip-sign-out").start()
+            self.ensure_anonymous()
+        threading.Thread(target=tell, daemon=True, name="plip-sign-out").start()
 
     def _forget(self) -> None:
         with self._writing:
@@ -447,4 +602,4 @@ def _page(ok: bool, message: str, waiting: bool = False) -> str:
 <script>{SCRIPT}</script></body></html>"""
 
 
-__all__ = ["Account", "PORTS", "pkce_pair"]
+__all__ = ["ANONYMOUS", "Account", "PORTS", "guest_name", "pkce_pair"]

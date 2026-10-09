@@ -95,7 +95,7 @@ export interface Engine {
   connect?: ConnectProgress  // install + browser sign-in progress
 }
 
-export type TourStep = 'welcome' | 'permissions' | 'brain' | 'try' | 'signin' | 'done'
+export type TourStep = 'welcome' | 'permissions' | 'brain' | 'try' | 'done'
 
 export interface LiveState {
   phase: 'idle' | 'listening' | 'thinking' | 'answering' | 'done' | 'error'
@@ -213,10 +213,15 @@ export interface UsageState {
   billed: number
 }
 
-/** Signing in (with Google, through Supabase), at the tour's end. Builds without a sign-in project never ask. */
+/**
+ * The account (through Supabase): a guest after the walkthrough (a name like Quiet Nomad), Google when they're
+ * ready. Never between the person and the hotkey. Builds without a Supabase project have no accounts at all.
+ */
 export interface AccountState {
-  available: boolean         // this build has sign-in
-  required: boolean          // not signed in yet: the tour's last step, or the sign-in screen after it
+  available: boolean         // this build has accounts
+  identified: boolean        // signed in with Google: an email
+  anonymous: boolean         // a guest: an account, no sign-in yet
+  prompt: boolean            // Home shows the Google card (after the 1st and 3rd task, and once for an update)
   status?: '' | 'waiting' | 'failed'
   error?: string
   url?: string               // the sign-in page, while waiting
@@ -324,7 +329,7 @@ export const defaultSettings: SettingsState = {
   live: null,
   connect: '',
   report: '',
-  account: { available: false, required: false },
+  account: { available: false, identified: false, anonymous: false, prompt: false },
   update: { enabled: true, current: '0.9.0', available: null },
   hotkey: {
     id: 'control+option', keys: ['⌃', '⌥'], label: 'Control + Option', works: true, owner: 'Plip',

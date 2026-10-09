@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Chord, cn } from '../../components/bits'
-import { AccountTab, Avatar, SignIn } from './account'
+import { AccountTab, Avatar } from './account'
 import { HistoryPanel, PermissionsTab, VoiceTab } from './basics'
 import { BrainTab } from './brain'
 import { GeneralTab, type Composer } from './general'
@@ -99,8 +99,8 @@ export function Settings() {
   const engine = state.engines.find((item) => item.selected)
   const ready = engine && (engine.status === 'ready' || engine.status === 'unknown')
 
-  if (state.account.required && state.onboarded !== false) return <SignIn state={state} />   // first run signs in at the tour's end
   const user = state.account.user
+  const accounts = state.account.available
 
   return (
     <div className="relative flex h-full overflow-clip bg-ink text-white noise">
@@ -120,7 +120,7 @@ export function Settings() {
             <div key={group.title || 'top'}>
               {group.title && <div className="mb-1.5 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-white/25">{group.title}</div>}
               <div className="space-y-0.5">
-                {group.tabs.filter(({ id }) => id !== 'account' || user).map(({ id, label, icon: Icon }) => (
+                {group.tabs.filter(({ id }) => id !== 'account' || accounts).map(({ id, label, icon: Icon }) => (
                   <button
                     key={id}
                     onClick={() => setTab(id)}

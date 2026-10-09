@@ -3,6 +3,7 @@ import { ArrowDownToLine, CalendarClock, Check, ChevronRight, Clock3, FolderSear
 import { send, type SettingsState } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Chord, cn } from '../../components/bits'
+import { SignInCard } from './account'
 import type { Tab } from './index'
 import { Button, Card, Section, Stat } from './ui'
 
@@ -38,6 +39,7 @@ export function HomeTab({ state, go }: { state: SettingsState; go: (tab: Tab) =>
 
   return (
     <div>
+      {state.account.prompt && <SignInCard state={state} />}
       {update && (
         <Card className="mb-6 flex items-center gap-4 glow-ring">
           <span className="grid size-9 shrink-0 place-items-center rounded-xl brand-gradient text-slate-950"><ArrowDownToLine className="size-4" /></span>
