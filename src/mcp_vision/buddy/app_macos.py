@@ -641,6 +641,13 @@ def run_buddy_app() -> None:
             if controller.companion is not None:
                 loop.call_soon_threadsafe(controller.companion.interrupt, None)
             presenter.idle()
+        elif name == "offer-answer":                          # Yes / No thanks under a suggestion
+            if command.get("accept"):
+                controller.ask("yes")
+            else:
+                if controller.companion is not None:
+                    loop.call_soon_threadsafe(controller.companion.decline)
+                presenter.idle()
         elif name == "ready" and island is not None:          # the island loaded: show it the talk shortcut
             island.post([{"type": "shortcut", "state": chord(Prefs.load().hotkey).card()}])
         elif name != "island-rect":

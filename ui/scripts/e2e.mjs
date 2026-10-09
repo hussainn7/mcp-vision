@@ -92,6 +92,20 @@ await test('island: stays open while Plip is still talking, opens on hover only 
   await page.close()
 })
 
+await test('island: a yes-or-no suggestion gets Yes and No thanks', async () => {
+  const { page, take } = await open('island', { width: 760, height: 420 })
+  await setIsland(page, { phase: 'answering', answer: 'Found three. Want me to add the cheapest to your cart?', done: true,
+    offer: 'Want me to add the cheapest to your cart?' })
+  await page.waitForTimeout(400)
+  await page.getByRole('button', { name: 'Yes' }).click()
+  assert.deepEqual(await take('offer-answer'), { cmd: 'offer-answer', accept: true })
+  assert.equal(await page.getByRole('button', { name: 'Yes' }).count(), 0)          // answered: the buttons go
+  await setIsland(page, { offer: 'Want me to keep going?' })
+  await page.getByRole('button', { name: 'No thanks' }).click()
+  assert.deepEqual(await take('offer-answer'), { cmd: 'offer-answer', accept: false })
+  await page.close()
+})
+
 await test('island: only a setup error offers Fix setup', async () => {
   const { page, take } = await open('island', { width: 760, height: 420 })
   await setIsland(page, { phase: 'error', error: 'I didn’t catch that. Hold ⌃⌥ and try again.', fixable: false })

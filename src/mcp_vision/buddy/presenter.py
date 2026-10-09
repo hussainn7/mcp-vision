@@ -40,6 +40,15 @@ class Presenter:
         self.post_island([{"type": "reset"}, {"type": "island", "state": {"phase": "listening"}}])
         self.set_mood("listening", 0.0)
 
+    def asked(self, text: str) -> None:
+        """A request from a button (Yes, Keep going), as if they'd held the keys and said it."""
+        self.phase = "thinking"
+        self.walkthrough = None
+        self.plan = []
+        self.goal = None
+        self.post_island([{"type": "reset"}, {"type": "island", "state": {"phase": "thinking", "transcript": text}}])
+        self.set_mood("thinking", 0.0)
+
     def level(self, value: float) -> None:
         now = self.clock()
         if now - self._last_level < self.LEVEL_INTERVAL:
@@ -95,7 +104,7 @@ class Presenter:
             self.set_mood("thinking", 0.0)
         elif phase == "answering":
             self.phase = "answering"
-            self._island(phase="answering", done=False, speaking=True)
+            self._island(phase="answering", done=False, speaking=True, offer=None)
             self.set_mood("speaking", 0.5)
 
     def _on_step(self, data: dict[str, Any]) -> None:
@@ -118,7 +127,7 @@ class Presenter:
         if data.get("waiting"):
             messages.append({"type": "step", "step": {"id": "wait", "label": "Your turn. I'm watching", "status": "active"}})
         elif data.get("timed_out"):
-            messages.append({"type": "step", "step": {"id": "wait", "label": "Paused. Ask me to continue", "status": "skipped"}})
+            messages.append({"type": "step", "step": {"id": "wait", "label": "Paused till you’re ready", "status": "skipped"}})
         elif data.get("finished"):
             messages.append({"type": "step", "step": {"id": "wait", "label": "All done", "status": "done"}})
             self.set_mood("happy", 0.0)
@@ -130,6 +139,10 @@ class Presenter:
         working = self.walkthrough or (self.goal is not None and self.goal["status"] == "active")
         self.set_mood("happy" if not working else "idle", 0.0)
 
+    def _on_offer(self, data: dict[str, Any]) -> None:
+        """It ended on a yes-or-no suggestion: the island answers it with a click."""
+        self._island(offer=str(data.get("text") or "")[:160] or None)
+
     def _on_quiet(self, _data: dict[str, Any]) -> None:
         """Plip stopped talking: only now may a finished answer tuck back into the notch."""
         self._island(speaking=False)
@@ -140,7 +153,7 @@ class Presenter:
         if not text:
             return
         status = "done" if data.get("done") else "skipped" if data.get("paused") else "active"
-        detail = "say keep going" if data.get("paused") else f"step {data['step']}" if data.get("step") else ""
+        detail = "paused" if data.get("paused") else f"step {data['step']}" if data.get("step") else ""
         self.goal = {"id": "goal", "label": f"Goal: {text}", "status": status, **({"detail": detail} if detail else {})}
         self.post_island([{"type": "step", "step": dict(self.goal)}])
 

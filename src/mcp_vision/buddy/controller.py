@@ -85,6 +85,20 @@ class BuddyController:
         except Exception as exc:
             self._idle(f"Microphone problem: {exc}")
 
+    def ask(self, text: str) -> None:
+        """A request from a button (Yes to Plip's suggestion, Keep going) as if they'd held the keys and said it."""
+        if self.setup_error or self.companion is None:
+            self.presenter.failed(self.setup_error or "I'm still waking up. Try again in a second.", True)
+            return
+        if self.state in {"listening", "finalizing"} and self.listener is not None:
+            self.listener.cancel()
+        self.generation += 1
+        self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
+        self.overlay.set_state("thinking")
+        self.presenter.asked(text)
+        self.state = "finalizing"
+        self.on_final(text)
+
     def on_release(self) -> None:
         if self.state != "listening":
             return

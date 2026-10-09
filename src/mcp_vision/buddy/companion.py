@@ -238,6 +238,7 @@ class Companion:
         self.step_effort = step_effort                # routine task steps think this hard (None: the user's depth)
         self._goal = ""                               # the open multi-step task, until [DONE]
         self._goal_waiting = False                    # the task stopped to ask the user something
+        self._paused = False                          # the task ran out of steps and asked to keep going
         self._rejected = 0                            # [DONE]s sent back this task because the last step didn't land
         self._extra_note = ""                         # one-turn context for the model ("you were working toward…")
         self._goal_route: Route | None = None         # how the task's request was routed (its depth), for keep going
@@ -376,6 +377,9 @@ class Companion:
         result.outcome = _outcome(result)
         result.timings.update(meter.timings())
         self._asked = _question(result.spoken) if result.state == "done" and not result.pending else ""
+        offer = _offer(self._asked)
+        if offer:
+            self.emit("offer", text=offer)            # the island shows Yes / No thanks under it
         self._consent, self._authored = None, False   # a yes lasts one request
         self._record(meter, result)
         return result
@@ -427,6 +431,17 @@ class Companion:
         if self.actions is not None:
             self.actions.ctx.state["said"] = transcript    # their own words: only these can save or forget a fact
         waiting, self._goal_waiting = self._goal_waiting, False
+        paused, self._paused = self._paused, False
+        if self._goal and paused:
+            from mcp_vision.buddy.actions import answer_kind
+
+            kind = answer_kind(transcript)             # "want me to keep going?"
+            if kind == "yes":
+                return await self._resume(transcript)
+            if kind == "no":
+                self.emit("goal", text=self._goal, done=False, paused=True)
+                self._goal = ""
+                return await self._reply_only(transcript, "Okay, I'll leave it there.")
         if self._goal and CONTINUE_RE.match(transcript):
             return await self._resume(transcript)       # the same steps, picked back up: a retype is still a repeat
         if self.actions is not None:
@@ -451,6 +466,22 @@ class Companion:
             self._goal = result.goal = _clip(transcript, 160)
             self.emit("goal", text=self._goal, done=False)
         return await self._drive(result)
+
+    async def _reply_only(self, transcript: str, text: str) -> TurnResult:
+        """A short answer that needs no model ("okay, I'll leave it there"): said, shown, and kept in the history."""
+        self.emit("phase", phase="answering")
+        self.speaker.speak(text)
+        self.emit("answer", text=text)
+        self.conversation.record(transcript, text)
+        self.emit("done", latency_ms=None, spoken=text)
+        await self._drain()
+        return TurnResult(transcript=transcript, spoken=text)
+
+    def decline(self) -> None:
+        """"No thanks" on the island's offer: there's nothing to do, and a task that asked to keep going is over."""
+        self._asked = ""
+        if self._paused:
+            self._paused, self._goal = False, ""
 
     async def _resume(self, transcript: str) -> TurnResult:
         """"Keep going": pick an unfinished goal back up with a fresh look and a fresh step budget."""
@@ -593,7 +624,8 @@ class Companion:
             self._goal_waiting = True                 # it asked them something: their answer carries the task on
         elif self._goal and self._continues(result):
             # Out of steps but not done: say so instead of going quiet, and keep the goal for "keep going".
-            pause = "I'll check in with you here. Say keep going and I'll pick it back up."
+            pause = "I'm not finished yet. Want me to keep going?"
+            self._paused = True                       # a yes (said, or the island's button) picks it back up
             self.speaker.speak(pause)
             self.emit("answer", text=" " + pause)
             self.emit("goal", text=self._goal, done=False, paused=True)
@@ -1300,6 +1332,23 @@ def _question(spoken: str) -> str:
 
     # with the sentence before it, which says what "it" is ("I drafted a reply to Sara. Want me to send it?")
     return " ".join(sentences[max(0, last - 1):last + 1])
+
+
+# A question that a yes or a no answers: "want me to…", "should I…", "do you want…", "is that…".
+_YES_NO_RE = re.compile(r"^(want|wanna|should|shall|do|does|did|can|could|would|will|is|are|was|were|have|has|may)\b",
+                        re.IGNORECASE)
+
+
+def _offer(asked: str) -> str:
+    """The yes-or-no question a reply ends on ("Want me to add it to your cart?"), or "" for an open question
+    ("what's your email?") or a choice ("open it, or read it to you?"), which a Yes button can't answer."""
+    questions = [part.strip() for part in re.findall(r"[^.!?]+[.!?]*", asked or "") if "?" in part]
+    if not questions:
+        return ""
+    question = questions[-1]
+    if re.search(r"\bor\b", question, re.IGNORECASE) or not _YES_NO_RE.match(question):
+        return ""
+    return question
 
 
 def _clip(text: str, limit: int) -> str:

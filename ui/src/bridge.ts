@@ -50,6 +50,7 @@ export interface IslandState {
   answer: string
   done: boolean
   speaking: boolean          // the voice is still going (the text can finish well before it does)
+  offer: string | null       // it ended on a yes-or-no suggestion ("Want me to add it to your cart?")
   steps: Step[]
   walkthrough: Walkthrough | null
   engine: EngineBadge | null
@@ -254,6 +255,7 @@ export const defaultIsland: IslandState = {
   answer: '',
   done: false,
   speaking: false,
+  offer: null,
   steps: [],
   walkthrough: null,
   engine: null,

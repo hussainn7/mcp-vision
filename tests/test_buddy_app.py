@@ -80,7 +80,7 @@ def test_presenter_turns_companion_events_into_island_messages():
     view("walkthrough", {"index": 3, "total": 3, "finished": True})
     assert moods[-1] == ("happy", 0.0)
     view("phase", {"phase": "answering"})
-    assert posted[-1]["state"] == {"phase": "answering", "done": False, "speaking": True}
+    assert posted[-1]["state"] == {"phase": "answering", "done": False, "speaking": True, "offer": None}
     view("quiet", {})                                         # the voice finished: now it may tuck away
     assert posted[-1]["state"] == {"speaking": False}
     view("error", {"message": "That took too long. Try asking again."})
@@ -154,7 +154,29 @@ def test_controller_hooks_and_result_callback():
     names = [call[0] for call in view.calls]
     assert names == ["listening", "level", "transcript", "thinking", "transcript"]
     assert results == [("where is export", "It's under File.")]
+    view.calls.clear()
+    main_calls.clear()
+    controller.ask("yes")                              # the island's Yes: a request without holding the keys
+    deadline = time.monotonic() + 2
+    while not main_calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+    for fn, args in main_calls:
+        fn(*args)
+    assert [call[0] for call in view.calls] == ["asked", "transcript"] and results[-1] == ("yes", "It's under File.")
     loop.call_soon_threadsafe(loop.stop)
+
+
+def test_a_yes_or_no_suggestion_gets_buttons_and_a_choice_or_open_question_doesnt():
+    from mcp_vision.buddy.presenter import Presenter
+
+    posted = []
+    view = Presenter(post_island=posted.extend)
+    view("offer", {"text": "Want me to add it to your cart?"})
+    assert posted[-1]["state"] == {"offer": "Want me to add it to your cart?"}
+    view("phase", {"phase": "answering"})                              # a new answer: the old offer goes
+    assert posted[-1]["state"]["offer"] is None
+    view.asked("yes")
+    assert posted[-2:] == [{"type": "reset"}, {"type": "island", "state": {"phase": "thinking", "transcript": "yes"}}]
 
 
 # -- prefs, history, settings ------------------------------------------------------------------
@@ -509,6 +531,6 @@ def test_a_task_shows_what_its_working_toward_and_which_step_and_keeps_it_across
     assert chips[-2:] == [{"id": "goal", "label": "Goal: add the cheapest hub to my cart", "status": "active",
                            "detail": "step 2"}] * 2
     view("goal", {"text": "add the cheapest hub to my cart", "paused": True})
-    assert posted[-1]["step"]["detail"] == "say keep going" and posted[-1]["step"]["status"] == "skipped"
+    assert posted[-1]["step"]["detail"] == "paused" and posted[-1]["step"]["status"] == "skipped"
     view("goal", {"text": "add the cheapest hub to my cart", "done": True})
     assert posted[-1]["step"]["status"] == "done"

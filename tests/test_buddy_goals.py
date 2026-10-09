@@ -313,3 +313,36 @@ def test_a_long_scroll_stops_when_they_press_the_shortcut_again():
     engine.ctx.observe = observe
     out = asyncio.run(engine.handle("scroll_to", {"text": "Pricing", "direction": "down"}))
     assert out.status == "failed" and out.message == "Stopped." and len(host.calls) < 6
+
+
+def test_out_of_steps_asks_want_me_to_keep_going_and_a_yes_or_the_button_picks_it_back_up():
+    host = Spotify(play_works=False)
+    host.open_now = True
+    events = []
+    step = '[GOAL: play it] trying play. [DO:click {"id": 2}]'
+    companion, brain, speaker = buddy(host, *[step] * 6, observer=lambda kind, data: events.append((kind, data)),
+                                      max_agent_steps=2)
+    first = asyncio.run(companion.respond("play discover weekly"))
+    assert first.outcome == "paused" and speaker.said[-1] == "I'm not finished yet. Want me to keep going?"
+    assert ("offer", {"text": "Want me to keep going?"}) in events                # the island's Yes / No thanks
+    calls = len(brain.calls)
+    asyncio.run(companion.respond("yes"))
+    assert len(brain.calls) > calls and "the user said: yes" in brain.calls[calls][-1].text   # picked back up
+    companion._paused, companion._goal = True, "play it"
+    calls = len(brain.calls)
+    done = asyncio.run(companion.respond("no"))
+    assert len(brain.calls) == calls and done.spoken == "Okay, I'll leave it there." and companion._goal == ""
+
+
+def test_offers_are_yes_or_no_questions_only():
+    from mcp_vision.buddy.companion import _offer
+
+    assert _offer("I found three hubs. Want me to add the cheapest to your cart?") == \
+        "Want me to add the cheapest to your cart?"
+    assert _offer("Should I send it?") == "Should I send it?"
+    assert _offer("What's your email?") == ""                                       # open: no Yes button
+    assert _offer("Want me to open it, or read it to you?") == ""                   # a choice: no Yes button
+    assert _offer("") == ""
+    from mcp_vision.buddy.prompt import SYSTEM_PROMPT
+
+    assert "never make them choose" in SYSTEM_PROMPT and "as a yes or no question" in SYSTEM_PROMPT

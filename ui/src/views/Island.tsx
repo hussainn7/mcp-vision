@@ -63,9 +63,10 @@ export function Island() {
   useEffect(() => {
     setLingerOver(false)
     if (state.phase !== 'answering' || !state.done || state.speaking || state.confirm) return
-    const timer = window.setTimeout(() => setLingerOver(true), LINGER_MS + state.plan.length * 2500)
+    // A suggestion waiting on a yes stays up longer, so there's time to click it.
+    const timer = window.setTimeout(() => setLingerOver(true), LINGER_MS + state.plan.length * 2500 + (state.offer ? 8000 : 0))
     return () => window.clearTimeout(timer)
-  }, [state.phase, state.done, state.speaking, state.answer, state.confirm, state.plan.length])
+  }, [state.phase, state.done, state.speaking, state.answer, state.confirm, state.plan.length, state.offer])
 
   let mode: Mode
   if (state.phase === 'idle' || (state.phase === 'answering' && lingerOver && !hover)) {
@@ -284,6 +285,7 @@ function Body({ mode }: { mode: Mode }) {
       </div>
       {state.results.length > 0 && <Results items={state.results} />}
       {state.confirm && <ConfirmCard />}
+      {!state.confirm && state.offer && state.done && <OfferButtons />}
       {!state.confirm && (
         <div className="flex items-center justify-between gap-3">
           <StepChips steps={state.steps.filter((step) => step.status !== 'active').slice(-2)} max={2} />
@@ -436,6 +438,33 @@ function ConfirmCard() {
             <Check className="size-3.5" strokeWidth={3} /> {confirm.confirm}
           </button>
         </div>
+      </div>
+    </motion.div>
+  )
+}
+
+/** Yes / No thanks for the suggestion Plip ended on: one click instead of holding the keys to say it. */
+function OfferButtons() {
+  const answer = (accept: boolean) => {
+    island.set({ offer: null })
+    send('offer-answer', { accept })
+  }
+  return (
+    <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={SPRING} className="flex items-center justify-between gap-3">
+      <span className="flex items-center gap-1 text-[11px] text-white/35">or hold <Chord className="h-5 min-w-5 rounded-md px-1 text-[10px]" /> and say it</span>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => answer(false)}
+          className="rounded-full px-3 py-1.5 text-[12px] font-medium text-white/65 hover:bg-white/10 hover:text-white"
+        >
+          No thanks
+        </button>
+        <button
+          onClick={() => answer(true)}
+          className="flex items-center gap-1 rounded-full bg-white px-3.5 py-1.5 text-[12px] font-semibold text-slate-950 shadow-[0_6px_18px_-6px_rgba(255,255,255,0.5)] hover:bg-plip-50"
+        >
+          <Check className="size-3.5" strokeWidth={3} /> Yes
+        </button>
       </div>
     </motion.div>
   )
