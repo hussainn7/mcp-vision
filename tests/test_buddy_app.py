@@ -81,7 +81,7 @@ def test_presenter_turns_companion_events_into_island_messages():
     view("walkthrough", {"index": 3, "total": 3, "finished": True})
     assert moods[-1] == ("happy", 0.0)
     view("phase", {"phase": "answering"})
-    assert posted[-1]["state"] == {"phase": "answering", "done": False, "speaking": True, "offer": None}
+    assert posted[-1]["state"] == {"phase": "answering", "done": False, "speaking": True, "offer": None, "finished": None}
     view("quiet", {})                                         # voice done: it may tuck away
     assert posted[-1]["state"] == {"speaking": False}
     view("error", {"message": "That took too long. Try asking again."})
@@ -685,8 +685,10 @@ def test_the_toss_waits_out_parakeets_tail_and_skips_a_new_press():
 
 
 def test_presenter_plays_done_only_when_a_request_really_did_something():
-    played = []
-    view = Presenter(lambda messages: None, sound=played.append)
+    played, posted = [], []
+    view = Presenter(posted.extend, sound=played.append)
     for outcome in ("answered", "waiting", "stopped", "failed", "unverified", "done"):
         view("finished", {"outcome": outcome})
-    assert played == ["done"]
+    assert played == ["done"] and posted[-1]["state"] == {"finished": "done"}      # island: "Done", tucks sooner
+    view("finished", {"outcome": "bye"})
+    assert played == ["done"] and posted[-1]["state"] == {"finished": "bye"}       # no done sound for a goodbye

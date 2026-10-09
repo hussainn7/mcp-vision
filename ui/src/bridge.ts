@@ -50,6 +50,7 @@ export interface IslandState {
   answer: string
   done: boolean
   speaking: boolean          // voice still playing (can outlast the text)
+  finished: 'done' | 'bye' | null   // the request ended: a task done, or they said bye
   offer: string | null       // yes/no suggestion it ended on
   steps: Step[]
   walkthrough: Walkthrough | null
@@ -285,6 +286,7 @@ export const defaultIsland: IslandState = {
   done: false,
   speaking: false,
   offer: null,
+  finished: null,
   steps: [],
   walkthrough: null,
   engine: null,

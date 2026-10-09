@@ -105,7 +105,7 @@ class Presenter:
         phase = data.get("phase")
         if phase == "thinking":
             self.phase = "thinking"
-            state: dict[str, Any] = {"phase": "thinking", "done": False, "level": 0}
+            state: dict[str, Any] = {"phase": "thinking", "done": False, "level": 0, "finished": None}
             if data.get("guide"):
                 # check-in or next task step: fresh step text, keep progress
                 state.update(answer="", steps=[], walkthrough=self.walkthrough)
@@ -120,7 +120,7 @@ class Presenter:
             self.set_mood("thinking", 0.0)
         elif phase == "answering":
             self.phase = "answering"
-            self._island(phase="answering", done=False, speaking=True, offer=None)
+            self._island(phase="answering", done=False, speaking=True, offer=None, finished=None)
             self.set_mood("speaking", 0.5)
             self._live(phase="answering")
 
@@ -178,8 +178,11 @@ class Presenter:
 
     def _on_finished(self, data: dict[str, Any]) -> None:
         # once per request, after the voice; plain answers stay quiet
-        if data.get("outcome") == "done":
+        outcome = data.get("outcome")
+        if outcome == "done":
             self.sound("done")
+        if outcome in {"done", "bye"}:
+            self._island(finished=outcome)            # island: "Done", then tucks away sooner
 
     def _on_error(self, data: dict[str, Any]) -> None:
         self.failed(data.get("message") or "Something went wrong.")

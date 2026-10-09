@@ -170,6 +170,36 @@ await test('island: hovering the notch plips open and tucks back, once per hover
   await page.close()
 })
 
+await test('island: every open and close has its sound; a done task says Done and tucks sooner; bye tucks at once', async () => {
+  const { page, sent, last } = await open('island', { width: 760, height: 420 })
+  const sounds = () => sent.filter((item) => item.cmd === 'sound').map((item) => item.name)
+  await page.mouse.move(5, 400)
+  await setIsland(page, { phase: 'answering', answer: 'Opening it now.', done: false, speaking: true })
+  await page.waitForTimeout(500)
+  assert.deepEqual(sounds(), ['open'])                              // opened from the notch (not by the mic)
+  await page.getByRole('button', { name: 'Minimize' }).click()
+  await page.mouse.move(5, 400)
+  await page.waitForTimeout(500)
+  assert.deepEqual(sounds(), ['open', 'close'])                     // tucked into the notch
+  await setIsland(page, { hovered: true })
+  await page.waitForTimeout(700)
+  assert.deepEqual(sounds(), ['open', 'close', 'open'])             // opened again from mini
+  await setIsland(page, { hovered: false, done: true, speaking: false, finished: 'done' })
+  await page.waitForTimeout(300)
+  assert.equal(await page.getByText('Done', { exact: true }).count(), 1)
+  await page.waitForTimeout(3800)                                   // 3.5 s, not 7
+  assert.notEqual(last('island-rect').mode, 'answering')
+  assert.deepEqual(sounds(), ['open', 'close', 'open', 'close'])
+  await page.evaluate(() => window.__plip({ type: 'reset' }))
+  await setIsland(page, { phase: 'listening' })                    // "bye" said with ⌃⌥: no open, the mic's on
+  await page.waitForTimeout(400)
+  await setIsland(page, { phase: 'answering', answer: 'See you.', done: true, speaking: false, finished: 'bye' })
+  await page.waitForTimeout(1500)
+  assert.notEqual(last('island-rect').mode, 'answering')            // a goodbye tucks right after the voice
+  assert.deepEqual(sounds(), ['open', 'close', 'open', 'close', 'close'])
+  await page.close()
+})
+
 await test('island: only a setup error offers Fix setup', async () => {
   const { page, take } = await open('island', { width: 760, height: 420 })
   await setIsland(page, { phase: 'error', error: 'I didn’t catch that. Hold ⌃⌥ and try again.', fixable: false })

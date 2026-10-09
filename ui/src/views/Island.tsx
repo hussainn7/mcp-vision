@@ -63,9 +63,11 @@ export function Island() {
     setLingerOver(false)
     if (state.phase !== 'answering' || !state.done || state.speaking || state.confirm) return
     // an open suggestion stays longer, to leave time to click
-    const timer = window.setTimeout(() => setLingerOver(true), LINGER_MS + state.plan.length * 2500 + (state.offer ? 8000 : 0))
+    const linger = state.finished === 'bye' ? 600 : state.finished === 'done' ? 3500    // wrapped up: tuck sooner
+      : LINGER_MS + state.plan.length * 2500 + (state.offer ? 8000 : 0)
+    const timer = window.setTimeout(() => setLingerOver(true), linger)
     return () => window.clearTimeout(timer)
-  }, [state.phase, state.done, state.speaking, state.answer, state.confirm, state.plan.length, state.offer])
+  }, [state.phase, state.done, state.speaking, state.answer, state.confirm, state.plan.length, state.offer, state.finished])
 
   let mode: Mode
   if (state.phase === 'idle' || (state.phase === 'answering' && lingerOver && !hover)) {
@@ -98,18 +100,18 @@ export function Island() {
   const height = expanded ? notchH + Math.min(bodyHeight, MAX_BODY) : notchH
   const radius = expanded ? 26 : Math.round(notchH * 0.42)
 
-  // Hover sounds: resting <-> peek only (never with the mic on); jitter plays once.
+  // Open/close sounds on every open and close. Not into listening (mic's on); jitter = one plip, fly-by = silent.
   const lastMode = useRef(mode)
   const openedAt = useRef(-Infinity)
   useEffect(() => {
     const was = lastMode.current
     lastMode.current = mode
-    const resting = (m: Mode) => m === 'compact' || m === 'hidden'
+    const closed = (m: Mode) => m === 'compact' || m === 'hidden' || m === 'mini'
     const now = performance.now()
-    if (resting(was) && mode === 'peek') {
-      if (now - openedAt.current > 400) send('sound', { name: 'open' })
+    if (closed(was) && !closed(mode)) {
+      if (mode !== 'listening' && now - openedAt.current > 400) send('sound', { name: 'open' })
       openedAt.current = now
-    } else if (was === 'peek' && resting(mode) && now - openedAt.current > 300) {
+    } else if (!closed(was) && closed(mode) && was !== 'listening' && now - openedAt.current > 300) {
       send('sound', { name: 'close' })
     }
   }, [mode])
@@ -151,7 +153,8 @@ export function Island() {
                     exit={{ opacity: 0 }}
                     className="text-[12px] font-semibold tracking-tight text-white/80"
                   >
-                    {mode === 'listening' ? 'Listening' : mode === 'thinking' ? 'Thinking' : mode === 'error' ? 'Hmm' : state.confirm ? 'Your call' : 'Plip'}
+                    {mode === 'listening' ? 'Listening' : mode === 'thinking' ? 'Thinking' : mode === 'error' ? 'Hmm'
+                      : state.confirm ? 'Your call' : state.finished === 'done' ? 'Done' : 'Plip'}
                   </motion.span>
                 )}
               </AnimatePresence>
@@ -159,7 +162,7 @@ export function Island() {
           </div>
           <div style={{ width: notchW }} />
           <div className="flex h-full items-center justify-end gap-1.5 pr-3" style={{ width: earWidth }}>
-            <RightEar mode={mode} level={state.level} done={state.done && !state.speaking} />
+            <RightEar mode={mode} level={state.level} done={state.done && !state.speaking} finished={state.finished === 'done'} />
             {expanded && (mode === 'answering' || mode === 'error') && (
               <button
                 aria-label="Minimize"
@@ -200,8 +203,9 @@ export function Island() {
   )
 }
 
-function RightEar({ mode, level, done }: { mode: Mode; level: number; done: boolean }) {
+function RightEar({ mode, level, done, finished }: { mode: Mode; level: number; done: boolean; finished: boolean }) {
   if (mode === 'listening') return <Waveform level={level} bars={9} color="bg-dew" />
+  if (finished && done && (mode === 'answering' || mode === 'mini')) return <Check className="size-3.5 text-mint" strokeWidth={3} />
   // TTS reports no level; keep the bars alive while Plip is still talking.
   if (mode === 'answering' || mode === 'mini')
     return done && mode === 'mini' ? <Check className="size-3.5 text-mint" strokeWidth={3} /> : <Waveform level={done ? 0.04 : Math.max(level, 0.42)} bars={7} color="bg-plip-200" />

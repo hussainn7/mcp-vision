@@ -132,6 +132,7 @@ class TurnResult:
     pending: str = ""                # an action is waiting for the user's yes
     plan: tuple[str, ...] = ()
     failed: list[str] = field(default_factory=list)       # actions that didn't work
+    farewell: bool = False           # "thanks, bye": the session wrapped up
     outcome: str = ""                # how the request ended (usage.OUTCOMES), set when it's over
     usage: Usage | None = None       # tokens the whole request used (as the brain reported, or estimated)
     goal: str = ""                   # the multi-step task ([GOAL: ...])
@@ -392,7 +393,7 @@ class Companion:
             self.emit("offer", text=offer)            # island shows Yes / No thanks
         self._consent, self._authored = None, False   # a yes lasts one request
         self._record(meter, result)
-        self.emit("finished", outcome=result.outcome)
+        self.emit("finished", outcome="bye" if result.farewell else result.outcome)
         return result
 
     @staticmethod
@@ -443,6 +444,8 @@ class Companion:
             self.actions.ctx.state["said"] = transcript    # only their words can save or forget a fact
         waiting, self._goal_waiting = self._goal_waiting, False
         paused, self._paused = self._paused, False
+        if FAREWELL_RE.match(transcript):
+            return await self._wrap_up(transcript, _farewell(transcript))
         if self._goal and paused:
             from mcp_vision.buddy.actions import answer_kind
 
@@ -451,8 +454,7 @@ class Companion:
                 return await self._resume(transcript)
             if kind == "no":
                 self.emit("goal", text=self._goal, done=False, paused=True)
-                self._goal = ""
-                return await self._reply_only(transcript, "Okay, I'll leave it there.")
+                return await self._wrap_up(transcript, "Okay, I'll leave it there.")
         if self._goal and CONTINUE_RE.match(transcript):
             return await self._resume(transcript)       # same steps resumed: a retype is still a repeat
         if self.actions is not None:
@@ -487,6 +489,17 @@ class Companion:
         self.emit("done", latency_ms=None, spoken=text)
         await self._drain()
         return TurnResult(transcript=transcript, spoken=text)
+
+    async def _wrap_up(self, transcript: str, reply: str) -> TurnResult:
+        """End the session: task, card and questions go; the conversation stays."""
+        self._goal, self._goal_waiting, self._extra_note = "", False, ""
+        self._trail, self._hiccups, self._screens_seen, self._rejected, self._leaks = [], 0, {}, 0, 0
+        if self.actions is not None and self.actions.pending is not None:
+            self.actions.cancel_pending()
+            self.emit("confirm", cleared=True)
+        result = await self._reply_only(transcript, reply)
+        result.farewell = True
+        return result
 
     def decline(self) -> None:
         """"No thanks" on the island's offer: also drops a paused task."""
@@ -1251,6 +1264,13 @@ class Companion:
 CONTINUE_RE = re.compile(r"^\W*((ok(ay)?|yes|yeah|sure|alright)\W+)?((you can|please)\s+)?(keep going|continue|go on|"
                          r"carry on|keep at it|resume|don't stop|finish (it|up|the job)|go ahead and finish)"
                          r"(\W+(please|then|now|plip))?\W*$", re.IGNORECASE)
+# The whole utterance closes the session: "thanks", "ok bye", "that's all for now", "never mind".
+FAREWELL_RE = re.compile(
+    r"^\W*((ok(ay)?|alright|cool|great|perfect|awesome|nice|got it|no)\W+)*"
+    r"(thanks?( you)?( so much| a lot)?|thank you( so much| very much)?|ty|cheers|bye( bye)?|goodbye|good ?night|"
+    r"see (you|ya)( later)?|later|that'?s (all|it|everything)( for now)?|that'?ll be all|we'?re (done|good)|"
+    r"all done|i'?m (done|good|all set)|nothing else|never ?mind)"
+    r"(\W+(plip|bye|thanks?|thank you|that'?s all|for now|buddy|man))*\W*$", re.IGNORECASE)
 SPEECH_BUDGET = 900          # chars read aloud per reply (~a minute)
 # these act on the current screen, so they wait for loads first
 _ON_SCREEN = {"type_text", "replace_selection", "read_page"}
@@ -1313,6 +1333,15 @@ def _question(spoken: str) -> str:
 # a question a yes or no answers ("want me to…", "should I…")
 _YES_NO_RE = re.compile(r"^(want|wanna|should|shall|do|does|did|can|could|would|will|is|are|was|were|have|has|may)\b",
                         re.IGNORECASE)
+
+
+def _farewell(transcript: str) -> str:
+    said = transcript.lower()
+    if re.search(r"\b(bye|good ?night|see (you|ya)|later)\b", said):
+        return "See you."
+    if re.search(r"\b(thanks?|thank you|ty|cheers)\b", said):
+        return "Anytime."
+    return "Okay. I'm here when you need me."
 
 
 def _offer(asked: str) -> str:

@@ -346,3 +346,26 @@ def test_offers_are_yes_or_no_questions_only():
     from mcp_vision.buddy.prompt import SYSTEM_PROMPT
 
     assert "never make them choose" in SYSTEM_PROMPT and "as a yes or no question" in SYSTEM_PROMPT
+
+
+def test_thanks_or_bye_wraps_the_session_up_without_the_model_and_keeps_the_conversation():
+    from mcp_vision.buddy.companion import FAREWELL_RE
+
+    host = Spotify(play_works=False)
+    host.open_now = True
+    events = []
+    step = '[GOAL: play it] trying play. [DO:click {"id": 2}]'
+    companion, brain, speaker = buddy(host, *[step] * 4, observer=lambda kind, data: events.append((kind, data)),
+                                      max_agent_steps=2)
+    asyncio.run(companion.respond("play discover weekly"))
+    assert companion._goal and companion._paused
+    calls = len(brain.calls)
+    done = asyncio.run(companion.respond("ok thanks, that's all"))
+    assert len(brain.calls) == calls and done.spoken == "Anytime." and done.farewell
+    assert companion._goal == "" and not companion._paused and companion.unfinished == ""
+    assert ("finished", {"outcome": "bye"}) in events                               # the island tucks away
+    assert any(turn.text == "ok thanks, that's all" for turn in companion.conversation.turns)   # memory stays
+    for said in ("bye", "thanks plip", "that's it for now", "never mind", "ok bye", "no thanks"):
+        assert FAREWELL_RE.match(said), said
+    for said in ("thanks, now open spotify", "bye the way where is export", "that's it, send it", "later today remind me"):
+        assert not FAREWELL_RE.match(said), said
