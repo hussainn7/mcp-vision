@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import tarfile
 import tempfile
@@ -24,6 +26,8 @@ from mcp_vision.buddy.engines import BY_ID, EngineStatus, child_env
 
 URL_RE = re.compile(r"https://\S+")
 CODE_PROMPT = re.compile(r"paste (the )?code", re.IGNORECASE)
+CONSENT = re.compile(r"do you want to continue\? \[y/n\]", re.IGNORECASE)     # gemini, headless: blocks on stdin
+NO_BROWSER = re.compile(r"failed to open (the )?browser|couldn'?t open (the |a )?browser", re.IGNORECASE)
 # Codex CLI: one GitHub binary per Mac, checked against the release's SHA-256
 CODEX_RELEASE = "https://api.github.com/repos/openai/codex/releases/latest"
 CODEX_DOWNLOADS = "https://github.com/openai/codex/releases/download/"
@@ -52,6 +56,7 @@ class Connector:
                  spawn: Callable[..., Any] = subprocess.Popen, run: Callable[..., Any] = subprocess.run,
                  download: Callable[[str, Path], None] | None = None,
                  fetch_json: Callable[[str], Any] | None = None, home: Path | None = None,
+                 open_url: Callable[[str], None] | None = None,
                  timeout: float = 300.0, poll: float = 1.5):
         self.probe = probe
         self.on_change = on_change
@@ -60,6 +65,7 @@ class Connector:
         self.run = run
         self.download = download or _download
         self.fetch_json = fetch_json or _fetch_json
+        self.open_url = open_url or _open
         self.home = home or Path.home()
         self.timeout = timeout
         self.poll = poll
@@ -213,7 +219,7 @@ class Connector:
             self._gemini_google_login()
         self._set(engine_id, "signing-in", f"Finish signing in to {spec.label} in your browser…")
         process = self.spawn(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             env=child_env(path), cwd=str(self.home))
+                             env=child_env(path), cwd=str(self.home), start_new_session=True)  # own group
         self._process[engine_id] = process
         threading.Thread(target=self._watch_output, args=(engine_id, process), daemon=True).start()
         started = time.monotonic()
@@ -237,7 +243,7 @@ class Connector:
         if stream is None:
             return
         read = getattr(stream, "read1", None) or (lambda size: stream.read(size))
-        seen = ""
+        seen, consented, opened = "", False, False
         while True:
             try:
                 chunk = read(4096)
@@ -252,9 +258,23 @@ class Connector:
             found = next((match.group(0).rstrip(".,)") for match in URL_RE.finditer(seen)
                           if match.end() < len(seen)), "")             # a link that's been printed in full
             url = current.url or found
+            if not consented and CONSENT.search(seen):
+                consented = True                      # they clicked Connect: that's the yes
+                self._write(process, "y")
+            if url and not opened and NO_BROWSER.search(seen):
+                opened = True                         # the app couldn't open it: we do
+                self.open_url(url)
             needs_code = current.needs_code or bool(CODE_PROMPT.search(seen))
             if (url, needs_code) != (current.url, current.needs_code):
                 self._set(engine_id, "signing-in", current.message, url=url, needs_code=needs_code)
+
+    @staticmethod
+    def _write(process: Any, line: str) -> None:
+        try:
+            process.stdin.write((line + "\n").encode())
+            process.stdin.flush()
+        except (AttributeError, OSError, ValueError):
+            pass
 
     def _gemini_google_login(self) -> None:
         """Gemini signs in on first use once "Login with Google" is the chosen method."""
@@ -283,15 +303,29 @@ class Connector:
 
     def _stop(self, engine_id: str) -> None:
         process = self._process.pop(engine_id, None)
-        if process is not None and process.poll() is None:
-            try:
-                process.terminate()
-                process.wait(timeout=3)
-            except Exception:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
+        if process is None:
+            return
+        _signal_group(process, signal.SIGTERM)          # the whole group: gemini relaunches itself as a child
+        try:
+            process.wait(timeout=3)
+        except Exception:
+            _signal_group(process, signal.SIGKILL)
+
+
+def _signal_group(process: Any, sig: int) -> None:
+    pid = getattr(process, "pid", None)
+    try:
+        if isinstance(pid, int):
+            os.killpg(os.getpgid(pid), sig)
+        elif process.poll() is None:
+            process.terminate() if sig == signal.SIGTERM else process.kill()
+    except (OSError, ProcessLookupError):
+        pass
+
+
+def _open(url: str) -> None:
+    if url.startswith("https://"):
+        subprocess.Popen(["/usr/bin/open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _sha256(path: Path) -> str:

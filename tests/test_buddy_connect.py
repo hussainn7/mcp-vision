@@ -241,3 +241,44 @@ def test_a_sign_in_app_that_quits_without_signing_in_isnt_connected(tmp_path):
     made.start("claude-code", wait=True)
     assert made.progress["claude-code"].state == "failed" and "didn't finish" in made.progress["claude-code"].message
     assert connected == []
+
+
+def test_geminis_consent_question_is_answered_and_a_browser_it_couldnt_open_gets_opened(tmp_path):
+    login = FakeLogin(["Opening authentication page in your browser. Do you want to continue? [Y/n]: ",
+                       "Attempting to open authentication page in your browser.",
+                       "Otherwise navigate to: https://accounts.google.com/o/oauth2/v2/auth?x=1",
+                       "Failed to open browser with error: spawn open ENOENT", ""])
+    opened = []
+    made, _, connected = connector(Brain("logged-out", "logged-out", "logged-out", "ready"), tmp_path,
+                                   spawn=lambda argv, **kw: login, open_url=opened.append)
+    made.start("gemini", wait=True)
+    assert login.stdin.getvalue() == b"y\n"                     # it waited on "[Y/n]" with nobody to answer
+    assert opened == ["https://accounts.google.com/o/oauth2/v2/auth?x=1"] and connected == ["gemini"]
+
+
+def test_cancel_stops_the_whole_sign_in_app_not_just_its_launcher(tmp_path):
+    import os
+    import sys
+    import time
+
+    child = tmp_path / "child.pid"
+    script = (f"import os, subprocess, sys, time; c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+              f"open({str(child)!r}, 'w').write(str(c.pid)); c.wait()")              # a launcher that relaunches itself
+    made, _, _ = connector(Brain("logged-out"), tmp_path, timeout=10,
+                           spawn=lambda argv, **kw: subprocess.Popen([sys.executable, "-c", script], **kw))
+    made.start("claude-code")
+    for _ in range(300):
+        if child.exists() and child.read_text():
+            break
+        time.sleep(0.01)
+    made.cancel("claude-code")
+    pid = int(child.read_text())
+    for _ in range(300):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        os.kill(pid, 9)
+        raise AssertionError("the relaunched child outlived cancel")
