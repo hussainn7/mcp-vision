@@ -107,7 +107,7 @@ def info_plist(app_version: str) -> dict:
         "LSMinimumSystemVersion": "13.0", "LSUIElement": True, "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.productivity", "LSArchitecturePriority": ["arm64"],
         "NSAppleEventsUsageDescription": "Plip asks apps like Finder, Reminders and Notes to do things when you ask it to.",
-        "NSMicrophoneUsageDescription": "Plip listens only while you hold Control+Option to talk.",
+        "NSMicrophoneUsageDescription": "Plip listens only while you hold its talk shortcut (Control+Option unless you picked another).",
         "NSSpeechRecognitionUsageDescription": "Plip turns what you say into the question you ask it.",
     }
 

@@ -80,7 +80,20 @@ export function Settings() {
     }
     window.addEventListener('hashchange', onHash)
     send('settings-ready')
-    return () => window.removeEventListener('hashchange', onHash)
+    // Back from System Settings or a browser sign-in: check permissions and brains again (at most every 5 s).
+    let checked = Date.now()
+    const onFocus = () => {
+      if (document.visibilityState === 'hidden' || Date.now() - checked < 5000) return
+      checked = Date.now()
+      send('refresh')
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      window.removeEventListener('hashchange', onHash)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
   }, [])
 
   const engine = state.engines.find((item) => item.selected)

@@ -1068,8 +1068,7 @@ class Companion:
             except Exception:
                 route = Route(provider="fallback")
             self.emit("step", id="route", status="done", detail=f"{route.latency_ms:.0f}ms",
-                      label=f"{'Jev' if route.provider == 'jev' else 'Rules'}: "
-                            f"{'needs screen' if route.needs_screen else 'no screen needed'}")
+                      label="Needs your screen" if route.needs_screen else "No screen needed")
         try:
             shots = await asyncio.wait_for(capture, self.capture_timeout)
         except Exception:                       # includes a screen grab that never returns
@@ -1097,7 +1096,8 @@ class Companion:
                 label += f" · {context.app}"
             self.emit("step", id="look", label=label, status="done", detail=f"{elapsed:.0f}ms")
         if context and context.controls:
-            self.emit("step", id="map", label=f"Mapped {min(len(context.controls), 70)} controls", status="done")
+            self.emit("step", id="map", label=f"Found {min(len(context.controls), 70)} buttons and fields",
+                      status="done")
         return shots, context, route
 
     async def _handle(self, event, shots, result: TurnResult, mark) -> None:
@@ -1162,7 +1162,7 @@ class Companion:
             self.emit("point", x=target.x, y=target.y, label=target.label, screen=target.screen,
                       snapped=target.source == "snapped")
             self.emit("step", id=f"point-{len(result.targets)}", status="done",
-                      label=f"Pointed at {target.label or 'it'}", detail="snapped" if target.source == "snapped" else "")
+                      label=f"Pointed at {target.label or 'it'}")
 
 
     def _leaked(self, result: TurnResult) -> None:

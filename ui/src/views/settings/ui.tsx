@@ -66,6 +66,25 @@ export function Button({ children, onClick, variant = 'primary', className, disa
 }
 
 /** A settings list: rows in one card, split by hairlines. */
+/** A button for something that can't be undone: the first click asks, the second does it. */
+export function ConfirmButton({ children, onConfirm, confirm = 'Clear', size = 'sm', variant = 'quiet' }: {
+  children: React.ReactNode
+  onConfirm: () => void
+  confirm?: string
+  size?: 'sm' | 'md'
+  variant?: 'primary' | 'brand' | 'ghost' | 'quiet' | 'danger'
+}) {
+  const [asking, setAsking] = useState(false)
+  if (!asking) return <Button size={size} variant={variant} onClick={() => setAsking(true)}>{children}</Button>
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-[12px] text-white/55">This can’t be undone.</span>
+      <Button size={size} variant="danger" onClick={() => { setAsking(false); onConfirm() }}>{confirm}</Button>
+      <Button size={size} variant="quiet" onClick={() => setAsking(false)}>Cancel</Button>
+    </span>
+  )
+}
+
 export function Rows({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cn('card relative divide-y divide-white/[0.05] overflow-hidden', className)}>{children}</div>
 }

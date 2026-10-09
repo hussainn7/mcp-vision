@@ -26,7 +26,7 @@ export const FRAMES: Frame[] = [
       transcript: QUESTION,
       steps: [
         { id: 'look', label: 'Looked at 2 screens', status: 'done', detail: '84ms' },
-        { id: 'route', label: 'Jev: needs screen', status: 'done', detail: '91ms' },
+        { id: 'route', label: 'Needs your screen', status: 'done', detail: '91ms' },
         { id: 'think', label: 'Claude is thinking', status: 'active' },
       ],
     },

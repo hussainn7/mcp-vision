@@ -470,6 +470,7 @@ def run_buddy_app() -> None:
         on_setup_needed=lambda _message: None if state["building"] else open_settings(
             "home" if account.required else "brain"),
         setup_error="Plip is still waking up. Try again in a second.",
+        press_delay=BuddyController.PRESS_DELAY,
     )
 
     def record(transcript: str, result) -> None:
@@ -487,6 +488,13 @@ def run_buddy_app() -> None:
             menu.set_status(f"Allow Accessibility for {keyboard_owner()} so {controller.shortcut_keys} works")
         else:
             menu.set_status(f"Ready - hold {controller.shortcut_keys} and ask")
+        post_shortcut()
+
+    def post_shortcut() -> None:
+        """The island's "hold ⌃⌥" follows the shortcut, and says so when macOS isn't passing it to Plip."""
+        if island is not None:
+            card = chord(Prefs.load().hotkey).card()
+            island.post([{"type": "shortcut", "state": {**card, "works": hotkey_mode() != "none"}}])
 
     def hotkey_mode() -> str:
         """Asked fresh: Accessibility granted since launch starts listening again (hotkeys.mode)."""
@@ -500,10 +508,10 @@ def run_buddy_app() -> None:
         detector.set_chord(picked.mask)
         controller.shortcut, controller.shortcut_keys = picked.label.replace(" + ", "+"), picked.symbols
         menu.set_shortcut(picked)
-        if island is not None:
-            island.post([{"type": "shortcut", "state": picked.card()}])
         if controller.companion is not None:          # at launch it's still waking up: don't say ready yet
             update_setup_error()
+        else:
+            post_shortcut()
 
     def build(probe: bool) -> None:
         """Worker thread: probe engines (spawns CLIs) and assemble a companion."""
@@ -588,8 +596,19 @@ def run_buddy_app() -> None:
     def refresh_engines() -> None:
         def work():
             registry.statuses(refresh=True)
-            AppHelper.callAfter(service.push)
+            AppHelper.callAfter(refreshed)
         threading.Thread(target=work, daemon=True, name="plip-probe").start()
+
+    def refreshed() -> None:
+        """"Check again" (or coming back to Settings): the menu bar, the island and the brain all catch up."""
+        from mcp_vision.buddy.engines import choose_engine
+
+        service.push()
+        if controller.companion is None and not state["building"] and \
+                choose_engine(state["settings"], registry.cached()) is not None:
+            rebuild(probe=False)                     # signed in to one somewhere else since: use it now
+        else:
+            update_setup_error()
 
     def run_import(source: str) -> None:
         """Worker thread: read one source, merge it, refresh Settings."""
@@ -691,7 +710,7 @@ def run_buddy_app() -> None:
                     loop.call_soon_threadsafe(controller.companion.decline)
                 presenter.idle()
         elif name == "ready" and island is not None:          # the island loaded: show it the talk shortcut
-            island.post([{"type": "shortcut", "state": chord(Prefs.load().hotkey).card()}])
+            post_shortcut()
         elif name != "island-rect":
             service.handle(command)
 

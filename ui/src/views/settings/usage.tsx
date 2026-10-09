@@ -3,7 +3,7 @@ import { CircleCheck, CircleHelp, CircleX, Hand, Square } from 'lucide-react'
 import { useState } from 'react'
 import { send, type Outcome, type SettingsState, type UsagePeriod } from '../../bridge'
 import { cn, useShortcutLabel } from '../../components/bits'
-import { Button, Card, Section, Segmented } from './ui'
+import { Card, ConfirmButton, Section, Segmented } from './ui'
 
 type Period = '7' | '30' | 'all'
 
@@ -165,7 +165,7 @@ function Body({ data, state }: { data: UsagePeriod; state: SettingsState }) {
       )}
 
       <div className="flex justify-end">
-        <Button variant="danger" size="sm" onClick={() => send('clear-usage')}>Clear usage</Button>
+        <ConfirmButton variant="danger" onConfirm={() => send('clear-usage')}>Clear usage</ConfirmButton>
       </div>
     </>
   )

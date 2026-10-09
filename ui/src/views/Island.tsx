@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { AlertTriangle, Check, ChevronUp, Clock3, FileText, Settings2, Sparkles, Square, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { island, send, useStore, type IslandState, type Mood, type Phase } from '../bridge'
+import { island, send, shortcut, useStore, type IslandState, type Mood, type Phase } from '../bridge'
 import { Mascot } from '../components/Mascot'
 import { Chord, EngineBadge, StepChips, StreamingText, Waveform, cn } from '../components/bits'
 
@@ -210,15 +210,28 @@ function RightEar({ mode, level, done }: { mode: Mode; level: number; done: bool
 
 function Body({ mode }: { mode: Mode }) {
   const state = useStore(island)
+  const works = useStore(shortcut).works !== false
 
   if (mode === 'peek') {
     return (
       <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 text-[13px] text-white/70">
-          <span>Hold</span>
-          <Chord />
-          <span>and ask, or tell me to do something</span>
-        </div>
+        {works ? (
+          <div className="flex items-center gap-2 text-[13px] text-white/70">
+            <span>Hold</span>
+            <Chord />
+            <span>and ask, or tell me to do something</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2.5 text-[13px] text-amber-100/85">
+            <span>Your shortcut is off until you allow Accessibility</span>
+            <button
+              onClick={() => send('grant', { permission: 'accessibility' })}
+              className="rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-slate-950 hover:bg-plip-50"
+            >
+              Allow
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-1">
           <IconButton label="History" onClick={() => send('open-settings', { tab: 'history' })}>
             <Clock3 className="size-4" />

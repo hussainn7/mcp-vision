@@ -227,6 +227,7 @@ export interface Shortcut {
   id: string
   keys: string[]
   label: string
+  works?: boolean            // the island: false when macOS isn't passing the keys to Plip (no Accessibility)
 }
 
 /** The shortcut picker in General: what's picked, what it can be, and whether macOS lets Plip hear it. */

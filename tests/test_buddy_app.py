@@ -166,6 +166,49 @@ def test_controller_hooks_and_result_callback():
     loop.call_soon_threadsafe(loop.stop)
 
 
+def test_another_apps_control_option_shortcut_never_cuts_plip_off_and_a_tap_still_does():
+    interrupts, later = [], []
+
+    class Companion:
+        def interrupt(self, token=None):
+            interrupts.append(token)
+
+        def prefetch(self):
+            pass
+
+    class Loop:
+        def call_soon_threadsafe(self, fn, *args):
+            fn(*args)
+
+    class Listener:
+        def __init__(self):
+            self.started = 0
+
+        def start(self):
+            self.started += 1
+
+        def release(self): pass
+        def cancel(self): pass
+
+    view, listener = Recorder(), Listener()
+    controller = BuddyController(companion=Companion(), overlay=Overlay(), loop=Loop(), listener=listener,
+                                 call_later=lambda delay, fn: later.append((delay, fn)), on_main=lambda f, *a: f(*a),
+                                 presenter=view, press_delay=BuddyController.PRESS_DELAY)
+    controller.on_press()                              # Rectangle's ⌃⌥→: the chord, then an arrow key
+    controller.on_cancel()
+    controller.on_release()
+    later.pop()[1]()
+    assert interrupts == [] and listener.started == 0 and view.calls == []          # the answer plays on
+    controller.on_press()                              # a quick tap: just stop talking
+    controller.on_release()
+    later.pop()[1]()
+    assert len(interrupts) == 1 and listener.started == 0 and [c[0] for c in view.calls] == ["idle"]
+    controller.on_press()                              # held: a request
+    delay, fn = later.pop()
+    fn()
+    assert delay == 0.15 and listener.started == 1 and view.calls[-1][0] == "listening"
+
+
 def test_a_yes_or_no_suggestion_gets_buttons_and_a_choice_or_open_question_doesnt():
     from mcp_vision.buddy.presenter import Presenter
 

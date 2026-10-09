@@ -34,13 +34,16 @@ class _NullPresenter:
 
 class BuddyController:
     FINAL_TIMEOUT = 3.5          # seconds to wait for a transcript after release
+    # The chord counts once it's held this long with no other key: Rectangle's ⌃⌥→ (and other apps' ⌃⌥ shortcuts)
+    # cut Plip off mid-answer and flashed "Listening". A quicker tap still interrupts. 0 = at once (tests).
+    PRESS_DELAY = 0.15
 
     def __init__(self, *, companion: Any, overlay: Any, loop: asyncio.AbstractEventLoop,
                  call_later: Callable[[float, Callable[[], None]], Any],
                  on_main: Callable[..., Any], listener: Any = None, setup_error: str = "",
                  status: Callable[[str], None] | None = None, say: Callable[[str], None] = _say,
                  presenter: Any = None, on_result: Callable[[str, Any], None] | None = None,
-                 on_setup_needed: Callable[[str], None] | None = None):
+                 on_setup_needed: Callable[[str], None] | None = None, press_delay: float = 0.0):
         self.companion = companion
         self.overlay = overlay
         self.loop = loop
@@ -60,9 +63,24 @@ class BuddyController:
         self.shortcut = "Control+Option"     # the talk shortcut picked in Settings, in words and in keys
         self.shortcut_keys = "⌃⌥"
         self.last_result = None
+        self.press_delay = press_delay
+        self._pressing = 0                   # a press waiting out press_delay (its number), 0 = none
+        self._presses = 0
 
     # -- hotkey -------------------------------------------------------------------
     def on_press(self) -> None:
+        if self.press_delay <= 0:
+            self._press()
+            return
+        self._presses += 1
+        self._pressing = press = self._presses
+        self.call_later(self.press_delay, lambda: self._press(press))
+
+    def _press(self, press: int = 0) -> None:
+        if press:
+            if press != self._pressing:
+                return                       # let go, or another key came with it: not a request
+            self._pressing = 0
         if self.setup_error or self.companion is None or self.listener is None:
             message = self.setup_error or "Speech input is unavailable."
             self.status("Needs setup: " + message)
@@ -100,6 +118,13 @@ class BuddyController:
         self.on_final(text)
 
     def on_release(self) -> None:
+        if self._pressing:                   # let go before it counted: a tap, which only interrupts
+            self._pressing = 0
+            if self.companion is not None and self.loop is not None:
+                self.generation += 1
+                self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
+                self.presenter.idle()
+            return
         if self.state != "listening":
             return
         self.state = "finalizing"
@@ -112,6 +137,9 @@ class BuddyController:
         self.call_later(self.FINAL_TIMEOUT, lambda: self._final_timeout(generation))
 
     def on_cancel(self) -> None:
+        if self._pressing:                   # the chord was part of another app's shortcut: leave Plip alone
+            self._pressing = 0
+            return
         if self.state in {"listening", "finalizing"}:
             self.listener.cancel()
             self._idle(f"Ready - hold {self.shortcut}")

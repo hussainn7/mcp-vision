@@ -280,6 +280,9 @@ await test('general: the talk shortcut is picked here, and every "hold" hint fol
   await setIsland(island.page, { phase: 'idle', hovered: true })
   await island.page.getByText('and ask, or tell me to do something').waitFor()
   assert.deepEqual(await island.page.locator('kbd').allInnerTexts(), ['⌃', '⇧'])
+  await island.page.evaluate(() => window.__plip({ type: 'shortcut', state: { id: 'control+shift', keys: ['⌃', '⇧'], label: 'Control + Shift', works: false } }))
+  await island.page.getByText('Your shortcut is off until you allow Accessibility').waitFor()   // not "hold ⌃⇧" for nothing
+  await island.page.getByRole('button', { name: 'Allow' }).click()
   await island.page.close()
 })
 
@@ -321,6 +324,10 @@ await test('settings: usage tab switches periods and clears', async () => {
     assert.ok(await page.locator('li', { hasText: label }).first().isVisible(), label)       // the legend rows
   }
   await page.getByRole('button', { name: 'Clear usage' }).click()
+  await page.getByText('This can’t be undone.').waitFor()                         // asks before wiping it
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Clear usage' }).click()
+  await page.getByRole('button', { name: 'Clear', exact: true }).click()
   assert.ok(await take('clear-usage'))
   await page.close()
 })

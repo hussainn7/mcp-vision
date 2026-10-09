@@ -2,7 +2,7 @@ import { motion } from 'motion/react'
 import { AudioLines, Contact, Download, Hand, LoaderCircle, MessageSquareText, Mic, MonitorUp, RotateCw, WandSparkles } from 'lucide-react'
 import { send, type ParakeetModel, type SettingsState } from '../../bridge'
 import { useShortcutLabel } from '../../components/bits'
-import { Button, Card, Empty, Header, KeyField, Pill, Section, Segmented } from './ui'
+import { Button, Card, ConfirmButton, Empty, Header, KeyField, Pill, Section, Segmented } from './ui'
 
 /** One permission's button: Allow, then "finish in System Settings" while the card is up there, then Granted. */
 export function PermissionAction({ id, value, guiding }: { id: string; value: boolean | null | undefined; guiding?: string }) {
@@ -182,7 +182,7 @@ export function HistoryPanel({ state }: { state: SettingsState }) {
         <div className="space-y-2">
           <div className="mb-3 flex items-center justify-between gap-6">
             <p className="text-[12.5px] text-white/45">Your recent questions. Kept on this Mac only.</p>
-            <Button size="sm" variant="quiet" onClick={() => send('clear-history')}>Clear history</Button>
+            <ConfirmButton onConfirm={() => send('clear-history')}>Clear history</ConfirmButton>
           </div>
           {state.history.slice().reverse().map((item) => (
             <Card key={item.at + item.question} className="p-4">
