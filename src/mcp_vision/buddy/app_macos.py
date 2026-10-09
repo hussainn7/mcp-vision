@@ -370,7 +370,7 @@ def run_buddy_app() -> None:
         post_island=(lambda messages: AppHelper.callAfter(island.post, messages)) if island else (lambda _m: None),
         set_mood=(lambda mood, level: AppHelper.callAfter(mascot.set_mood, mood, level))
         if hasattr(mascot, "set_mood") else None,
-        on_live=lambda: AppHelper.callAfter(touring))
+        on_live=lambda: AppHelper.callAfter(touring), sound=sounds.play)
 
     def settings_window():
         if state["settings_window"] is None:

@@ -682,3 +682,11 @@ def test_the_toss_waits_out_parakeets_tail_and_skips_a_new_press():
     controller.on_press()                                 # pressed again inside the tail: its mic is on
     later[-2][1]()
     assert played == ["sent"]
+
+
+def test_presenter_plays_done_only_when_a_request_really_did_something():
+    played = []
+    view = Presenter(lambda messages: None, sound=played.append)
+    for outcome in ("answered", "waiting", "stopped", "failed", "unverified", "done"):
+        view("finished", {"outcome": outcome})
+    assert played == ["done"]

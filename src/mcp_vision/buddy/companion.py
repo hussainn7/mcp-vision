@@ -396,6 +396,7 @@ class Companion:
             self.emit("offer", text=offer)            # the island shows Yes / No thanks under it
         self._consent, self._authored = None, False   # a yes lasts one request
         self._record(meter, result)
+        self.emit("finished", outcome=result.outcome)
         return result
 
     @staticmethod

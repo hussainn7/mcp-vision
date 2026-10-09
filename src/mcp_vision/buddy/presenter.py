@@ -18,11 +18,13 @@ class Presenter:
 
     def __init__(self, post_island: Callable[[list[Message]], None],
                  set_mood: Callable[[str, float], None] | None = None,
-                 clock: Callable[[], float] = time.monotonic, on_live: Callable[[], None] = lambda: None):
+                 clock: Callable[[], float] = time.monotonic, on_live: Callable[[], None] = lambda: None,
+                 sound: Callable[[str], None] | None = None):
         self.post_island = post_island
         self.set_mood = set_mood or (lambda mood, level: None)
         self.clock = clock
-        self.on_live = on_live         # the request moved to a new phase (the welcome tour's "try it" step watches)
+        self.on_live = on_live
+        self.sound = sound or (lambda name: None)         # the request moved to a new phase (the welcome tour's "try it" step watches)
         self.live: dict[str, Any] = {"phase": "idle", "transcript": "", "answer": "", "error": "", "at": 0.0}
         self._last_level = 0.0
         self.phase = "idle"
@@ -173,6 +175,11 @@ class Presenter:
         detail = "paused" if data.get("paused") else f"step {data['step']}" if data.get("step") else ""
         self.goal = {"id": "goal", "label": f"Goal: {text}", "status": status, **({"detail": detail} if detail else {})}
         self.post_island([{"type": "step", "step": dict(self.goal)}])
+
+    def _on_finished(self, data: dict[str, Any]) -> None:
+        # once per request, after the voice; plain answers stay quiet
+        if data.get("outcome") == "done":
+            self.sound("done")
 
     def _on_error(self, data: dict[str, Any]) -> None:
         self.failed(data.get("message") or "Something went wrong.")
