@@ -13,7 +13,7 @@ from pathlib import Path
 
 from mcp_vision.buddy.actions.base import ActionContext, ActionError, ActionResult, ActionSpec, Preview, _short
 from mcp_vision.buddy.actions.host import applescript_string
-from mcp_vision.buddy.screen_context import HIDDEN_INPUT, SECRET
+from mcp_vision.buddy.screen_context import HIDDEN_INPUT, looks_secret
 
 APP_ALIASES = {
     "chrome": "google chrome", "vscode": "visual studio code", "vs code": "visual studio code",
@@ -509,7 +509,7 @@ def _type(ctx: ActionContext, text: str, replace: bool, before: str | None, into
 
 def _private(ctx: ActionContext, into: str, value: str) -> bool:
     """A password box, or one labeled like a card number or a code: what it reads never goes to the model."""
-    if SECRET.search(into) or (value.strip() and set(value.strip()) <= {"•", "●"}):
+    if looks_secret(into) or (value.strip() and set(value.strip()) <= {"•", "●"}):
         return True
     reader = getattr(ctx.host, "focused_secure", None)
     try:
@@ -599,6 +599,7 @@ def type_text(ctx: ActionContext, args: dict) -> ActionResult:
     elif not into and _again(ctx, before, text):
         shown = "that" if _private(ctx, into, before) else repr(_short(text))
         there = f"{shown} is already at the end of the field"
+    landed = True
     if there:
         said = there + ", so it wasn't typed again"
     else:
@@ -607,12 +608,17 @@ def type_text(ctx: ActionContext, args: dict) -> ActionResult:
         if hidden:
             kept = " at its cursor (an editor: what was there stays)" if into and not args.get("append") else ""
             said += kept + ", but this field can't be read back: look before typing it again"
+        elif after is not None and _flat(text) not in _flat(after):
+            # it shows something else (a paste that landed late, a field that rewrote it): never read that out or
+            # press return on it; the next look shows what's there
+            said += ", but the field doesn't show it as typed: look before going on"
+            landed = False
         elif after is not None and not _private(ctx, into, after):
             said += f"; the field now reads {_reads(before or '', after, replace)!r}"     # so it trusts that, no retyping
         elif not into:
             said = ""
     ctx.state["typed"] = [*ctx.state.get("typed", [])[-19:], text]
-    if args.get("submit"):
+    if args.get("submit") and landed:
         ctx.host.press("return")                    # only after the check: the field holds it, once
     # With a field named, the model hears it; typing at the cursor stays a note (no extra turn just for that).
     return ActionResult(detail="Already there" if there else f"{len(text)} characters",

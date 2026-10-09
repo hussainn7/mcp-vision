@@ -367,13 +367,13 @@ class MacHost(PortableHost):
             import ApplicationServices as AX
 
             from mcp_vision.buddy.ax_locator import _copy, _name
-            from mcp_vision.buddy.screen_context import SECRET
+            from mcp_vision.buddy.screen_context import looks_secret
 
             focused = _copy(AX, AX.AXUIElementCreateSystemWide(), "AXFocusedUIElement")
             if focused is None:
                 return False
             return _copy(AX, focused, "AXSubrole") == "AXSecureTextField" \
-                or bool(SECRET.search(_name(AX, focused, "AXTextField")))
+                or looks_secret(_name(AX, focused, "AXTextField"))
         except Exception:
             return True                                  # can't tell: keep it to itself
 
@@ -403,8 +403,11 @@ class MacHost(PortableHost):
         item.setString_forType_(text, AppKit.NSPasteboardTypeString)
         item.setString_forType_("", "org.nspasteboard.TransientType")    # clipboard managers: don't keep this
         board.writeObjects_([item])
+        ours = board.changeCount()
         self._key(9, Quartz.kCGEventFlagMaskCommand)                  # ⌘V
-        time.sleep(0.3)                                                # the app reads the clipboard on its own time
+        time.sleep(0.5)                                                # the app reads the clipboard on its own time
+        if board.changeCount() != ours:
+            return                                                     # they (or an app) copied since: keep theirs
         board.clearContents()
         if saved:
             restored = []

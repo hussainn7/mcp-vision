@@ -27,7 +27,7 @@ from typing import Any
 from mcp_vision.buddy.ax_locator import _ROLE_NAMES, CONTROL_ROLES, _bounds, _copy, _name
 from mcp_vision.buddy.geometry import Rect
 from mcp_vision.buddy.screen_context import (
-    SECRET, SELECTION_LIMIT, Control, ScreenContext, flatten_page,
+    SELECTION_LIMIT, Control, ScreenContext, flatten_page, looks_secret,
 )
 
 _SKIP_ROLES = {"AXStaticText", "AXImage", "AXRow", "AXCell"}     # too noisy for a map
@@ -308,7 +308,7 @@ def _typed(AX: Any, element: Any, name: str, role: str) -> str:
     """What's typed in a text box, so the model sees it landed. Never a card's, code's and the like (by its name;
     a password box, by its subrole, never gets here). A text area keeps its end, where typing goes. A whole
     document or a terminal's scrollback isn't copied at all."""
-    if SECRET.search(name):
+    if looks_secret(name):
         return ""
     size = _copy(AX, element, "AXNumberOfCharacters")
     if isinstance(size, (int, float)) and size > _VALUE_MAX:

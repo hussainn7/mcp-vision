@@ -141,6 +141,10 @@ class Outcome:
         return self.spec.describe(self.args) if self.spec else "That action"
 
 
+_PRIVATE_ARGS = {"text", "body", "fields", "fact", "value", "key", "query", "title", "about", "path", "near", "field",
+                 "label", "due", "from", "to", "depart", "return"}
+
+
 class ActionLog:
     """Append-only JSON lines of what Plip did (no message bodies)."""
 
@@ -150,7 +154,13 @@ class ActionLog:
         self.path = path or state_dir() / "actions.jsonl"
 
     def add(self, name: str, args: dict, ok: bool, source: str = "voice") -> None:
-        safe = {key: value for key, value in args.items() if key not in {"text", "body", "fields", "fact"}}
+        # what kind of thing it did, never what it was about: no typed text, facts, searches, file paths or titles,
+        # and a link only by its site
+        safe = {key: value for key, value in args.items() if key not in _PRIVATE_ARGS}
+        if isinstance(safe.get("url"), str):
+            from urllib.parse import urlparse
+
+            safe["url"] = urlparse(safe["url"] if "://" in safe["url"] else "https://" + safe["url"]).netloc
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as handle:

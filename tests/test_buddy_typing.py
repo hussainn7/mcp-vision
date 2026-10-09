@@ -200,3 +200,45 @@ def test_the_same_thing_at_the_cursor_twice_in_one_request_types_once_but_never_
     e, _ = hands(host=host)
     out = run(e.handle("type_text", {"text": "hunter22", "id": 2}))
     assert out.status == "done" and "hunter22" not in out.result.report and out.result.report == "typed into 'Search'"
+
+
+def test_a_field_showing_something_else_is_never_read_back_or_submitted(monkeypatch):
+    from mcp_vision.buddy.actions import core
+
+    monkeypatch.setattr(core, "VERIFY", 0.1)
+
+    class LatePaste(Fields):
+        """Keys don't land, and the paste lands late: the field gets their own clipboard (a copied password)."""
+
+        def paste(self, text):
+            self.calls.append(("paste", text))
+            self.boxes[self.focus].put("hunter2", 0.0)
+
+    host = LatePaste("", deaf=True)
+    e, _ = hands(host=host)
+    out = run(e.handle("type_text", {"text": "on my way", "id": 2, "submit": False}))
+    assert "doesn't show it as typed" in out.result.report and "hunter2" not in out.result.report
+    assert ("press", "return") not in host.calls
+
+
+def test_more_kinds_of_secret_boxes_never_show_their_contents():
+    from mcp_vision.buddy.screen_context import looks_secret
+
+    for label in ("Seed phrase", "Recovery words", "Private key", "Access key", "6-digit code", "Login code",
+                  "Bank account", "Security answer", "1234 1234 1234 1234", "Password", "CVC"):
+        assert looks_secret(label), label
+    for label in ("Search", "City", "Message", "Order notes", "Promo code", "Subject"):
+        assert not looks_secret(label), label
+
+
+def test_the_action_log_keeps_what_kind_of_thing_happened_never_what_it_was_about(tmp_path):
+    import json
+
+    from mcp_vision.buddy.actions import ActionLog
+
+    log = ActionLog(tmp_path / "actions.jsonl")
+    log.add("remember", {"fact": "my passport is X123", "key": "note", "value": "X123"}, True)
+    log.add("open_url", {"url": "https://mail.example.com/search?q=sam%40example.com"}, True)
+    log.add("search_files", {"query": "divorce papers", "kind": "pdf"}, True)
+    rows = [json.loads(line) for line in (tmp_path / "actions.jsonl").read_text().splitlines()]
+    assert [row["args"] for row in rows] == [{}, {"url": "mail.example.com"}, {"kind": "pdf"}]

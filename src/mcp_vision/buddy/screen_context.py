@@ -24,9 +24,17 @@ _DIGITS = re.compile(r"\d+")
 SELECTION_LIMIT = 3000        # characters of selected text the model sees (about 750 tokens at most)
 HIDDEN_INPUT = 6              # px: a text box thinner than this is an editor's stand-in (google docs, vs code)
 # Boxes whose contents never go to the model (the screenshot may show them; the map and results don't).
-SECRET = re.compile(r"pass(word|code|phrase|port)|\bpin\b|\bcard\b|cvv|cvc|security code|\bssn\b|social security|"
-                    r"secret|api key|token|one.time code|verification code|\b2fa\b|\botp\b|account (number|no\b)|"
-                    r"routing|\biban\b|sort code|\btax ?id|taxpayer|national id|licen[cs]e number", re.IGNORECASE)
+SECRET = re.compile(r"pass(word|code|phrase|port)|\bpin\b|\bcard\b|cvv|cvc|security (code|answer|question)|\bssn\b|"
+                    r"social security|secret|api key|access key|private key|token|one.time code|verification code|"
+                    r"(login|sign.in|auth\w*|\d.digit) code|\b2fa\b|\botp\b|account (number|no\b)|bank account|"
+                    r"routing|\biban\b|sort code|\btax ?id|taxpayer|national id|licen[cs]e number|"
+                    r"(seed|recovery|backup|secret) (phrase|words|codes?)|mnemonic", re.IGNORECASE)
+
+
+def looks_secret(label: str) -> bool:
+    """A box whose contents never go to the model: labeled like a password, card, code or key, or named by a
+    placeholder that's mostly a number ("1234 1234 1234 1234", "MM/YY  123")."""
+    return bool(SECRET.search(label or "")) or len(re.sub(r"\D", "", label or "")) >= 8
 
 
 @dataclass(frozen=True)
@@ -162,7 +170,7 @@ class ScreenContext:
                 for control, label, x, y in items:
                     number = len(self.ids) + 1
                     self.ids[number] = control
-                    if control.value.strip() and not control.secure and not SECRET.search(control.label):
+                    if control.value.strip() and not control.secure and not looks_secret(control.label):
                         # what's typed in it now; a text area's end, where typing goes (not a long note's top)
                         shown = _clip(control.value, VALUE_SHOWN, end=control.role == "text area")
                         label += f' = "{shown}"'
