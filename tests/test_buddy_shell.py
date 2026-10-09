@@ -59,6 +59,11 @@ def test_chord_with_command_is_not_ours_and_key_during_chord_cancels():
     assert events == ["press", "cancel"]
     chord.key_down()                                    # keys outside the chord are ignored
     assert events == ["press", "cancel"]
+    chord.flags_changed(CONTROL | OPTION)              # ⌃⌥ then ⌘ joins (Rectangle's ⌃⌥⌘→): not ours, not a release
+    chord.flags_changed(CONTROL | OPTION | COMMAND)
+    chord.flags_changed(CONTROL | OPTION)
+    chord.flags_changed(0)
+    assert events == ["press", "cancel", "press", "cancel"]
 
 
 # -- speech in ---------------------------------------------------------------------

@@ -118,12 +118,8 @@ class BuddyController:
         self.on_final(text)
 
     def on_release(self) -> None:
-        if self._pressing:                   # let go before it counted: a tap, which only interrupts
-            self._pressing = 0
-            if self.companion is not None and self.loop is not None:
-                self.generation += 1
-                self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
-                self.presenter.idle()
+        if self._pressing:                   # let go before it counted: a tap, which only stops Plip
+            self.stop()
             return
         if self.state != "listening":
             return
@@ -135,6 +131,18 @@ class BuddyController:
         self.listener.release()
         generation = self.generation
         self.call_later(self.FINAL_TIMEOUT, lambda: self._final_timeout(generation))
+
+    def stop(self) -> None:
+        """Stop (the island's, the menu bar's, or a quick tap): whatever Plip is doing, and an answer to words it
+        is still waiting on (Stop right after letting go used to let that answer through)."""
+        self._pressing = 0
+        if self.state in {"listening", "finalizing"} and self.listener is not None:
+            self.listener.cancel()
+        self.generation += 1
+        if self.companion is not None and self.loop is not None:
+            self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
+        self._idle(f"Ready - hold {self.shortcut}")
+        self.presenter.idle()
 
     def on_cancel(self) -> None:
         if self._pressing:                   # the chord was part of another app's shortcut: leave Plip alone

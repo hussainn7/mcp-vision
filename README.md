@@ -70,7 +70,10 @@ to type into a terminal:
 | an API key | paste an `ANTHROPIC_API_KEY` under **Brain** | yes, fastest first word |
 
 Already signed in to one of these? Plip finds it and uses it. The [Gemini CLI](https://github.com/google-gemini/gemini-cli)
-works too if it's installed. The free Google key has a daily limit; it resets every day.
+works too if it's installed. The free Google key has limits (a few requests a minute, more per day). On Google's
+free tier, Google may use what Plip sends it (screenshots included) to improve its products, and human reviewers
+may read it (outside the EEA, Switzerland and the UK; see the [Gemini API terms](https://ai.google.dev/gemini-api/terms)),
+so use a paid plan for private work.
 
 Plip runs the CLI once per question in an empty scratch folder with its own tools
 switched off, so the model only ever sends back words and Plip's action tags. Plip

@@ -203,10 +203,15 @@ def test_another_apps_control_option_shortcut_never_cuts_plip_off_and_a_tap_stil
     controller.on_release()
     later.pop()[1]()
     assert len(interrupts) == 1 and listener.started == 0 and [c[0] for c in view.calls] == ["idle"]
+    assert controller.state == "idle"                  # not stuck "responding" (the menu bar thought it was busy)
     controller.on_press()                              # held: a request
     delay, fn = later.pop()
     fn()
     assert delay == 0.15 and listener.started == 1 and view.calls[-1][0] == "listening"
+    controller.on_release()                            # let go; then Stop before the words come back
+    controller.stop()
+    controller.on_final("play some music")
+    assert controller.state == "idle" and view.calls[-1][0] == "idle"          # no answer to it after Stop
 
 
 def test_a_yes_or_no_suggestion_gets_buttons_and_a_choice_or_open_question_doesnt():

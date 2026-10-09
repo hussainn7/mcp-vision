@@ -94,7 +94,7 @@ def test_missing_claude_is_installed_first(tmp_path):
         run=lambda argv, **kw: ran.append(argv) or SimpleNamespace(returncode=0, stdout="", stderr=""),
         spawn=lambda argv, **kw: FakeLogin())
     made.start("claude-code", wait=True)
-    assert ran == [["/bin/bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"]]
+    assert ran == [["/bin/bash", "-c", "set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash"]]
     assert connected == ["claude-code"]
 
 
@@ -216,3 +216,28 @@ def test_settings_connect_command_starts_it_and_cards_show_progress(tmp_path):
     service.handle({"cmd": "engine-connect", "id": "claude-code"})
     cards = posted[-1]["state"]["engines"]
     assert started == ["claude-code"] and cards[0]["connect"]["state"] == "signing-in" and "connect" not in cards[1]
+
+
+def test_cancel_during_the_install_never_opens_the_browser_and_never_runs_two_at_once(tmp_path):
+    installing, release, spawned = threading.Event(), threading.Event(), []
+
+    def install(argv, **kw):
+        installing.set()
+        release.wait(2)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    made, _, connected = connector(Brain("not-installed", "logged-out"), tmp_path, run=install,
+                                   spawn=lambda argv, **kw: spawned.append(argv) or FakeLogin())
+    made.start("claude-code")
+    assert installing.wait(2)
+    made.cancel("claude-code")
+    made.start("claude-code")                          # clicked Connect again while the old install runs
+    release.set()
+    made._workers["claude-code"].join(2)
+    assert spawned == [] and connected == [] and made.snapshot() == {}
+
+
+def test_a_sign_in_app_that_quits_without_signing_in_isnt_connected(tmp_path):
+    made, _, connected = connector(Brain("logged-out"), tmp_path, spawn=lambda argv, **kw: FakeLogin(code=0))
+    made.start("claude-code", wait=True)
+    assert made.progress["claude-code"].state == "failed" and "didn't finish" in made.progress["claude-code"].message
+    assert connected == []

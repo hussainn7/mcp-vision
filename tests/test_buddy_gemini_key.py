@@ -33,8 +33,11 @@ class Response:
         return False
 
 
-def http_error(code, message):
-    return urllib.error.HTTPError("https://g", code, "err", {}, io.BytesIO(json.dumps({"error": {"message": message}}).encode()))
+def http_error(code, message, quota=""):
+    error = {"message": message}
+    if quota:
+        error["details"] = [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": quota}]}]
+    return urllib.error.HTTPError("https://g", code, "err", {}, io.BytesIO(json.dumps({"error": error}).encode()))
 
 
 class Google:
@@ -98,9 +101,12 @@ def test_a_model_that_wont_take_a_thinking_level_is_asked_again_without_one():
 def test_a_bad_key_and_the_free_limit_are_said_plainly():
     from mcp_vision.buddy.companion import _friendly_error
 
+    quota = "Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests"
     for error, said in ((http_error(400, "API key not valid. Please pass a valid API key."), "Check the API key"),
-                        (http_error(429, "Quota exceeded for metric: generativelanguage.googleapis.com/"
-                                         "generate_content_free_tier_requests, limit: 250"), "free AI limit")):
+                        (http_error(429, quota, "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"),
+                         "Give it a minute"),                              # a busy minute isn't "come back tomorrow"
+                        (http_error(429, quota, "GenerateRequestsPerDayPerProjectPerModel-FreeTier"),
+                         "resets tomorrow")):
         try:
             run(GeminiKeyBrain(api_key="k", opener=Google(error)), [Turn("user", "hi")])
         except GeminiError as exc:

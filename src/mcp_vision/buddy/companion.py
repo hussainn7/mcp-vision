@@ -1429,8 +1429,10 @@ def _friendly_error(exc: Exception) -> str:
         return "I can't reach my model. Check the API key in your settings."
     if "waiting for network" in lowered or "connection failed" in lowered or "network" in lowered:
         return "I can't reach my brain right now. Check your internet connection and try again."
+    if ("free_tier" in lowered or "free tier" in lowered) and ("perday" in lowered or "per day" in lowered):
+        return "Google's free AI limit for today is used up. It resets tomorrow, or connect another AI in my settings."
     if "free_tier" in lowered or "free tier" in lowered:
-        return "Google's free AI limit is used up for now. It resets every day, or connect another AI in my settings."
+        return "Google's free AI takes a few questions a minute, and that's used up. Give it a minute and try again."
     if "429" in lowered or "rate" in lowered or "usage limit" in lowered or "quota" in lowered:
         return "I'm being rate limited right now. Give me a moment and try again."
     if "timeout" in lowered or "timed out" in lowered:

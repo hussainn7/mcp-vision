@@ -118,6 +118,8 @@ class ChordDetector:
             self.held = True
             self._cancelled = False
             self.on_press()
+        elif not down and self.held and flags & self.chord == self.chord:
+            self.key_down()                  # ⌘ joined ⌃⌥ (Rectangle's ⌃⌥⌘→): another app's shortcut, not a release
         elif not down and self.held:
             self.held = False
             if self._cancelled:

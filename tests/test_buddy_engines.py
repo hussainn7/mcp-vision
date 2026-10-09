@@ -56,7 +56,7 @@ TURNS = [Turn("user", "where is wifi"), Turn("assistant", "Top right. [POINT:120
 def test_specs_cover_the_subscriptions_people_have():
     assert [spec.id for spec in SPECS] == ["claude-code", "codex", "cursor", "gemini", "anthropic", "gemini-api"]
     assert BY_ID["gemini-api"].kind == "api" and BY_ID["gemini-api"].key_name == "GEMINI_API_KEY"   # free, no plan
-    assert {spec.label for spec in SPECS if spec.kind == "subscription"} == {"Claude", "ChatGPT", "Cursor", "Gemini"}
+    assert {spec.label for spec in SPECS if spec.kind == "subscription"} == {"Claude", "ChatGPT", "Cursor", "Gemini CLI"}
     assert BY_ID["cursor"].vision is False and BY_ID["claude-code"].vision is True
 
 

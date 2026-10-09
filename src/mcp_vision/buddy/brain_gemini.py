@@ -171,9 +171,13 @@ def _http_error(exc: urllib.error.HTTPError) -> GeminiError:
     try:
         detail = json.loads(exc.read().decode("utf-8", "replace")).get("error", {})
         message = str(detail.get("message") or detail.get("status") or "")
+        # which limit it was ("…PerMinute…FreeTier", "…PerDay…FreeTier"): a minute's wait, or tomorrow
+        quotas = [str(violation.get("quotaId") or "") for item in detail.get("details") or [] if isinstance(item, dict)
+                  for violation in item.get("violations") or [] if isinstance(violation, dict)]
     except Exception:
-        message = ""
-    return GeminiError(f"Gemini {exc.code}: {message or exc.reason}"[:400])
+        message, quotas = "", []
+    limit = f" [{' '.join(quota for quota in quotas if quota)}]" if any(quotas) else ""
+    return GeminiError(f"Gemini {exc.code}: {message or exc.reason}{limit}"[:500])
 
 
 def _contents(turns: list[Turn]) -> list[dict[str, Any]]:

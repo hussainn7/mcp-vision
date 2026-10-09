@@ -194,9 +194,14 @@ class SettingsService:
                 if problem:
                     self.push()
                     return
-                self._save_key(name, value)
+                from mcp_vision.buddy.cli import write_env
+
+                write_env(self.env_path or config_dir() / ".env", {name: value})
                 if not self._ready_engine():
-                    self._update_prefs(engine="gemini-api")     # their only working brain: use it
+                    self._update_prefs(engine="gemini-api")     # their only working brain: key + choice, one rebuild
+                else:
+                    self.reload()
+                    self.push()
             self.main(done)
         self.background(check)
 

@@ -73,6 +73,7 @@ class Connector:
         self.progress: dict[str, Progress] = {}
         self._process: dict[str, Any] = {}
         self._cancelled: set[str] = set()
+        self._workers: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
 
     # -- what Settings calls ------------------------------------------------------------
@@ -80,12 +81,13 @@ class Connector:
         if engine_id not in BY_ID or BY_ID[engine_id].kind != "subscription":
             return
         with self._lock:
-            if self.progress.get(engine_id, Progress()).state in {"installing", "signing-in"}:
-                return                                  # already on it
+            running = self._workers.get(engine_id)
+            if running is not None and running.is_alive():
+                return              # already on it, or a cancelled install still finishing: never two at once
             self._cancelled.discard(engine_id)
             self.progress[engine_id] = Progress("installing", "Getting ready…")
-        worker = threading.Thread(target=self._connect, args=(engine_id,), daemon=True,
-                                  name=f"plip-connect-{engine_id}")
+            worker = self._workers[engine_id] = threading.Thread(target=self._connect, args=(engine_id,),
+                                                                 daemon=True, name=f"plip-connect-{engine_id}")
         worker.start()
         if wait:
             worker.join()
@@ -123,6 +125,8 @@ class Connector:
             if status.status == "not-installed":
                 self._set(engine_id, "installing", f"Installing {spec.label}’s app… (about a minute)")
                 self._install(engine_id)
+                if engine_id in self._cancelled:
+                    return                              # cancelled while it installed: no browser after that
                 status = self.probe(engine_id)
                 if status.status == "not-installed":
                     raise ConnectError(f"{spec.label} installed, but I can't find it. Try again in a moment.")
@@ -131,6 +135,8 @@ class Connector:
             if engine_id in self._cancelled:
                 return
             status = self.probe(engine_id)
+            if status.status != "ready":                # the sign-in app quit, but it isn't signed in
+                raise ConnectError(f"Signing in to {spec.label} didn't finish. Click Connect to try again.")
             self._set(engine_id, "ready", status.detail or "Connected")
             self.on_connected(engine_id)
         except ConnectError as exc:
@@ -159,13 +165,15 @@ class Connector:
 
     def _shell(self, command: str, env: dict[str, str], what: str) -> None:
         try:
-            result = self.run(["/bin/bash", "-c", command], env=env, cwd=str(self.home), capture_output=True,
-                              text=True, timeout=self.timeout)
+            # pipefail: "curl … | bash" with no internet fails here, not later as "installed, but I can't find it"
+            result = self.run(["/bin/bash", "-c", "set -o pipefail; " + command], env=env, cwd=str(self.home),
+                              capture_output=True, text=True, timeout=self.timeout)
         except subprocess.TimeoutExpired:
             raise ConnectError(f"Installing {what} took too long. Check your internet and try again.") from None
         if result.returncode != 0:
             tail = " ".join((result.stderr or result.stdout or "").strip().splitlines()[-2:])[-200:]
-            raise ConnectError(f"Couldn't install {what}." + (f" ({tail})" if tail else ""))
+            raise ConnectError(f"Couldn't install {what}. Check your internet and try again."
+                               + (f" ({tail})" if tail else ""))
 
     def _install_codex(self) -> None:
         """ChatGPT's Codex CLI is one binary on GitHub: no Node needed. Checked against the release's SHA-256."""

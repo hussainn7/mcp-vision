@@ -157,9 +157,11 @@ export function FreeGoogleKey({ state }: { state: SettingsState }) {
           <span>{check.state === 'ok' ? 'Google took the key. You’re connected.' : check.message}</span>
         </div>
       )}
-      {ready && (
-        <div className="mt-3 text-[11.5px] text-white/35">The free version has a daily limit, plenty for everyday questions. It resets every day.</div>
-      )}
+      <div className="mt-3 text-[11.5px] leading-relaxed text-white/35">
+        {ready ? 'The free version has limits (a few questions a minute, more each day), plenty for everyday use. ' : ''}
+        On the free version, Google may use what Plip sends it (screenshots included) to improve its products, and its
+        reviewers may read it. For private work, use a paid plan above.
+      </div>
     </Card>
   )
 }
@@ -181,6 +183,19 @@ export function Connecting({ id, progress }: { id: string; progress: ConnectProg
         <span className="flex-1">{progress.message}</span>
         <Button variant="quiet" size="sm" onClick={() => send('engine-connect-cancel', { id })}>Cancel</Button>
       </div>
+      {progress.state === 'signing-in' && progress.needsCode && (
+        <form
+          className="mt-2 flex items-center gap-2 pl-5.5"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (code.trim()) send('engine-connect-code', { id, code: code.trim() })
+            setCode('')
+          }}
+        >
+          <Input value={code} onChange={setCode} placeholder="If the page shows a code, paste it here" className="font-mono text-[11.5px]" />
+          <Button size="sm" disabled={!code.trim()}>Done</Button>
+        </form>
+      )}
       {progress.state === 'signing-in' && progress.url && (
         <div className="mt-1.5 pl-5.5 text-[11.5px] text-white/40">
           {!help ? (
@@ -188,24 +203,9 @@ export function Connecting({ id, progress }: { id: string; progress: ConnectProg
               Browser didn’t open?
             </button>
           ) : (
-            <div className="space-y-2">
-              <button className="font-semibold text-plip-200 hover:text-plip-100" onClick={() => send('open-url', { url: progress.url })}>
-                Open the sign-in page
-              </button>
-              {progress.needsCode && (
-                <form
-                  className="flex items-center gap-2"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    if (code.trim()) send('engine-connect-code', { id, code: code.trim() })
-                    setCode('')
-                  }}
-                >
-                  <Input value={code} onChange={setCode} placeholder="If the page shows a code, paste it here" className="font-mono text-[11.5px]" />
-                  <Button size="sm" disabled={!code.trim()}>Done</Button>
-                </form>
-              )}
-            </div>
+            <button className="font-semibold text-plip-200 hover:text-plip-100" onClick={() => send('open-url', { url: progress.url })}>
+              Open the sign-in page
+            </button>
           )}
         </div>
       )}

@@ -737,9 +737,7 @@ def run_buddy_app() -> None:
         menu.set_status("Fresh start - conversation cleared")
 
     def stop() -> None:
-        if controller.companion is not None:
-            loop.call_soon_threadsafe(controller.companion.interrupt, None)
-        presenter.idle()
+        controller.stop()
 
     def menu_opening() -> None:
         companion = controller.companion
