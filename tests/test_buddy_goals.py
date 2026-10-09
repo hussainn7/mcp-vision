@@ -179,17 +179,22 @@ def test_routine_steps_think_less_and_anything_that_went_wrong_keeps_their_depth
 def test_a_yes_to_plips_own_question_is_the_confirmation_but_never_for_money():
     from mcp_vision.buddy.actions import Consent, Preview
 
-    asked = "Want me to send it?"
+    asked = "I drafted your reply to Sara. Want me to send it?"
     assert Consent.given("yes", asked).covers(Preview(title="Send to Sara", confirm="Send"))
-    assert Consent.given("yeah go ahead", "I'm about to delete the old ones. Should I?").covers(
-        Preview(title="Click “Delete”", confirm="Click it"))
-    assert Consent.given("send it", "") is None                                    # their own request: its one card
+    assert Consent.given("yes", asked).covers(Preview(title="Click “Send”", confirm="Click it"))   # the "it"
+    assert Consent.given("do it", asked).covers(Preview(title="Click “Send”", confirm="Click it"))
+    assert not Consent.given("yes", asked).covers(Preview(title="Send to Sam"))        # someone else: its card
+    # a yes is about what was asked: removing a filter never deletes the account, a search never submits a payment
+    assert not Consent.given("yes", "Want me to remove that filter?").covers(Preview(title="Click “Delete account”"))
+    assert not Consent.given("yes", "Submit the search?").covers(Preview(title="Click “Submit”"))
+    assert Consent.given("send it", "Anything else?") is None                       # their own words: its one card
+    assert Consent.given("yes, and delete the draft too", asked).doings == {"send"}  # what they added still asks
     assert Consent.given("yes but wait till tomorrow", asked) is None                # a yes with a hold isn't one
     assert Consent.given("should I?", asked) is None
-    paying = Consent.given("yes", "Want me to check out?")
-    assert paying is None or not paying.covers(Preview(title="Click “Proceed to checkout”", confirm="Click it"))
+    assert Consent.given("yes", "Want me to send Sam the $20?") is None              # money: always its card
+    assert Consent.given("yes", "Want me to check out?") is None
     once = Consent.given("yes", asked)
-    assert once.covers(Preview(title="Send to Sara")) and not once.covers(Preview(title="Send to Sam"))   # one step
+    assert once.covers(Preview(title="Send to Sara")) and not once.covers(Preview(title="Send to Sara"))   # one card
     assert not Consent.given("yes", asked).covers(Preview(title="Send to Sara", firm=True))   # the card asks itself
 
 
@@ -197,7 +202,8 @@ def test_the_card_doesnt_ask_again_after_they_said_yes_in_words():
     host = Spotify()
     host.open_now = True
     host.snapshot = lambda: ScreenContext(app="Mail", controls=[Control("Send", "button", 600, 400)])
-    companion, brain, speaker = buddy(host, "it's ready. want me to send it?", 'sending it. [DO:click {"id": 1}]')
+    companion, brain, speaker = buddy(host, "your reply to sara is ready. want me to send it?",
+                                      'sending it. [DO:click {"id": 1}]')
     first = asyncio.run(companion.respond("reply to sara that i'm in"))
     assert first.spoken.endswith("want me to send it?") and not first.pending
     second = asyncio.run(companion.respond("yes"))

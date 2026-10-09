@@ -1239,11 +1239,13 @@ def _question(spoken: str) -> str:
     if not reply_asks(spoken):
         return ""
     sentences = [part.strip() for part in re.findall(r"[^.!?]+[.!?]*", spoken.strip()) if part.strip()]
-    last = max(index for index, sentence in enumerate(sentences) if "?" in sentence)
-    from mcp_vision.buddy.actions.engine import doings
+    asking = [index for index, sentence in enumerate(sentences) if "?" in sentence]
+    if not asking:
+        return ""                                     # "?" on its own: nothing it asked about
+    last = asking[-1]
 
-    start = last if doings(sentences[last]) or last == 0 else last - 1
-    return " ".join(sentences[start:last + 1])
+    # with the sentence before it, which says what "it" is ("I drafted a reply to Sara. Want me to send it?")
+    return " ".join(sentences[max(0, last - 1):last + 1])
 
 
 def _clip(text: str, limit: int) -> str:
