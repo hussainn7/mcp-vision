@@ -43,6 +43,11 @@ def _menu_target_class():
                 if action:
                     action()
 
+            def menuWillOpen_(self, _menu):              # NSMenuDelegate: show Stop / Keep going as they are now
+                action = self.actions.get("will_open")
+                if action:
+                    action()
+
         _CLASSES["target"] = PlipMenuTarget
     return _CLASSES["target"]
 
@@ -94,6 +99,10 @@ class StatusMenu:
         self.status.setEnabled_(False)
         self.hint = self._add(menu, "Hold ⌃⌥ and ask anything", None)
         self.hint.setEnabled_(False)
+        self.stop_item = self._add(menu, "Stop", "stop", ".")
+        self.stop_item.setHidden_(True)
+        self.resume_item = self._add(menu, "Keep going", "resume")
+        self.resume_item.setHidden_(True)
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         self._add(menu, "Open Plip...", "settings", ",")
         self.update_item = self._add(menu, "Download the new Plip...", "update")
@@ -104,6 +113,7 @@ class StatusMenu:
         self._add(menu, "Report a bug...", "report")
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         self._add(menu, "Quit Plip", "quit", "q")
+        menu.setDelegate_(self.target)
         self.item.setMenu_(menu)
 
     def _add(self, menu, title: str, key: str | None, shortcut: str = ""):
@@ -126,6 +136,13 @@ class StatusMenu:
         button = self.item.button()
         if button is not None:
             button.setToolTip_(f"Plip - hold {chord.label} and ask")
+
+    def set_activity(self, busy: bool, unfinished: str) -> None:
+        """Stop while Plip is working; Keep going when a task stopped before it was done."""
+        self.stop_item.setHidden_(not busy)
+        if unfinished:
+            self.resume_item.setTitle_(f"Keep going: {unfinished}"[:60])
+        self.resume_item.setHidden_(busy or not unfinished)
 
     def set_brain(self, text: str) -> None:
         self.brain_item.setTitle_(f"Brain: {text}"[:60])
@@ -638,9 +655,7 @@ def run_buddy_app() -> None:
             if path.startswith(os.path.realpath(os.path.expanduser("~")) + os.sep) and os.path.exists(path):
                 default_host_cached().open(path)
         elif name == "stop":
-            if controller.companion is not None:
-                loop.call_soon_threadsafe(controller.companion.interrupt, None)
-            presenter.idle()
+            stop()
         elif name == "offer-answer":                          # Yes / No thanks under a suggestion
             if command.get("accept"):
                 controller.ask("yes")
@@ -675,7 +690,18 @@ def run_buddy_app() -> None:
             controller.companion.conversation.clear()
         menu.set_status("Fresh start - conversation cleared")
 
+    def stop() -> None:
+        if controller.companion is not None:
+            loop.call_soon_threadsafe(controller.companion.interrupt, None)
+        presenter.idle()
+
+    def menu_opening() -> None:
+        companion = controller.companion
+        busy = controller.state != "idle" or bool(companion is not None and companion.busy)
+        menu.set_activity(busy, companion.unfinished if companion is not None else "")
+
     menu = StatusMenu({
+        "stop": stop, "resume": lambda: controller.ask("keep going"), "will_open": menu_opening,
         "settings": lambda: open_settings("home"), "brain": lambda: open_settings("brain"),
         "toggle_visible": toggle_visible, "clear": clear, "quit": lambda: AppKit.NSApp.terminate_(None),
         "report": lambda: open_settings("report"),

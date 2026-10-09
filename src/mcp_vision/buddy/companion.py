@@ -328,6 +328,16 @@ class Companion:
         return prefetched[1]
 
     # The app calls these on the companion's event loop thread.
+    @property
+    def busy(self) -> bool:
+        """Working on a request right now (thinking, acting, or talking)."""
+        return self._task is not None and not self._task.done()
+
+    @property
+    def unfinished(self) -> str:
+        """The task that stopped before it was done (out of steps, or stopped), for "Keep going"; "" otherwise."""
+        return self._goal if self._goal and not self.busy else ""
+
     def interrupt(self, token: int | None = None) -> None:
         """Push-to-talk pressed again: stop talking, pointing, and guiding right away.
 

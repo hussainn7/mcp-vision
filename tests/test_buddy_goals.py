@@ -324,6 +324,7 @@ def test_out_of_steps_asks_want_me_to_keep_going_and_a_yes_or_the_button_picks_i
                                       max_agent_steps=2)
     first = asyncio.run(companion.respond("play discover weekly"))
     assert first.outcome == "paused" and speaker.said[-1] == "I'm not finished yet. Want me to keep going?"
+    assert companion.unfinished == "play it" and not companion.busy          # the menu bar offers "Keep going: play it"
     assert ("offer", {"text": "Want me to keep going?"}) in events                # the island's Yes / No thanks
     calls = len(brain.calls)
     asyncio.run(companion.respond("yes"))
