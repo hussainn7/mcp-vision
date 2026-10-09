@@ -549,8 +549,18 @@ def _again(ctx: ActionContext, before: str | None, text: str) -> bool:
 
 
 # A box where return runs a search or goes to a page, not one where it sends something to someone.
-_SEARCHY = re.compile(r"search|find|filter|address|url|location|where|zip|postal|city|query|look ?up|go to|jump to",
+_SEARCHY = re.compile(r"search|find|filter|address|url|location|where|zip|postal|city|query|look ?up|go to|jump to|"
+                      r"keyword|job title|what do you want to (play|watch|hear|listen|find|search|learn)",
                       re.IGNORECASE)
+# Boxes where return sends words to people: messages, replies, posts, mail.
+_MESSAGEY = re.compile(r"message|reply|comment|chat|tweet|\bpost\b|compose|write|e-?mail|\bbody\b|caption|"
+                       r"what'?s happening|on your mind|say something|\bsend\b|\bdm\b", re.IGNORECASE)
+_MESSAGING_APPS = {"messages", "mail", "slack", "discord", "whatsapp", "telegram", "signal", "microsoft teams",
+                   "microsoft outlook", "outlook", "spark", "messenger", "skype", "zoom", "wechat", "line"}
+_MESSAGING_SITES = re.compile(r"(mail\.google|outlook\.(live|office)|mail\.yahoo|slack\.com|discord\.com|"
+                              r"web\.whatsapp|messenger\.com|facebook\.com/messages|instagram\.com/direct|"
+                              r"(x|twitter)\.com|linkedin\.com/messaging|teams\.microsoft|web\.telegram|"
+                              r"chatgpt\.com|claude\.ai)", re.IGNORECASE)
 
 
 def preview_type(ctx: ActionContext, args: dict) -> Preview | None:
@@ -573,11 +583,29 @@ def preview_type(ctx: ActionContext, args: dict) -> Preview | None:
     if not args.get("submit"):
         return None
     role = control._role(ctx, {key: value for key, value in args.items() if key == "id"}) if "id" in args else ""
-    if role == "search field" or _SEARCHY.search(into or str(getattr(_screen_context(ctx), "focused", "") or "")):
+    context = _screen_context(ctx)
+    field = into or str(getattr(context, "focused", "") or "")
+    if role in {"search field", "combobox"} or _SEARCHY.search(field):
         return None
+    if not _sends(role, field, context):
+        return None                                 # a form box with nothing on screen that buys or sends
     text = _short(str(args.get("text") or ""), 60)
     return Preview(title=f"Send “{text}”" + (f" in {into[:30]}" if into else ""),
                    lines=["Typing it in and pressing return sends it."], confirm="Send it")
+
+
+def _sends(role: str, field: str, context) -> bool:
+    """Could pressing return here send something or buy something? A box that reads like a message, a
+    multi-line one, anything in a chat or mail app or site, or a page that shows a buy / send / delete button
+    (return submits the form it's in). A search box on a music or jobs page isn't one, and isn't asked about."""
+    from mcp_vision.buddy.actions import control
+
+    if role == "text area" or _MESSAGEY.search(field) or context is None:
+        return True
+    if str(getattr(context, "app", "") or "").lower() in _MESSAGING_APPS or \
+            _MESSAGING_SITES.search(str(getattr(context, "url", "") or "")):
+        return True
+    return any(control.RISKY.search(item.label) for item in getattr(context, "controls", []) if item.label)
 
 
 def _screen_context(ctx: ActionContext):

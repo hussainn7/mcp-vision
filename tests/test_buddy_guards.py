@@ -42,6 +42,30 @@ def test_typing_never_clicks_a_buy_button_and_return_in_a_message_box_asks_first
     assert out.status == "done" and host.calls[-1] == ("press", "return")
 
 
+def test_return_asks_first_only_where_it_could_send_or_buy_not_in_a_search_box():
+    def page(app, controls, url=""):
+        return ScreenContext(app=app, window="w", url=url, controls=controls)
+
+    jobs = page("Google Chrome", [Control("What: job title, keywords, or company", "text field", 600, 60, 300, 28),
+                                  Control("Remote", "checkbox", 400, 120, 80, 20)])
+    music = page("Spotify", [Control("What do you want to play?", "text field", 600, 40, 300, 28)])
+    google = page("Google Chrome", [Control("Search", "combobox", 600, 300, 500, 40)], "https://www.google.com")
+    form = page("Google Chrome", [Control("Full name", "text field", 600, 200, 300, 28)])
+    for context in (jobs, music, google, form):                       # searches and harmless forms: no card
+        engine, host = hands(context)
+        out = run(engine.handle("type_text", {"text": "acme backend", "id": 1, "submit": True}))
+        assert out.status == "done" and host.calls[-1] == ("press", "return"), context.app
+    slack = page("Slack", [Control("Aa", "text field", 600, 800, 500, 40)])
+    gift = page("Safari", [Control("Gift note", "text field", 600, 300, 300, 28),
+                           Control("Place your order", "button", 700, 600, 400, 40)])
+    webmail = page("Google Chrome", [Control("To", "text field", 600, 100, 400, 28)], "https://mail.google.com/mail/u/0")
+    reply = page("Notes", [Control("Reply", "text area", 600, 600, 500, 80)])
+    for context in (slack, gift, webmail, reply):                     # a chat, a checkout, mail, a message box
+        engine, host = hands(context)
+        out = run(engine.handle("type_text", {"text": "on my way", "id": 1, "submit": True}))
+        assert out.status == "pending" and host.calls == [], context.app
+
+
 def test_a_click_by_x_y_anywhere_on_a_wide_buy_button_asks_first():
     engine, host = hands()
     # 160 pt left of the button's center (pixels at the 1512/1280 screenshot scale), still inside it
