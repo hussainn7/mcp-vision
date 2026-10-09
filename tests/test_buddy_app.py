@@ -17,6 +17,7 @@ from mcp_vision.buddy.settings import BuddySettings
 from mcp_vision.buddy.settings_service import Platform, SettingsService
 from mcp_vision.buddy.store import History, Prefs
 from mcp_vision.buddy.web_host import parse_command, script_for
+from mcp_vision.buddy.sounds import HERE, TAKES, Sounds
 
 
 # -- presenter -------------------------------------------------------------------------
@@ -614,3 +615,26 @@ def test_a_task_shows_what_its_working_toward_and_which_step_and_keeps_it_across
     assert posted[-1]["step"]["detail"] == "paused" and posted[-1]["step"]["status"] == "skipped"
     view("goal", {"text": "add the cheapest hub to my cart", "done": True})
     assert posted[-1]["step"]["status"] == "done"
+
+
+def test_sounds_ship_every_take_and_never_repeat_one():
+    assert all((HERE / f"{take}.wav").is_file() for takes in TAKES.values() for take in takes)
+    played, on = [], [True]
+    sounds = Sounds(enabled=lambda: on[0], player=played.append)
+    for _ in range(30):
+        sounds.play("open")
+    assert set(played) == set(TAKES["open"]) and all(a != b for a, b in zip(played, played[1:]))
+    sounds.play("done")
+    sounds.play("whatever")
+    assert played[-1] == "done" and len(played) == 31
+    on[0] = False                                         # their toggle is read every time
+    sounds.play("done")
+    assert len(played) == 31
+
+
+def test_sounds_never_raise():
+    def broken(_take):
+        raise RuntimeError("no audio device")
+
+    Sounds(player=broken).play("open")
+    Sounds(enabled=lambda: 1 / 0, player=broken).play("done")
