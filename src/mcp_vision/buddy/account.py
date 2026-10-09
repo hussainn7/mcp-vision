@@ -1,4 +1,4 @@
-"""Plip accounts: sign in once with Google before Plip starts working.
+"""Plip accounts: sign in once with Google, after a few free asks in the welcome tour.
 
 Sign-in goes through Supabase Auth with PKCE, the way a desktop app should (RFC 8252): Plip opens the
 browser at Supabase's authorize page, Google sends the person back to Supabase, and Supabase sends them to a
@@ -45,7 +45,7 @@ PORTS = (47823, 47824, 47825)
 CALLBACK = "/callback"
 WAIT = 600.0                                    # seconds to finish in the browser before giving up
 PROVIDERS = {"google"}
-SIGN_IN_FIRST = "Sign in to Plip to start using it."
+SIGN_IN_FIRST = "Sign in to keep using Plip."
 # Supabase saying "this session is over" (account deleted, banned, signed out everywhere): sign out here too.
 GONE = {400, 401, 403, 404}
 PICTURE_SIZE = 192                              # px asked of Google: sharp at 52 pt on retina
@@ -121,8 +121,8 @@ class Account:
     def __init__(self, url: str | None = "", key: str | None = "", *, path: Path | None = None,
                  open_url: Callable[[str], Any] = lambda url: None, transport: Transport = urllib_transport,
                  on_change: Callable[[], None] = lambda: None, on_signed_in: Callable[[], None] = lambda: None,
-                 fetch: Callable[[str], bytes | None] = fetch_picture, ports: tuple[int, ...] = PORTS,
-                 wait: float = WAIT):
+                 fetch: Callable[[str], bytes | None] = fetch_picture, trying: Callable[[], bool] = lambda: False,
+                 ports: tuple[int, ...] = PORTS, wait: float = WAIT):
         from mcp_vision.buddy.store import config_dir
 
         self.base = (url or "").strip().rstrip("/")
@@ -133,6 +133,7 @@ class Account:
         self.on_change = on_change                 # status moved (the Settings window shows it)
         self.on_signed_in = on_signed_in           # signed in: Plip starts working
         self.fetch = fetch
+        self.trying = trying                       # the tour's free tries: Plip works before sign-in
         self.ports = ports
         self.wait = wait
         self.status = ""                           # "" | waiting | failed
@@ -168,8 +169,8 @@ class Account:
 
     @property
     def blocker(self) -> str:
-        """Why Plip won't take a request yet ("" once signed in, or in a build without sign-in)."""
-        return SIGN_IN_FIRST if self.required else ""
+        """Why Plip won't take a request yet ("" once signed in, in a build without sign-in, or while trying)."""
+        return SIGN_IN_FIRST if self.required and not self.trying() else ""
 
     def snapshot(self) -> dict[str, Any]:
         user = self.user

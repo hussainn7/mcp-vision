@@ -4,14 +4,19 @@ import { useEffect, useRef } from 'react'
 import { send, settings, type LiveState, type SettingsState, type TourStep } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Chord, cn, useShortcutLabel } from '../../components/bits'
+import { Avatar, GoogleSignIn } from './account'
 import { PermissionAction, RestartBanner } from './basics'
 import { ConnectAI } from './connect'
 import { Button, Card } from './ui'
 
 export const PRIVACY_URL = 'https://plip.dev/privacy'
 
-const ORDER: TourStep[] = ['welcome', 'permissions', 'brain', 'try', 'done']
-const COUNTED: TourStep[] = ['permissions', 'brain', 'try']
+const ALL: TourStep[] = ['welcome', 'permissions', 'brain', 'try', 'signin', 'done']
+
+/** Sign-in comes last, after they've seen Plip work (a build without sign-in skips it). */
+function stepsFor(state: SettingsState): TourStep[] {
+  return state.account.available ? ALL : ALL.filter((step) => step !== 'signin')
+}
 
 /** Move the walkthrough; Plip saves it for restarts. */
 function tour(step: TourStep) {
@@ -36,12 +41,16 @@ export function readiness(state: SettingsState) {
   }
 }
 
-/** First run: intro, permissions, a brain, one practice ask. */
+/** First run: intro, permissions, a brain, one practice ask, then sign in. */
 export function Onboarding({ state }: { state: SettingsState }) {
-  const step = ORDER.includes(state.tour?.step) ? state.tour.step : 'welcome'
-  const index = ORDER.indexOf(step)
-  const next = () => tour(ORDER[Math.min(index + 1, ORDER.length - 1)])
-  const back = () => tour(ORDER[Math.max(index - 1, 0)])
+  const order = stepsFor(state)
+  const counted = order.slice(1, -1)
+  const step = order.includes(state.tour?.step) ? state.tour.step : 'welcome'
+  const index = order.indexOf(step)
+  const next = () => tour(order[Math.min(index + 1, order.length - 1)])
+  const back = () => tour(order[Math.max(index - 1, 0)])
+  const skip = () => (state.account.required ? tour('signin') : send('finish-onboarding'))
+  const props = { state, steps: counted, next, back }
 
   return (
     <div className="absolute inset-0 z-40 flex flex-col bg-ink/[0.97] backdrop-blur-xl">
@@ -51,8 +60,8 @@ export function Onboarding({ state }: { state: SettingsState }) {
           <span className="text-[14px] font-semibold tracking-tight">Plip</span>
         </div>
         {step !== 'welcome' && (
-          <div className="flex items-center gap-1.5" aria-label={`Step ${Math.max(COUNTED.indexOf(step), 0) + 1} of ${COUNTED.length}`}>
-            {ORDER.slice(1).map((item, position) => (
+          <div className="flex items-center gap-1.5" aria-label={`Step ${Math.max(counted.indexOf(step), 0) + 1} of ${counted.length}`}>
+            {order.slice(1).map((item, position) => (
               <button
                 key={item}
                 aria-label={item}
@@ -66,7 +75,7 @@ export function Onboarding({ state }: { state: SettingsState }) {
           </div>
         )}
         <div className="flex w-40 justify-end">
-          {step !== 'done' && <Button variant="quiet" onClick={() => send('finish-onboarding')}>Skip setup</Button>}
+          {step !== 'done' && step !== 'signin' && <Button variant="quiet" onClick={skip}>Skip setup</Button>}
         </div>
       </header>
 
@@ -82,9 +91,10 @@ export function Onboarding({ state }: { state: SettingsState }) {
             className="m-auto w-full max-w-[640px]"
           >
             {step === 'welcome' && <Welcome next={next} />}
-            {step === 'permissions' && <SeeAndHear state={state} next={next} back={back} />}
-            {step === 'brain' && <PickBrain state={state} next={next} back={back} />}
-            {step === 'try' && <TryIt state={state} next={next} back={back} />}
+            {step === 'permissions' && <SeeAndHear {...props} />}
+            {step === 'brain' && <PickBrain {...props} />}
+            {step === 'try' && <TryIt {...props} />}
+            {step === 'signin' && <SignInStep {...props} />}
             {step === 'done' && <AllSet />}
           </motion.div>
         </AnimatePresence>
@@ -93,8 +103,9 @@ export function Onboarding({ state }: { state: SettingsState }) {
   )
 }
 
-function Frame({ step, title, subtitle, children, footer }: {
+function Frame({ step, steps, title, subtitle, children, footer }: {
   step: TourStep
+  steps: TourStep[]
   title: React.ReactNode
   subtitle: React.ReactNode
   children: React.ReactNode
@@ -102,7 +113,7 @@ function Frame({ step, title, subtitle, children, footer }: {
 }) {
   return (
     <div>
-      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-plip-300">Step {COUNTED.indexOf(step) + 1} of {COUNTED.length}</div>
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-plip-300">Step {steps.indexOf(step) + 1} of {steps.length}</div>
       <h1 className="text-gradient text-[30px] font-semibold leading-[1.1] tracking-[-0.035em]">{title}</h1>
       <p className="mt-2 max-w-[560px] text-[14px] leading-relaxed text-white/55">{subtitle}</p>
       <div className="mt-6">{children}</div>
@@ -179,9 +190,9 @@ function Welcome({ next }: { next: () => void }) {
 
 // -- 1. see and hear --------------------------------------------------------------------------
 
-type StepProps = { state: SettingsState; next: () => void; back: () => void }
+type StepProps = { state: SettingsState; steps: TourStep[]; next: () => void; back: () => void }
 
-function SeeAndHear({ state, next, back }: StepProps) {
+function SeeAndHear({ state, steps, next, back }: StepProps) {
   const ready = readiness(state)
   const perms = state.permissions
   const talk = useShortcutLabel()
@@ -204,6 +215,7 @@ function SeeAndHear({ state, next, back }: StepProps) {
   return (
     <Frame
       step="permissions"
+      steps={steps}
       title="Let Plip see and hear you"
       subtitle="For your safety, macOS makes you switch these on yourself. Click Allow: Plip opens the right page in System Settings and shows you exactly which switch to flip."
       footer={<><Back onClick={back} />{done ? <Forward onClick={next} glow /> : <Later onClick={next} />}</>}
@@ -241,12 +253,13 @@ function SeeAndHear({ state, next, back }: StepProps) {
 
 // -- 2. a brain -------------------------------------------------------------------------------------
 
-function PickBrain({ state, next, back }: StepProps) {
+function PickBrain({ state, steps, next, back }: StepProps) {
   const ready = readiness(state)
   useAdvance(ready.brain, next, 1600)
   return (
     <Frame
       step="brain"
+      steps={steps}
       title="Give Plip a brain"
       subtitle="Plip is the helper; an AI does the thinking. Plip can use an AI you already pay for, like ChatGPT or Claude, at no extra cost. Don’t have one? Google’s is free. Either way it’s a few clicks, nothing to type."
       footer={<><Back onClick={back} />{ready.brain ? <Forward onClick={next} glow /> : <Later onClick={next} />}</>}
@@ -261,7 +274,7 @@ function PickBrain({ state, next, back }: StepProps) {
 
 const SAY = ['What can you do?', 'Where’s the Wi‑Fi menu?', 'Open Notes']
 
-function TryIt({ state, next, back }: StepProps) {
+function TryIt({ state, steps, next, back }: StepProps) {
   const ready = readiness(state)
   const entered = useRef(Date.now() / 1000 - 1)
   const live: LiveState | null = state.live && state.live.at >= entered.current ? state.live : null
@@ -273,6 +286,7 @@ function TryIt({ state, next, back }: StepProps) {
   return (
     <Frame
       step="try"
+      steps={steps}
       title={<>Hold <span className="text-white">{talk}</span> and ask</>}
       subtitle="Hold both keys down, say what you want, then let go. Plip answers up at the top of your screen."
       footer={<><Back onClick={back} />{phase === 'done' ? <Forward onClick={next} glow /> : <Later onClick={next} label="Try it later" />}</>}
@@ -354,7 +368,40 @@ function LiveLine({ live }: { live: LiveState | null }) {
   )
 }
 
-// -- 4. all set ------------------------------------------------------------------------------------
+// -- 4. sign in ------------------------------------------------------------------------------------
+
+function SignInStep({ state, steps, next, back }: StepProps) {
+  const user = state.account.user
+  useAdvance(Boolean(user), next)
+  return (
+    <Frame
+      step="signin"
+      steps={steps}
+      title={user ? 'You’re signed in' : 'Last step: sign in'}
+      subtitle="Sign in with Google to keep using Plip. It’s free, and your account is only your name, email and picture."
+      footer={<><Back onClick={back} />{user && <Forward onClick={next} glow />}</>}
+    >
+      {user ? (
+        <Card className="flex items-center gap-4 p-5">
+          <Avatar user={user} size={44} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[15px] font-semibold tracking-tight">{user.name || user.email}</div>
+            {user.name && <div className="truncate text-[12.5px] text-white/50">{user.email}</div>}
+          </div>
+          <Check className="size-5 text-emerald-300" strokeWidth={3} />
+        </Card>
+      ) : (
+        <Card className="px-6 pb-3 pt-7"><GoogleSignIn state={state} /></Card>
+      )}
+      <div className="mt-4 flex items-center gap-1.5 text-[11.5px] text-white/35">
+        <Lock className="size-3.5 shrink-0 text-mint" /> What you ask, your screen and your memory stay on this Mac.
+        <button className="text-white/45 underline-offset-2 hover:text-white/70 hover:underline" onClick={() => send('open-url', { url: PRIVACY_URL })}>Privacy</button>
+      </div>
+    </Frame>
+  )
+}
+
+// -- 5. all set ------------------------------------------------------------------------------------
 
 const EXAMPLES = [
   { icon: Eye, text: 'What does this error mean?', hint: 'Reads your screen and explains' },

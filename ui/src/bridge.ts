@@ -95,7 +95,7 @@ export interface Engine {
   connect?: ConnectProgress  // install + browser sign-in progress
 }
 
-export type TourStep = 'welcome' | 'permissions' | 'brain' | 'try' | 'done'
+export type TourStep = 'welcome' | 'permissions' | 'brain' | 'try' | 'signin' | 'done'
 
 export interface LiveState {
   phase: 'idle' | 'listening' | 'thinking' | 'answering' | 'done' | 'error'
@@ -213,10 +213,10 @@ export interface UsageState {
   billed: number
 }
 
-/** Signing in (with Google, through Supabase) before Plip works. Builds without a sign-in project never ask. */
+/** Signing in (with Google, through Supabase), at the tour's end. Builds without a sign-in project never ask. */
 export interface AccountState {
   available: boolean         // this build has sign-in
-  required: boolean          // not signed in yet: the sign-in screen comes first
+  required: boolean          // not signed in yet: the tour's last step, or the sign-in screen after it
   status?: '' | 'waiting' | 'failed'
   error?: string
   url?: string               // the sign-in page, while waiting

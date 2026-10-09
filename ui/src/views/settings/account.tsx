@@ -46,11 +46,53 @@ export function Avatar({ user, size = 20, className }: { user: User; size?: numb
   )
 }
 
-/** The first thing anyone sees: sign in with Google, then the tour (or straight to Plip). */
-export function SignIn({ state }: { state: SettingsState }) {
+/** Continue with Google, and what's happening while the browser is out. */
+export function GoogleSignIn({ state, className }: { state: SettingsState; className?: string }) {
   const { status, error } = state.account
   const waiting = status === 'waiting'
   const failed = status === 'failed'
+  return (
+    <div className={cn('flex flex-col items-center', className)}>
+      <button
+        onClick={() => send('account-sign-in', { provider: 'google' })}
+        disabled={waiting}
+        className={cn(
+          'inline-flex h-12 w-full max-w-[320px] items-center justify-center gap-3 rounded-full bg-white px-6 text-[15px] font-semibold tracking-tight text-slate-950 transition',
+          'shadow-[inset_0_-2px_0_rgba(0,0,0,0.08),0_10px_30px_-10px_rgba(156,194,250,0.55)] hover:bg-plip-50 active:scale-[0.98] disabled:cursor-default disabled:opacity-70 disabled:active:scale-100',
+        )}
+      >
+        {waiting ? <LoaderCircle className="size-5 animate-spin text-plip-500" /> : <GoogleMark />}
+        {waiting ? 'Waiting for Google…' : failed ? 'Try again with Google' : 'Continue with Google'}
+      </button>
+
+      <div className="mt-4 min-h-[44px] text-center">
+        <AnimatePresence mode="wait">
+          {waiting && (
+            <motion.div key="waiting" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-white/45">
+              Finish signing in in your browser, then come back here.
+              <div className="mt-1.5 flex items-center justify-center gap-1">
+                <Button size="sm" variant="quiet" onClick={() => send('account-open')}>Open the page again</Button>
+                <span className="text-white/20">·</span>
+                <Button size="sm" variant="quiet" onClick={() => send('account-cancel')}>Cancel</Button>
+              </div>
+            </motion.div>
+          )}
+          {failed && (
+            <motion.div key="failed" role="alert" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="max-w-[360px] text-[12.5px] leading-relaxed text-rose-300/90">
+              {error || 'Sign-in didn’t finish. Try again.'}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  )
+}
+
+/** Signed out after the tour: sign in with Google before Plip works again. */
+export function SignIn({ state }: { state: SettingsState }) {
+  const waiting = state.account.status === 'waiting'
+  const failed = state.account.status === 'failed'
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-ink text-white noise">
       <div className="pointer-events-none absolute -left-48 -top-64 size-[560px] rounded-full bg-plip-500/[0.14] blur-[130px] animate-aurora" />
@@ -69,39 +111,7 @@ export function SignIn({ state }: { state: SettingsState }) {
           </div>
           <h1 className="text-gradient text-[36px] font-semibold leading-none tracking-[-0.045em]">Welcome to Plip.</h1>
           <p className="mt-3 text-[15px] text-white/50">A little helper that lives in your notch.</p>
-
-          <button
-            onClick={() => send('account-sign-in', { provider: 'google' })}
-            disabled={waiting}
-            className={cn(
-              'mt-12 inline-flex h-12 w-full max-w-[320px] items-center justify-center gap-3 rounded-full bg-white px-6 text-[15px] font-semibold tracking-tight text-slate-950 transition',
-              'shadow-[inset_0_-2px_0_rgba(0,0,0,0.08),0_10px_30px_-10px_rgba(156,194,250,0.55)] hover:bg-plip-50 active:scale-[0.98] disabled:cursor-default disabled:opacity-70 disabled:active:scale-100',
-            )}
-          >
-            {waiting ? <LoaderCircle className="size-5 animate-spin text-plip-500" /> : <GoogleMark />}
-            {waiting ? 'Waiting for Google…' : failed ? 'Try again with Google' : 'Continue with Google'}
-          </button>
-
-          <div className="mt-4 min-h-[44px]">
-            <AnimatePresence mode="wait">
-              {waiting && (
-                <motion.div key="waiting" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-white/45">
-                  Finish signing in in your browser, then come back here.
-                  <div className="mt-1.5 flex items-center justify-center gap-1">
-                    <Button size="sm" variant="quiet" onClick={() => send('account-open')}>Open the page again</Button>
-                    <span className="text-white/20">·</span>
-                    <Button size="sm" variant="quiet" onClick={() => send('account-cancel')}>Cancel</Button>
-                  </div>
-                </motion.div>
-              )}
-              {failed && (
-                <motion.div key="failed" role="alert" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  className="max-w-[360px] text-[12.5px] leading-relaxed text-rose-300/90">
-                  {error || 'Sign-in didn’t finish. Try again.'}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          <GoogleSignIn state={state} className="mt-12 w-full" />
         </motion.div>
       </main>
 

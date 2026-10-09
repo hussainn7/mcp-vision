@@ -307,9 +307,10 @@ await test('settings: general (companion style, walkthroughs, tour)', async () =
   await page.close()
 })
 
-await test('onboarding: plain steps, a brain without a terminal, practice, kept across a restart', async () => {
+await test('onboarding: plain steps, a brain without a terminal, practice, then sign in last', async () => {
   const { page, take } = await open('settings?tab=home')
   await page.evaluate(() => window.__plip({ type: 'settings', state: { onboarded: false, tour: { step: 'welcome' },
+    account: { available: true, required: true, status: '', user: null },
     permissions: { screen: true, accessibility: null, microphone: true, speech: null }, voice: { tts: 'say', stt: 'apple', elevenlabs: false, assemblyai: false },
     engines: [
       { id: 'claude-code', label: 'Claude', via: 'Claude Pro / Max via Claude Code', kind: 'subscription', status: 'not-installed' },
@@ -335,9 +336,30 @@ await test('onboarding: plain steps, a brain without a terminal, practice, kept 
     answer: 'I can see your screen and point at things.', error: '', at: Date.now() / 1000 + 5 } } }))
   await page.getByText('That’s all there is to it').waitFor()
   await page.getByRole('button', { name: 'Continue' }).click()
-  await page.getByText('You’re all set').waitFor()
+  await page.getByText('Last step: sign in').waitFor()                               // after they've seen it work
+  assert.equal(await page.getByRole('button', { name: 'Skip setup' }).count(), 0)
+  await page.getByRole('button', { name: 'Continue with Google' }).click()
+  assert.deepEqual(await take('account-sign-in'), { cmd: 'account-sign-in', provider: 'google' })
+  await page.getByText('You’re signed in').waitFor({ timeout: 4000 })                 // the preview "comes back" signed in
+  await page.getByText('You’re all set').waitFor({ timeout: 4000 })                  // and moves on by itself
   await page.getByRole('button', { name: 'Start using Plip' }).click()
   assert.ok(await take('finish-onboarding'))
+  await page.close()
+})
+
+await test('onboarding: skip setup lands on sign-in, and a build without sign-in has no such step', async () => {
+  const { page, take } = await open('settings?tab=home')
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { onboarded: false, tour: { step: 'welcome' },
+    account: { available: true, required: true, status: '', user: null } } }))
+  await page.getByText('Hi, I’m Plip').waitFor()                                     // the tour, not the sign-in wall
+  await page.getByRole('button', { name: 'Skip setup' }).click()
+  assert.deepEqual(await take('tour-go'), { cmd: 'tour-go', step: 'signin' })
+  await page.getByText('Last step: sign in').waitFor()
+  await page.getByText('Step 4 of 4').waitFor()
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { tour: { step: 'try' }, account: { available: false, required: false } } }))
+  await page.getByRole('button', { name: 'Try it later' }).click()
+  assert.deepEqual(await take('tour-go'), { cmd: 'tour-go', step: 'done' })
+  await page.getByText('You’re all set').waitFor()
   await page.close()
 })
 
@@ -442,7 +464,7 @@ await test('guide: the permission card says what to drag, closes, and shows the 
   await page.close()
 })
 
-await test('sign in: google comes first, then plip; sign out brings it back', async () => {
+await test('sign in: signed out after setup, the sign-in screen comes first; sign out brings it back', async () => {
   const { page, take } = await open('settings?signin')
   assert.equal(await page.locator('nav').count(), 0)                     // nothing else until they sign in
   await page.getByRole('button', { name: 'Continue with Google' }).click()

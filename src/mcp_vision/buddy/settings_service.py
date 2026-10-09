@@ -20,7 +20,7 @@ from mcp_vision.buddy.store import History, Prefs, config_dir
 
 KEY_NAMES = {"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
 DEPTHS = {"fast", "balanced", "deep"}
-TOUR_STEPS = ("welcome", "permissions", "brain", "try", "done")
+TOUR_STEPS = ("welcome", "permissions", "brain", "try", "signin", "done")
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
 # pasted key shapes: Google AI Studio, Anthropic
@@ -67,7 +67,7 @@ class SettingsService:
     action_log: Any = None                                 # buddy.actions.ActionLog (for stats)
     usage: Any = None                                      # buddy.usage.UsageLog (the Usage tab)
     parakeet: Any = None                                   # buddy.parakeet.ParakeetModel (the opt-in download)
-    account: Any = None                                    # buddy.account.Account (sign in before Plip works)
+    account: Any = None                                    # buddy.account.Account (sign in at the tour's end)
     updates: Any = None                                    # buddy.updates.Updates (a newer Plip is out)
     check_updates: Callable[[], None] = lambda: None       # ask GitHub now, in the background
     connector: Any = None                                  # buddy.connect.Connector (one-click Connect)

@@ -200,10 +200,10 @@ memory and sign-in stay. Turn it off in **Settings → General → Tell me about
 
 ## Your account
 
-The download asks you to sign in with Google once, before anything else. Sign-in goes through Supabase Auth,
-Plip's account server: Google tells it your name, email address and profile picture, and it keeps your account
-(name, email, the link to your Google profile picture, when you joined and when you last signed in). That's how
-we know who uses Plip.
+The download asks you to sign in with Google once, at the end of the welcome tour (you get to try Plip first:
+a few asks). Sign-in goes through Supabase Auth, Plip's account server: Google tells it your name, email address
+and profile picture, and it keeps your account (name, email, the link to your Google profile picture, when you
+joined and when you last signed in). That's how we know who uses Plip.
 
 - On this Mac, `~/.config/mcp-vision/account.json` (readable only by you) keeps your name, email, your Google
   picture (downloaded once, to show in Settings) and the sign-in session.

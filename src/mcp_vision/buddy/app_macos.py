@@ -337,10 +337,10 @@ def run_buddy_app() -> None:
     usage_log = UsageLog()                # the Usage tab: one row per request
     from mcp_vision.buddy.account import Account
 
-    # Sign in once with Google before Plip works (only in builds with a sign-in project).
+    # Sign in once with Google, at the tour's end (only in builds with a sign-in project).
     account = Account(state["settings"].supabase_url, state["settings"].supabase_key, open_url=_open_url,
                       on_change=lambda: AppHelper.callAfter(account_changed),
-                      on_signed_in=lambda: AppHelper.callAfter(signed_in))
+                      on_signed_in=lambda: AppHelper.callAfter(signed_in), trying=lambda: Prefs.load().trying)
     state["signed_in"] = not account.required
 
     def main(fn):
@@ -470,14 +470,31 @@ def run_buddy_app() -> None:
         call_later=lambda delay, fn: AppHelper.callLater(delay, fn),
         on_main=lambda fn, *args: AppHelper.callAfter(fn, *args),
         on_result=lambda transcript, result: record(transcript, result),
-        on_setup_needed=lambda _message: None if state["building"] else open_settings(
-            "home" if account.required else "brain"),
+        on_setup_needed=lambda _message: None if state["building"] else setup_needed(),
         setup_error="Plip is still waking up. Try again in a second.",
         press_delay=BuddyController.PRESS_DELAY,
         sound=sounds.play,
     )
 
+    def setup_needed() -> None:
+        if not account.required:
+            open_settings("brain")
+            return
+        if not Prefs.load().onboarded:
+            service.handle({"cmd": "tour-go", "step": "signin"})      # free tries used up: the tour's sign-in step
+        open_settings("home")
+
+    def count_try() -> None:
+        """Signed out in the tour: each answered ask uses a free try."""
+        prefs = Prefs.load()
+        prefs.tries += 1
+        prefs.save()
+        if not prefs.trying:
+            update_setup_error()
+
     def record(transcript: str, result) -> None:
+        if result.state == "done" and account.required:
+            AppHelper.callAfter(count_try)
         if result.state == "done" and result.spoken:
             badge = getattr(controller.companion, "brain", None)
             history.add(transcript, result.spoken, engine=getattr(badge, "label", ""))
@@ -772,7 +789,7 @@ def run_buddy_app() -> None:
     threading.Thread(target=watch_updates, daemon=True, name="plip-updates").start()      # a newer Plip?
 
     if account.required or not prefs.onboarded:
-        # Sign-in first, then the welcome walkthrough until it calls finish-onboarding.
+        # The welcome walkthrough (sign-in is its last step), or the sign-in screen if they signed out.
         AppHelper.callLater(0.8, lambda: open_settings("home"))
 
     log.info("plip running (hotkey=%s, web=%s)", controller.hotkey_mode, web)

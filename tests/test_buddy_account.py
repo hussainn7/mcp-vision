@@ -75,7 +75,7 @@ def test_no_project_means_no_sign_in(tmp_path):
 
 def test_google_sign_in_with_pkce_keeps_the_session_private(tmp_path):
     acct, supabase, opened, events = account(tmp_path, (200, SESSION))
-    assert acct.required and acct.blocker == "Sign in to Plip to start using it."
+    assert acct.required and acct.blocker == "Sign in to keep using Plip."
     assert acct.start("google")
     assert acct.status == "waiting" and opened == [acct.link] and acct.snapshot()["url"] == acct.link
     link = urlparse(acct.link)
@@ -224,6 +224,16 @@ def test_no_picture_or_a_bad_one_keeps_the_initial(tmp_path):
         assert acct.snapshot()["user"]["picture"] == ""
     from mcp_vision.buddy.account import fetch_picture
     assert fetch_picture("http://lh3.example/a") is None and fetch_picture("file:///etc/passwd") is None
+
+
+def test_the_tour_lets_plip_work_before_sign_in_then_asks(tmp_path):
+    trying = [True]
+    acct, *_ = account(tmp_path, trying=lambda: trying[0])
+    assert acct.required and acct.blocker == ""                               # the free tries: it just works
+    trying[0] = False
+    assert acct.blocker == "Sign in to keep using Plip."                      # then sign in to keep going
+    acct._keep(SESSION)
+    assert acct.blocker == "" and not acct.required
 
 
 def test_sign_out_forgets_here_and_tells_supabase(tmp_path):

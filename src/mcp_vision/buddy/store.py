@@ -9,6 +9,8 @@ from pathlib import Path
 
 from mcp_vision.paths import state_dir
 
+FREE_TRIES = 3                       # asks before signing in, during the welcome tour (its try step + a retry or two)
+
 
 def config_dir() -> Path:
     return Path(os.environ.get("MCP_VISION_CONFIG_DIR", Path.home() / ".config" / "mcp-vision"))
@@ -26,8 +28,14 @@ class Prefs:
     stt: str = ""
     onboarded: bool = False
     tour_step: str = ""              # welcome tour step, resumed after a restart
+    tries: int = 0                   # asks answered before signing in
     update_check: bool = True        # once a day, ask GitHub whether a newer Plip is out
     hotkey: str = "control+option"   # hold to talk: one of hotkey.CHORDS
+
+    @property
+    def trying(self) -> bool:
+        """First run: Plip works before sign-in for a few asks, so people see it work first."""
+        return not self.onboarded and self.tries < FREE_TRIES
 
     @classmethod
     def load(cls, path: Path | None = None) -> Prefs:

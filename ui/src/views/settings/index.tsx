@@ -99,7 +99,7 @@ export function Settings() {
   const engine = state.engines.find((item) => item.selected)
   const ready = engine && (engine.status === 'ready' || engine.status === 'unknown')
 
-  if (state.account.required) return <SignIn state={state} />
+  if (state.account.required && state.onboarded !== false) return <SignIn state={state} />   // first run signs in at the tour's end
   const user = state.account.user
 
   return (

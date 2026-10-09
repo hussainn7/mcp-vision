@@ -34,7 +34,7 @@ See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Sign-in
 
-A build with a Supabase project asks everyone to sign in with Google before Plip works
+A build with a Supabase project asks everyone to sign in with Google at the end of the welcome tour
 (`src/mcp_vision/buddy/account.py`); without one, nobody is asked. Once:
 
 1. Google Cloud Console → **Google Auth Platform** (OAuth consent screen): app name Plip, logo, your support email,
