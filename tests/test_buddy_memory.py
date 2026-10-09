@@ -209,12 +209,14 @@ def test_ai_memory_paste_maps_known_keys_and_keeps_the_rest_as_notes():
 
 def test_remember_and_forget_actions(memory):
     engine = ActionEngine(ActionContext(host=FakeHost(), memory=memory))
+    engine.ctx.state["said"] = "remember that i like aisle seats"         # their own words ask for it
     done = asyncio.run(engine.handle("remember", {"fact": "my seat preference is aisle"}))
     assert done.status == "done" and memory.best("note").value == "my seat preference is aisle"
     private = asyncio.run(engine.handle("remember", {"fact": "passport number: X1234567"}))
     assert "keep that private" in private.result.say
     assert asyncio.run(engine.handle("remember", {"fact": "email: new@example.com"})).status == "done"
     assert "new@example.com" in memory.values("email")
+    engine.ctx.state["said"] = "forget my seat preference"
     gone = asyncio.run(engine.handle("forget", {"about": "seat preference"}))
     assert gone.status == "done" and all("seat" not in fact.value for fact in memory.facts)
     assert asyncio.run(engine.handle("forget", {"about": "dragons"})).status == "failed"

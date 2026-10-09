@@ -406,6 +406,8 @@ class Companion:
                 self.emit("confirm", cleared=True)
         # "Yes" to Plip's "want me to send it?" was the confirmation: the step it named doesn't ask again.
         self._consent = Consent.given(transcript, asked)
+        if self.actions is not None:
+            self.actions.ctx.state["said"] = transcript    # their own words: only these can save or forget a fact
         waiting, self._goal_waiting = self._goal_waiting, False
         if self._goal and CONTINUE_RE.match(transcript):
             return await self._resume(transcript)       # the same steps, picked back up: a retype is still a repeat
