@@ -311,6 +311,7 @@ def run_buddy_app() -> None:
     from mcp_vision.buddy.presenter import Presenter
     from mcp_vision.buddy.settings import load_settings
     from mcp_vision.buddy.settings_service import Platform, SettingsService
+    from mcp_vision.buddy.sounds import Sounds
     from mcp_vision.buddy.speech_in import ListenerCallbacks, make_listener
     from mcp_vision.buddy.usage import UsageLog
     from mcp_vision.buddy.store import History, Prefs
@@ -357,6 +358,8 @@ def run_buddy_app() -> None:
     else:
         log.warning("WebKit bridge unavailable; using the native cursor overlay (pip install pyobjc-framework-WebKit)")
         mascot = BuddyOverlay(visible=prefs.buddy)
+
+    sounds = Sounds(enabled=lambda: Prefs.load().sounds)
 
     def touring() -> None:
         """The welcome tour's "try it" step shows the request as it goes: only while the tour is open."""

@@ -104,6 +104,7 @@ class SettingsService:
             "engines": engines,
             "depth": prefs.depth if prefs.depth in DEPTHS else "balanced",
             "walkthroughs": prefs.walkthroughs,
+            "sounds": prefs.sounds,
             "permissions": {"screen": perms.get("screenRecording"), "accessibility": perms.get("accessibility"),
                             "microphone": perms.get("microphone"), "speech": perms.get("speechRecognition"),
                             "restart": bool(perms.get("restart")), "guiding": str(perms.get("guiding") or "")},
@@ -246,6 +247,12 @@ class SettingsService:
 
     def _cmd_set_walkthroughs(self, command):
         self._update_prefs(walkthroughs=bool(command.get("enabled")))
+
+    def _cmd_set_sounds(self, command):
+        prefs = self.prefs
+        prefs.sounds = bool(command.get("enabled"))
+        prefs.save(self.prefs_path)                    # read on every sound: no brain rebuild
+        self.push()
 
     def _cmd_set_voice(self, command):
         changes = {}

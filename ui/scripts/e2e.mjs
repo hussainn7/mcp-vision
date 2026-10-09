@@ -218,6 +218,8 @@ await test('settings: general (companion style, walkthroughs, tour)', async () =
   assert.deepEqual((await take('set-companion')), { cmd: 'set-companion', style: 'cursor' })
   await page.getByRole('switch', { name: 'Guided walkthroughs' }).click()
   assert.deepEqual((await take('set-walkthroughs')), { cmd: 'set-walkthroughs', enabled: false })
+  await page.getByRole('switch', { name: 'Sounds' }).click()
+  assert.deepEqual((await take('set-sounds')), { cmd: 'set-sounds', enabled: false })
   await page.getByRole('button', { name: /Replay the welcome tour/ }).click()
   assert.ok(await take('tour-start'))
   await page.getByText('Hi, I’m Plip').waitFor()

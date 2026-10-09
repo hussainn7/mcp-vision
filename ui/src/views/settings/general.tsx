@@ -44,6 +44,11 @@ export function GeneralTab({ state, composer: initial = null }: { state: Setting
             detail="A checklist in the notch. Plip waits for you and re-checks each step."
             action={<Toggle label="Guided walkthroughs" checked={state.walkthroughs} onChange={(enabled) => send('set-walkthroughs', { enabled })} />}
           />
+          <Row
+            title="Sounds"
+            detail="A soft plip when the notch opens or you let go of ⌃⌥, a little bounce when a task is done."
+            action={<Toggle label="Sounds" checked={state.sounds} onChange={(enabled) => send('set-sounds', { enabled })} />}
+          />
         </Rows>
       </Section>
 

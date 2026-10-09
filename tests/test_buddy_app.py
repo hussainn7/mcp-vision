@@ -308,6 +308,7 @@ def test_settings_snapshot_shape(service):
                                        "restart": False, "guiding": ""}
     assert snapshot["voice"]["tts"] == "say" and snapshot["voice"]["stt"] == "apple"
     assert snapshot["keys"]["ANTHROPIC_API_KEY"] is False and snapshot["history"] == []
+    assert snapshot["sounds"] is True
 
 
 def test_the_welcome_walkthrough_keeps_its_step_and_watches_the_practice_ask(service):
@@ -347,6 +348,9 @@ def test_settings_commands_persist_and_reload(service):
     assert (prefs.engine, prefs.depth, prefs.walkthroughs, prefs.tts, prefs.stt) == (
         "claude-code", "deep", False, "off", "")
     assert calls["reload"] == 4
+    svc.handle({"cmd": "set-sounds", "enabled": False})
+    assert Prefs.load(tmp_path / "prefs.json").sounds is False
+    assert calls["reload"] == 4 and calls["posted"][-1]["state"]["sounds"] is False     # no brain rebuild for this
 
 
 def test_settings_keys_are_whitelisted_and_private(service):
