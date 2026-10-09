@@ -489,3 +489,20 @@ def test_the_shortcut_warnings_button_and_the_voice_test_use_what_the_app_handle
     svc.handle({"cmd": "set-hotkey", "id": "option+command"})
     svc.handle({"cmd": "test-voice"})
     assert ("say", "Hey, I'm Plip. Hold option and command, and ask me anything.") in calls["platform"]
+
+
+def test_a_task_shows_what_its_working_toward_and_which_step_and_keeps_it_across_steps():
+    from mcp_vision.buddy.presenter import Presenter
+
+    posted = []
+    view = Presenter(post_island=posted.extend)
+    view("goal", {"text": "add the cheapest hub to my cart", "done": False})
+    view("goal", {"text": "add the cheapest hub to my cart", "done": False, "step": 2})
+    view("phase", {"phase": "thinking", "guide": True})            # the next step: the chip stays
+    chips = [m["step"] for m in posted if m.get("type") == "step"]
+    assert chips[-2:] == [{"id": "goal", "label": "Goal: add the cheapest hub to my cart", "status": "active",
+                           "detail": "step 2"}] * 2
+    view("goal", {"text": "add the cheapest hub to my cart", "paused": True})
+    assert posted[-1]["step"]["detail"] == "say keep going" and posted[-1]["step"]["status"] == "skipped"
+    view("goal", {"text": "add the cheapest hub to my cart", "done": True})
+    assert posted[-1]["step"]["status"] == "done"

@@ -395,7 +395,7 @@ function ConfirmCard() {
         </ul>
       )}
       <div className="mt-3 flex items-center justify-between">
-        <span className="text-[11px] text-white/35">or just say “yes”</span>
+        <span className="flex items-center gap-1 text-[11px] text-white/35">or hold <Chord className="h-5 min-w-5 rounded-md px-1 text-[10px]" /> and say yes</span>
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => send('confirm-action', { accept: false })}

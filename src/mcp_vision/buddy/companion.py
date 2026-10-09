@@ -566,7 +566,7 @@ class Companion:
             self._goal_waiting = True                 # it asked them something: their answer carries the task on
         elif self._goal and self._continues(result):
             # Out of steps but not done: say so instead of going quiet, and keep the goal for "keep going".
-            pause = "I'm pausing here so I don't run on forever. Say keep going and I'll pick it back up."
+            pause = "I'll check in with you here. Say keep going and I'll pick it back up."
             self.speaker.speak(pause)
             self.emit("answer", text=" " + pause)
             self.emit("goal", text=self._goal, done=False, paused=True)

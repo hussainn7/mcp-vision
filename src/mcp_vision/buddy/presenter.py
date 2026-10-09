@@ -26,6 +26,7 @@ class Presenter:
         self.phase = "idle"
         self.walkthrough: dict[str, Any] | None = None
         self.plan: list[str] = []
+        self.goal: dict[str, Any] | None = None       # the multi-step task's island step, kept across check-ins
 
     def _island(self, **state: Any) -> None:
         self.post_island([{"type": "island", "state": state}])
@@ -35,6 +36,7 @@ class Presenter:
         self.phase = "listening"
         self.walkthrough = None
         self.plan = []
+        self.goal = None
         self.post_island([{"type": "reset"}, {"type": "island", "state": {"phase": "listening"}}])
         self.set_mood("listening", 0.0)
 
@@ -78,8 +80,13 @@ class Presenter:
             self.phase = "thinking"
             state: dict[str, Any] = {"phase": "thinking", "done": False, "level": 0}
             if data.get("guide"):
-                # A walkthrough check-in: fresh step text, keep progress.
+                # A walkthrough check-in or a task's next step: fresh step text, keep progress.
                 state.update(answer="", steps=[], walkthrough=self.walkthrough)
+                if self.goal is not None:
+                    self._island(**state)
+                    self.post_island([{"type": "step", "step": dict(self.goal)}])
+                    self.set_mood("thinking", 0.0)
+                    return
             elif data.get("transcript"):
                 state["transcript"] = data["transcript"]
             self._island(**state)
@@ -118,7 +125,18 @@ class Presenter:
     def _on_done(self, data: dict[str, Any]) -> None:
         latency = data.get("latency_ms")
         self._island(done=True, latencyMs=round(latency) if isinstance(latency, (int, float)) else None)
-        self.set_mood("happy" if not self.walkthrough else "idle", 0.0)
+        working = self.walkthrough or (self.goal is not None and self.goal["status"] == "active")
+        self.set_mood("happy" if not working else "idle", 0.0)
+
+    def _on_goal(self, data: dict[str, Any]) -> None:
+        """A multi-step task: one chip that says what it's working toward and which step it's on."""
+        text = str(data.get("text") or "")[:80]
+        if not text:
+            return
+        status = "done" if data.get("done") else "skipped" if data.get("paused") else "active"
+        detail = "say keep going" if data.get("paused") else f"step {data['step']}" if data.get("step") else ""
+        self.goal = {"id": "goal", "label": f"Goal: {text}", "status": status, **({"detail": detail} if detail else {})}
+        self.post_island([{"type": "step", "step": dict(self.goal)}])
 
     def _on_error(self, data: dict[str, Any]) -> None:
         self.failed(data.get("message") or "Something went wrong.")
