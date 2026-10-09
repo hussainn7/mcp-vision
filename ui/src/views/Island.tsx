@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { AlertTriangle, Check, ChevronUp, Clock3, FileText, Settings2, Sparkles, Square, X } from 'lucide-react'
+import { AlertTriangle, Check, ChevronUp, Clock3, FileText, Settings2, Square, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { island, isNative, send, shortcut, useStore, type IslandState, type Mood, type Phase } from '../bridge'
 import { Mascot } from '../components/Mascot'
@@ -226,7 +226,7 @@ function RightEar({ mode, level, done, finished }: { mode: Mode; level: number; 
       </span>
     )
   if (mode === 'error') return <AlertTriangle className="size-3.5 text-coral" />
-  if (mode === 'peek') return <Sparkles className="size-3.5 text-plip-300" />
+  if (mode === 'peek') return <Waveform level={0.08} bars={5} color="bg-plip-200/70" />    // resting: hold to talk
   return <span className="size-1.5 rounded-full bg-plip-300/60 shadow-[0_0_8px_rgba(143,179,250,0.7)]" />
 }
 
