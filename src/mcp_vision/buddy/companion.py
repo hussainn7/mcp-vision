@@ -240,6 +240,7 @@ class Companion:
         self._goal_waiting = False                    # the task stopped to ask the user something
         self._rejected = 0                            # [DONE]s sent back this task because the last step didn't land
         self._extra_note = ""                         # one-turn context for the model ("you were working toward…")
+        self._goal_route: Route | None = None         # how the task's request was routed (its depth), for keep going
         self._trail: list[str] = []                   # the last few actions, to notice the same one on repeat
         self._hiccups = 0                             # steps that failed or went nowhere this task
         self._screens_seen: dict[str, int] = {}       # screens visited this task, to notice going in circles
@@ -294,6 +295,14 @@ class Companion:
         if self.context is not None:                  # the screen map too: a browser page can take ~0.3 s to walk
             self._mapped = (self.clock(), self._pool.submit(self._observe))
 
+    def _route_effort(self, route: Route) -> str | None:
+        """The effort a call on this route runs at, so a warm process matches it (a detailed ask steps it up)."""
+        effort_of = getattr(self.brain, "_effort", None)
+        try:
+            return effort_of(route.detailed) if effort_of is not None and route.detailed else None
+        except Exception:
+            return None
+
     def warm_brain(self, effort: str | None = None) -> None:
         """Have a brain process ready before the question exists (key press, app start). On the loop."""
         ensure = getattr(self.brain, "ensure_warm", None)
@@ -326,6 +335,8 @@ class Companion:
         """
         if token is not None:
             self._token = token
+        if self.actions is not None:
+            self.actions.ctx.generation += 1          # a long scroll for the turn being cut off stops between pushes
         self._stop_current()
 
     def _stop_current(self) -> None:
@@ -438,7 +449,8 @@ class Companion:
         """"Keep going": pick an unfinished goal back up with a fresh look and a fresh step budget."""
         self.emit("phase", phase="thinking", transcript=transcript, guide=False)
         self.emit("goal", text=self._goal, done=False)
-        result = TurnResult(transcript=transcript, acted=[f"the user said: {transcript}"], goal=self._goal)
+        result = TurnResult(transcript=transcript, acted=[f"the user said: {transcript}"], goal=self._goal,
+                            route=self._goal_route or Route())
         self._screens_seen = {}                       # a fresh go: old visits don't count toward "going in circles"
         return await self._drive(result)
 
@@ -461,6 +473,8 @@ class Companion:
         followups = 0
         goal = self._goal
         route = result.route                   # Plip's own follow-ups aren't routed again: same depth, same screens
+        if self._goal:
+            self._goal_route = route
         start = getattr(self, "_context", None)
         if self._goal and start is not None and not start.empty:     # the screen the task started from counts too
             self._screens_seen.setdefault(start.content_signature(), 1)
@@ -478,7 +492,7 @@ class Companion:
             seen = getattr(self, "_context", None)
             changes = result.settle is not None
             if bool(self._goal) or result.hands:
-                self.warm_brain(self._step_effort(result, result.acted))   # starts up while the screen settles
+                self.warm_brain(self._step_effort(result, result.acted) or self._route_effort(route))
             settled = await self._wait_for_screen(result)
             agent = bool(self._goal) or result.hands
             lines = list((result.acted if agent else result.reports) or ["(nothing else)"])
@@ -501,6 +515,10 @@ class Companion:
                                  "content as before, so it may not have loaded")
             moved = None if unchanged is None else not unchanged or bool(pixels)
             if agent and followups + 1 >= limit:
+                if moved is None and seen is not None and not seen.empty:   # no settle to go by: look now
+                    now = await asyncio.to_thread(self._observe)
+                    moved = bool(now is not None and not now.empty and now.signature() != seen.signature()) or \
+                        bool(await self._pixels_moved())
                 # More steps only for a task that's plainly getting somewhere: the screen moved on, nothing
                 # failed or went nowhere (now or more than once before), no [DONE] was sent back, no circling.
                 circling = max(self._screens_seen.values(), default=0) >= 3
@@ -509,8 +527,8 @@ class Companion:
                     limit += 5                        # still getting somewhere: a few more steps, not a pause
                 else:
                     lines.append("note: this is your last step before plip pauses for them. finish the goal if this "
-                                 "step does it; otherwise say in a few words where you got to and that you'll carry "
-                                 "on when they say keep going. never hand them the remaining steps to do.")
+                                 "step does it; otherwise say in a few words where you got to (plip tells them how to "
+                                 "carry on). never hand them the remaining steps to do.")
             if any(sign in line for line in lines for sign in _STUCK):
                 self._hiccups += 1
             reports = "\n".join(f"- {line}" for line in lines)
@@ -606,10 +624,14 @@ class Companion:
         """
         if not result.acted:
             return ""                                 # it looked at the results first, then said done: trust it
-        if self._rejected >= 2:
-            result.verified = False
-            return ""
         failed = [line for line in result.acted if " failed: " in line]
+        if self._rejected >= 2:
+            result.verified = False                   # stop going round, but never quietly call it done
+            if failed:
+                said = failed[-1].split(" failed: ", 1)[-1].split(" (", 1)[0].strip()
+                self.speaker.speak(f"I couldn't finish that. {said}")
+                self.emit("answer", text=f" I couldn't finish that. {said}")
+            return ""
         problem = ""
         if failed:
             problem = (f"note: you ended with [DONE], but {failed[-1]}. the goal isn't met yet: fix it another way "
@@ -718,6 +740,18 @@ class Companion:
                                  text + (f" (did: {'; '.join(result.did)})" if result.did else ""))
         self.emit("done", latency_ms=None, spoken=text)
         await self.speaker.drain()
+        if outcome.status == "done" and self._goal:
+            # The yes was one step of a bigger task: look again and keep going.
+            done = outcome.result
+            result.acted.append(f"{outcome.spec.name}: {done.report or 'done'}" if done else f"{outcome.spec.name}: done")
+            if done is not None:
+                result.look_after, result.settle = done.look_after, done.settle
+            result.hands = outcome.spec.skill == "control"
+            result.goal = self._goal
+            result.route = self._goal_route or result.route
+            return await self._drive(result)
+        if outcome.status != "done":
+            self._goal = ""
         return result
 
     # -- timers and other late announcements (called from worker threads) ------------------
@@ -749,9 +783,9 @@ class Companion:
         only goes out when the map is thin, the model asked to look, or the screen changed in a way the
         map can't show. A screenshot is ~1,400 tokens; most steps of a task don't need one.
         """
+        force = bool(self.actions is not None and self.actions.ctx.state.pop("force_image", False))
         if not (self.vision and shots):
             return [], ""
-        force = bool(self.actions is not None and self.actions.ctx.state.pop("force_image", False))
         digest = hashlib.sha1(b"".join(shot.data for shot in shots)).hexdigest()
         previous, self._last_image = getattr(self, "_last_image", None), digest
         if force:
@@ -925,11 +959,13 @@ class Companion:
             result.plan = reply.plan or result.plan
             result.goal = reply.goal or result.goal
             if result.pending and "?" not in result.spoken:
-                ask = f"{result.pending}. Say yes and I'll do it."
+                ask = f"Want me to {_spoken(result.pending)}? Say yes and I'll do it."
                 self.speaker.speak(ask)
                 self.emit("answer", text=(" " if result.spoken else "") + ask)
                 result.spoken = (result.spoken + " " + ask).strip()
-            self.conversation.record(record_as or transcript, _history_text(reply, result.targets, result.did),
+            self.conversation.record(record_as or transcript,
+                                     _history_text(reply, result.targets, result.did)
+                                     or ("(wrote a tool call as text; nothing was said)" if reply.leaked else ""),
                                      step=guide)
             self.emit("done", latency_ms=result.timings.get("first_speech"), spoken=result.spoken)
             if not self._continues(result):
@@ -1036,7 +1072,7 @@ class Companion:
             # About a minute of talking, more when they asked for depth. Past that it reads on screen:
             # a reply that long is something to read, not to listen to.
             budget = SPEECH_BUDGET * (2 if result.route.detailed else 1)
-            if result.said and result.said + len(event.text) > budget:
+            if result.held or (result.said and result.said + len(event.text) > budget):
                 result.held = True
             else:
                 result.said += len(event.text)
@@ -1133,7 +1169,7 @@ class Companion:
             result.settle = None
             seen, after = getattr(self, "_context", None), getattr(self, "_settled", None)
             if settled is not None and seen is not None and after is not None \
-                    and after.signature(values=False) != seen.signature(values=False):
+                    and after.signature(values=False, digits=False) != seen.signature(values=False, digits=False):
                 self.actions.ctx.state["stale_map"] = True    # the numbers the model saw are gone (typing moves none)
         label = spec.describe(tag.args) if spec else tag.name.replace("_", " ")
         self.emit("step", id=step_id, label=label, status="active")
@@ -1150,7 +1186,7 @@ class Companion:
             self.emit("step", id=step_id, label=label, status="done", detail="waiting for your OK")
             self.emit("confirm", title=preview.title, lines=preview.lines, confirm=preview.confirm, name=tag.name)
             return
-        if spec is not None and spec.skill == "control":
+        if spec is not None and spec.skill == "control" or (tag.name == "type_text" and "id" in tag.args):
             result.hands = True
         if outcome.status == "done":
             action_result = outcome.result
@@ -1183,7 +1219,7 @@ class Companion:
         result.hushed = True                          # what it wrote after this assumed it worked
         self.emit("step", id=step_id, label=label, status="failed", detail=outcome.message)
         self.emit("action", name=tag.name, status="failed", label=label, detail=outcome.message)
-        if self._goal:
+        if self._goal or result.hands or result.route.multistep:
             return                  # the next step hears about it and explains in its own words: no saying it twice
         self.speaker.speak(outcome.message)
         self.emit("answer", text=" " + outcome.message)
@@ -1200,7 +1236,7 @@ _AUTHORING = {"type_text", "replace_selection"}         # Plip's words in a fiel
 # Actions whose results the next step reads and judges, rather than just moving on from.
 _READING = {"read_page", "search_files", "look", "find_flights", "list_shortcuts", "run_shortcut", "web_search"}
 # Lines in a step's results that mean it didn't get anywhere.
-_STUCK = (" failed: ", "nothing on screen changed", "only the window title", "you ended with [DONE]")
+_STUCK = (" failed: ", "nothing on screen changed", "only the address", "you ended with [DONE]")
 
 
 def _region(frame: Rect | None, shot: Screenshot, size: tuple[int, int]) -> tuple[float, float, float, float]:
@@ -1230,6 +1266,15 @@ def _takes_effort(brain: Any) -> bool:
 def reply_asks(spoken: str) -> bool:
     """Does the reply end by asking the user something?"""
     return "?" in spoken.strip()[-160:]
+
+
+def _spoken(title: str) -> str:
+    """A confirm card's title as words to say: "Click “Buy now”" -> "click Buy now", "Press cmd+q" -> "press command Q"."""
+    words = title.replace("“", "").replace("”", "").strip()
+    keys = {"cmd": "command", "alt": "option", "opt": "option", "ctrl": "control", "esc": "escape"}
+    words = re.sub(r"\b(cmd|alt|opt|ctrl|esc)\b", lambda m: keys[m.group(1)], words)
+    words = re.sub(r"\+(\w)\b", lambda m: " " + m.group(1).upper(), words).replace("+", " ")
+    return words[:1].lower() + words[1:]
 
 
 def _question(spoken: str) -> str:

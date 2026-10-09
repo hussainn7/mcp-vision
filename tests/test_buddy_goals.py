@@ -237,3 +237,79 @@ def test_a_long_answer_reads_about_a_minute_aloud_and_leaves_the_rest_on_screen(
     spoken = "".join(line for line in speaker.said if line != "The rest is on screen.")
     assert len(spoken) <= 900 and speaker.said[-1] == "The rest is on screen."
     assert "Point number 39" in result.spoken                                   # still all in the answer text
+
+
+def test_saying_yes_to_one_step_of_a_task_carries_the_task_on():
+    host = Spotify()
+    host.open_now = True
+    host.snapshot = lambda: ScreenContext(app="Shop", controls=[Control("Buy now", "button", 600, 400),
+                                                               Control("Order 1234 placed", "text", 600, 500)])
+    companion, brain, speaker = buddy(host, '[GOAL: buy it and tell me the order number] [DO:click {"id": 1}]',
+                                      "it's order 1234. [DONE]")
+    first = asyncio.run(companion.respond("buy it and tell me the order number"))
+    assert first.pending == "Click “Buy now”"
+    done = asyncio.run(companion.respond("yes"))
+    assert len(brain.calls) == 2 and done.finished and companion._goal == ""         # it looked again and finished
+    assert "it's order 1234." in speaker.said
+
+
+def test_a_task_that_keeps_failing_says_so_instead_of_ending_quietly_as_done():
+    host = Spotify(play_works=False)
+    host.open_now = True
+    companion, _, speaker = buddy(host, *['[GOAL: play it] [DO:click {"id": 9}] playing. [DONE]'] * 3)
+    result = asyncio.run(companion.respond("play discover weekly"))
+    assert any(line.startswith("I couldn't finish that.") for line in speaker.said)
+    assert result.outcome == "unverified"                                            # "couldn't confirm", not done
+
+
+def test_the_speech_limit_stops_for_good_and_long_thinking_is_never_read():
+    long = "This is one very long sentence that goes on " * 25 + "."
+    companion, _, speaker = buddy(Spotify(), "Short opener here. " + long + " Short tail one. And the end.")
+    asyncio.run(companion.respond("tell me"))
+    assert "Short tail one." not in " ".join(speaker.said) and speaker.said[-1] == "The rest is on screen."
+    stream = ReplyStream()
+    chunks = ["<thinking>"] + ["they want the cart, let me plan this out carefully. "] * 200 + ["</thinking>Done."]
+    spoken = [e.text for chunk in chunks for e in stream.feed(chunk) if isinstance(e, SpeechChunk)]
+    spoken += [e.text for e in stream.close() if isinstance(e, SpeechChunk)]
+    assert spoken == ["Done."]
+    assert ReplyStream().feed("[ GOAL : buy it ] ok. ")[0] == GoalTag("buy it")
+
+
+def test_a_ticking_clock_doesnt_make_plip_refuse_its_own_next_click():
+    ticks = iter(range(1000))
+    host = Spotify()
+    host.open_now = True
+    host.snapshot = lambda: ScreenContext(app="Docs", controls=[Control("Bold", "button", 100, 100),
+                                                               Control("Italic", "button", 150, 100)],
+                                          texts=[Control(f"Saved {next(ticks)} seconds ago", "text", 600, 40)])
+    companion, _, _ = buddy(host, '[GOAL: format it] [DO:click {"id": 1}] [DO:click {"id": 2}] done. [DONE]')
+    asyncio.run(companion.respond("make it bold and italic"))
+    assert [call[0] for call in host.calls].count("click") == 2
+
+
+def test_the_spoken_ask_is_a_question_with_keys_said_as_words():
+    from mcp_vision.buddy.companion import _spoken
+
+    assert _spoken("Click “Buy now”") == "click Buy now" and _spoken("Press cmd+q") == "press command Q"
+    assert _spoken("Press cmd+shift+delete") == "press command shift delete"
+
+
+def test_a_long_scroll_stops_when_they_press_the_shortcut_again():
+    from mcp_vision.buddy.actions.control import SPECS as CONTROL
+
+    host = FakeHost()
+    engine = ActionEngine(ActionContext(host=host), CONTROL)
+    context = ScreenContext(app="Safari", texts=[Control("Section", "text", 700, 300)],
+                            scroll_areas=[Control("page", "scroll area", 756, 520, 1512, 880)])
+    engine.ctx.screen = ([], context)
+    scrolled = []
+
+    def observe():                                   # a page that keeps moving; they press the keys mid-way
+        scrolled.append(1)
+        if len(scrolled) == 3:
+            engine.ctx.generation += 1
+        return ScreenContext(app="Safari", texts=[Control(f"Section {len(scrolled)}", "text", 700, 300 + len(scrolled))],
+                             scroll_areas=context.scroll_areas)
+    engine.ctx.observe = observe
+    out = asyncio.run(engine.handle("scroll_to", {"text": "Pricing", "direction": "down"}))
+    assert out.status == "failed" and out.message == "Stopped." and len(host.calls) < 6

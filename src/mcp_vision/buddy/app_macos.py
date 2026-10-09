@@ -473,7 +473,8 @@ def run_buddy_app() -> None:
         menu.set_shortcut(picked)
         if island is not None:
             island.post([{"type": "shortcut", "state": picked.card()}])
-        update_setup_error()
+        if controller.companion is not None:          # at launch it's still waking up: don't say ready yet
+            update_setup_error()
 
     def build(probe: bool) -> None:
         """Worker thread: probe engines (spawns CLIs) and assemble a companion."""

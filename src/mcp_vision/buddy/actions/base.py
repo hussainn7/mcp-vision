@@ -60,6 +60,9 @@ class ActionContext:
     # A tiny gray thumbnail of the ~300 points around a global point (None: can't tell), so a scroll knows it
     # moved even where the map can't say (a blind page, a panel past the walk's caps).
     fingerprint: Callable[[float, float], bytes | None] = lambda x, y: None
+    # Bumped when they press the shortcut again: a long scroll still running on a worker thread for the turn that
+    # was cut off stops between pushes instead of scrolling on under the next request.
+    generation: int = 0
     animate: Callable[[float, float, str], Any] = lambda x, y, label: None   # Plip flies to where it acts
 
 

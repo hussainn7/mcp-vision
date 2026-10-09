@@ -105,7 +105,7 @@ class ScreenContext:
                 best, found = key, item
         return found
 
-    def signature(self, values: bool = True, skip: Collection[str] = ()) -> str:
+    def signature(self, values: bool = True, skip: Collection[str] = (), digits: bool = True) -> str:
         """Changes when what's on screen changes (app, page, controls and where they are, text, what's typed).
 
         ``values=False`` leaves out what's typed: the numbers the model has still point at the same fields.
@@ -114,7 +114,10 @@ class ScreenContext:
         parts = [self.app, self.window, self.url,
                  *(_spot(c) + (f"|{c.value}" if values and _spot(c) not in skip else "") for c in self.controls),
                  *(t.label for t in self.texts)]
-        return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
+        text = "\n".join(parts)
+        if not digits:                                # "saved 4 seconds ago" ticking isn't the page changing
+            text = _DIGITS.sub("#", text)
+        return hashlib.sha1(text.encode()).hexdigest()[:16]
 
     def holding(self, texts: Iterable[str]) -> set[str]:
         """The fields (by ``_spot``) that show one of these texts: the ones they were just typed into.

@@ -53,6 +53,11 @@ PAGE_LINES = 8                 # wheel steps (x3 lines each) per "page"
 MAX_SCROLL_TO = 15
 
 
+def _stop_if_cut_off(ctx: ActionContext, generation: int) -> None:
+    if ctx.generation != generation:
+        raise ActionError("Stopped.")
+
+
 def _screen(ctx: ActionContext):
     shots, context = ctx.screen if isinstance(ctx.screen, tuple) else ([], None)
     return list(shots or []), context
@@ -607,7 +612,9 @@ def _push(ctx: ActionContext, ways, direction: str, seen) -> _Push:
     (the map too for page keys, or when there are no pixels to watch)."""
     tried: list[str] = []
     stale = False                               # the pointer moved since ``seen`` was read
+    generation = ctx.generation
     for way in ways:
+        _stop_if_cut_off(ctx, generation)
         seen, pixels, mapped, stale = _before(ctx, way, seen, stale, first=not tried)
         if not way.push(direction):
             continue
@@ -685,7 +692,9 @@ def _scroll_all_the_way(ctx: ActionContext, spots, direction: str, seen) -> Acti
         return ActionResult(report=f"scrolled toward the {edge}; i can't tell from here if it's all the way",
                             look_after=0.3, detail=f"Scrolled toward the {edge}")
     way, seen, stopped = pushed.way, pushed.seen, pushed.way.jumps     # no map after: the pixels saw it
+    generation = ctx.generation
     for _ in range(0 if stopped else 9):
+        _stop_if_cut_off(ctx, generation)
         pixels = [_pixels(ctx, x, y) for x, y in way.watch]
         way.push(direction)
         moved, seen = _moved(ctx, seen, way, pixels, tries=4)
@@ -750,7 +759,9 @@ def scroll_to(ctx: ActionContext, args: dict) -> ActionResult:
     ways = _ways(ctx, spots, direction, PAGE_LINES, seen)
     way, start, tried, stale = next(ways), direction, [], False
     scrolls, still, turned, moved_ever, ended = 0, 0, False, False, False
+    generation = ctx.generation
     while found is None and way is not None and scrolls < limit * (2 if either_way else 1):
+        _stop_if_cut_off(ctx, generation)
         seen, pixels, _, stale = _before(ctx, way, seen, stale, first=True)     # it reads the map for the text anyway
         if not way.push(direction):
             way = next(ways, None)

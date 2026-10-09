@@ -115,7 +115,7 @@ def scan_special(raw: str) -> tuple[int, ActionTag | PlanTag | GoalTag | None] |
     Returns ``(length consumed, tag)``; the tag is ``None`` when malformed (it is
     dropped, never spoken). Returns ``None`` when more text is needed.
     """
-    head = raw[:7].upper().replace(" ", "")
+    head = raw[:12].upper().replace(" ", "")              # "[ GOAL : …" too
     if head.startswith("[PLAN:"):
         match = _PLAN_RE.match(raw)
         if match is None:
@@ -240,6 +240,7 @@ class ReplyStream:
         self.plan: tuple[str, ...] = ()
         self.goal = ""                     # set by [GOAL: ...]
         self.leaked = False                # it wrote a tool call out as text: nothing from there on is said
+        self._thinking = False             # inside a long <thinking> block: nothing until it closes
 
     @property
     def spoken_text(self) -> str:
@@ -249,6 +250,12 @@ class ReplyStream:
         if self.leaked:
             return []                                # it was waiting for a tool's result: none of it is said
         raw, self._raw = self._raw + delta, ""
+        if self._thinking:
+            end = _THINKING_END_RE.search(raw)
+            if end is None:
+                self._raw = raw[-24:]                # the closing tag may be split across chunks
+                return []
+            raw, self._thinking = raw[end.end():], False
         events: list[Event] = []
         while raw:
             start = _next_special(raw)
@@ -263,7 +270,7 @@ class ReplyStream:
                     break                            # it may still turn into markup: wait for more
                 raw = rest
                 continue
-            special = raw[:7].upper().replace(" ", "")
+            special = raw[:12].upper().replace(" ", "")
             if special.startswith(("[DO:", "[PLAN:", "[GOAL:")):
                 scanned = scan_special(raw)
                 if scanned is None:
@@ -329,6 +336,8 @@ class ReplyStream:
     def close(self) -> list[Event]:
         """Flush everything left at the end of the stream."""
         events: list[Event] = []
+        if self._thinking:
+            self._raw = ""                           # a thinking block that never closed: none of it is said
         for _ in range(32):
             leftover, self._raw = self._raw, ""
             if not leftover:
@@ -354,7 +363,10 @@ class ReplyStream:
             end = _THINKING_END_RE.search(raw)
             if end is not None:
                 return raw[end.end():]
-            if final or len(raw) > _MAX_ACTION_LEN:
+            if final:
+                return ""
+            if len(raw) > _MAX_ACTION_LEN:           # a long one: stop buffering it, but stay quiet till it closes
+                self._thinking, self._raw = True, raw[-24:]
                 return ""
             self._raw = raw
             return None

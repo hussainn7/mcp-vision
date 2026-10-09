@@ -342,7 +342,7 @@ def test_turn_asks_before_consequential_actions_and_voice_yes_runs_it(tmp_path):
     buddy, events, speaker = companion(brain, tmp_path=tmp_path)
     first = run(buddy.respond("clean up my desktop"))
     assert first.pending == "Tidy 10 files into 8 folders"
-    assert speaker.said[-1] == "Tidy 10 files into 8 folders. Say yes and I'll do it."
+    assert speaker.said[-1] == "Want me to tidy 10 files into 8 folders? Say yes and I'll do it."
     assert events.of("confirm")[0]["lines"][0] == "Screenshots: 2"
     assert (tmp_path / "Desktop" / "cat.jpg").exists()
     second = run(buddy.respond("yes please"))
