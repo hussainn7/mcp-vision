@@ -204,3 +204,21 @@ def test_the_card_doesnt_ask_again_after_they_said_yes_in_words():
     assert not second.pending and ("click", 600, 400) in host.calls                 # no second "are you sure"
     companion, _, _ = buddy(host, 'sending it. [DO:click {"id": 1}]')
     assert asyncio.run(companion.respond("send it")).pending == "Click “Send”"        # asked in their words: one card
+
+
+def test_a_tool_call_written_out_is_never_read_aloud_and_the_model_hears_why_once():
+    def said(*chunks):
+        stream = ReplyStream()
+        events = [event for chunk in chunks for event in stream.feed(chunk)] + stream.close()
+        return [e.text for e in events if isinstance(e, SpeechChunk)], stream.leaked
+
+    assert said("Sure, let me save it. <inv", 'oke name="Bash"><parameter name="command">cat > ~/x.txt</parameter>',
+                "</invoke> Saved it!") == (["Sure, let me save it."], True)
+    assert said("<thinking>they want the cart</thinking>Adding it now.") == (["Adding it now."], False)
+    assert said("if a < b, the loop stops early. ") == (["if a < b, the loop stops early."], False)
+    host = Spotify()
+    host.open_now = True
+    companion, brain, speaker = buddy(host, 'on it. <function_calls><invoke name="click">', "clicking play. [DONE]")
+    asyncio.run(companion.respond("play it"))
+    assert "you have no shell, terminal or file tools" in brain.calls[1][-1].text
+    assert not any("invoke" in line for line in speaker.said)

@@ -46,6 +46,12 @@ _MAX_ACTION_LEN = 6000               # fill_form tags carry every field
 _ACTION_HEAD_RE = re.compile(r"\[\s*DO\s*:\s*(?P<name>[a-z][a-z_]{1,40})\s*", re.IGNORECASE)
 _PLAN_RE = re.compile(r"\[\s*PLAN\s*:(?P<steps>[^\[\]]*)\]", re.IGNORECASE)
 _GOAL_RE = re.compile(r"\[\s*GOAL\s*:(?P<goal>[^\[\]]*)\]", re.IGNORECASE)
+# A tool call written out as text ("<invoke name=…>", "<function_calls>"), with or without a namespace: the brain
+# has no tools here, so it never ran, and it's never read out.
+_LEAK_RE = re.compile(r"<\s*(?:[\w-]+:)?(?:function_calls\s*>|invoke\s+name\s*=|parameter\s+name\s*=|"
+                      r"tool_(?:use|call|code)\b)", re.IGNORECASE)
+_THINKING_RE = re.compile(r"<\s*thinking\s*>", re.IGNORECASE)
+_THINKING_END_RE = re.compile(r"<\s*/\s*thinking\s*>", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -175,6 +181,12 @@ def scan_special(raw: str) -> tuple[int, ActionTag | PlanTag | GoalTag | None] |
     return None
 
 
+def _next_special(raw: str) -> int:
+    """Where the next tag ("[") or markup ("<") might start, or -1."""
+    found = [index for index in (raw.find("["), raw.find("<")) if index != -1]
+    return min(found) if found else -1
+
+
 def parse_tag(raw: str) -> PointTag | None:
     """Parse a single complete tag. ``[POINT:none]`` yields ``None``."""
     match = TAG_RE.fullmatch(raw.strip())
@@ -227,21 +239,30 @@ class ReplyStream:
         self.actions: list[ActionTag] = []
         self.plan: tuple[str, ...] = ()
         self.goal = ""                     # set by [GOAL: ...]
+        self.leaked = False                # it wrote a tool call out as text: nothing from there on is said
 
     @property
     def spoken_text(self) -> str:
         return " ".join(self.spoken)
 
     def feed(self, delta: str) -> list[Event]:
+        if self.leaked:
+            return []                                # it was waiting for a tool's result: none of it is said
         raw, self._raw = self._raw + delta, ""
         events: list[Event] = []
         while raw:
-            start = raw.find("[")
+            start = _next_special(raw)
             if start == -1:
                 self._text += raw
                 break
             self._text += raw[:start]
             raw = raw[start:]
+            if raw[0] == "<":
+                rest = self._angle(raw, events)
+                if rest is None:
+                    break                            # it may still turn into markup: wait for more
+                raw = rest
+                continue
             special = raw[:7].upper().replace(" ", "")
             if special.startswith(("[DO:", "[PLAN:", "[GOAL:")):
                 scanned = scan_special(raw)
@@ -265,6 +286,9 @@ class ReplyStream:
                 continue
             end = raw.find("]")
             inner = raw.find("[", 1)
+            leak = _LEAK_RE.search(raw, 1)
+            if leak is not None and (inner == -1 or leak.start() < inner):
+                inner = leak.start()                 # "[note <invoke …": the markup counts, not the bracket
             if inner != -1 and (end == -1 or inner < end):
                 # "array[0 ... [POINT:..]": the first bracket never closed, so it
                 # is prose; restart at the next bracket so the tag still parses.
@@ -309,6 +333,11 @@ class ReplyStream:
             leftover, self._raw = self._raw, ""
             if not leftover:
                 break
+            if leftover[0] == "<":
+                rest = self._angle(leftover, events, final=True)
+                if rest:
+                    events.extend(self.feed(rest))
+                continue
             if not re.match(r"\[\s*(?:POINT|STEPS|DONE|DO|PLAN|GOAL)\b", leftover, re.IGNORECASE):
                 self._text += leftover
                 break
@@ -318,6 +347,26 @@ class ReplyStream:
                 continue
             break                                    # a truncated tag with nothing after it: drop it
         return events + self._release(final=True)
+
+    def _angle(self, raw: str, events: list[Event], *, final: bool = False) -> str | None:
+        """``<`` at the start of ``raw``: a tool call written out as text, a <thinking> block, or prose ("a < b")."""
+        if _THINKING_RE.match(raw):
+            end = _THINKING_END_RE.search(raw)
+            if end is not None:
+                return raw[end.end():]
+            if final or len(raw) > _MAX_ACTION_LEN:
+                return ""
+            self._raw = raw
+            return None
+        if _LEAK_RE.match(raw):
+            events.extend(self._release(merge=False))  # what it said before the markup still counts
+            self.leaked = True
+            return ""
+        if not final and len(raw) < 48 and ">" not in raw and "\n" not in raw:
+            self._raw = raw                             # could still turn into markup
+            return None
+        self._text += raw[0]
+        return raw[1:]
 
     def _release(self, *, final: bool = False, merge: bool = True) -> list[Event]:
         if final:

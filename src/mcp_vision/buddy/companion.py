@@ -229,6 +229,7 @@ class Companion:
         self._trail: list[str] = []                   # the last few actions, to notice the same one on repeat
         self._hiccups = 0                             # steps that failed or went nowhere this task
         self._screens_seen: dict[str, int] = {}       # screens visited this task, to notice going in circles
+        self._leaks = 0                               # tool calls it wrote out as text this request
         self._asked = ""                              # the question Plip's last reply ended on
         self._consent = None                          # a yes they gave this request: the step it names won't ask
         self._authored = False                        # Plip typed something this request (they haven't seen it yet)
@@ -403,7 +404,7 @@ class Companion:
                 self._goal = ""                       # they moved on
             return await self._drive(result)
         self._goal = ""                               # a new request: any old task is over
-        self._trail, self._hiccups, self._screens_seen, self._rejected = [], 0, {}, 0
+        self._trail, self._hiccups, self._screens_seen, self._rejected, self._leaks = [], 0, {}, 0, 0
         result = await self._turn(transcript)
         if not self._goal and (result.acted or result.pending) and not result.finished and result.state == "done" \
                 and (result.route.multistep or result.hands):
@@ -569,7 +570,7 @@ class Companion:
             return None
         if any(report.split(":", 1)[0] in _READING for report in result.reports):
             return None                               # page text, search hits, a closer look: judge them properly
-        if self._rejected or any(" failed: " in line or line.startswith("note:") for line in lines):
+        if self._rejected or self._leaks or any(" failed: " in line or line.startswith("note:") for line in lines):
             return None
         if max(self._screens_seen.values(), default=0) >= 2:
             return None                               # back on a screen it's seen: think it through
@@ -869,6 +870,8 @@ class Companion:
                 await self._handle(event, shots, result, mark)
             mark("model_done")
             called = False
+            if reply.leaked:
+                self._leaked(result)
             reported = getattr(self.brain, "last_usage", None)
             self._meter_turn(meter, reported if isinstance(reported, Usage) else estimate(
                 text_tokens(system) + sum(text_tokens(t.text) for t in [*history, turn])
@@ -1026,6 +1029,17 @@ class Companion:
             self.emit("step", id=f"point-{len(result.targets)}", status="done",
                       label=f"Pointed at {target.label or 'it'}", detail="snapped" if target.source == "snapped" else "")
 
+
+    def _leaked(self, result: TurnResult) -> None:
+        """The model wrote a tool call out as text: it didn't run and wasn't read out. Tell it, once a request."""
+        self.emit("step", id="leak", label="Skipped a command I can't run", status="skipped")
+        self._leaks += 1
+        if self._leaks > 1:
+            return                                    # told once already: don't go round in circles
+        note = ("note: your reply wrote a tool call or shell command out as text. you have no shell, terminal or file "
+                "tools, so it didn't run, and nothing from there on was said. do it with [DO:…] actions instead.")
+        result.acted.append(note)
+        result.reports.append(note)
 
     async def _act(self, tag: ActionTag, result: TurnResult) -> None:
         if self.actions is None:
