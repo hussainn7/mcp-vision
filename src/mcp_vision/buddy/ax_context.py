@@ -1,20 +1,7 @@
 """macOS screen context from the Accessibility tree (safe off the main thread).
 
-Walks the frontmost app's open menus and focused window breadth-first under a
-node and time budget, keeping named, visible, interactive controls and the
-visible text, then its menu bar on its own (listed last, so a busy page never
-crowds it out and it never crowds the page).
-
-Visible means inside the window and inside every scroll area and web page
-around it. Apps still report what's scrolled away or hidden: Chrome keeps a
-full-screen window's toolbar and tabs above the screen, and pins links that
-scrolled off a page to the page's top edge as 1-2 pt slivers. Listed, those
-filled the map and sent the model's points and clicks to the wrong place.
-
-Chromium and Electron apps only build the tree for their pages once asked
-(``AXManualAccessibility``, or the older VoiceOver switch for browsers that
-refuse it). Until the page shows up the map says it's blind, so the step
-works from the screenshot instead of a menu bar posing as the page.
+BFS over open menus and the focused window, clipped to what's really visible, then the menu bar.
+Chromium/Electron pages appear only once asked (``AXManualAccessibility``); till then the map is blind.
 """
 from __future__ import annotations
 
@@ -35,21 +22,20 @@ _CONTAINER_ROLES = {"AXWindow", "AXGroup", "AXToolbar", "AXScrollArea", "AXSplit
                     "AXMenuBar", "AXMenuBarItem", "AXWebArea", "AXLayoutArea", "AXSheet", "AXDrawer",
                     "AXList", "AXOutline", "AXTable", "AXRadioGroup", "AXBrowser", "AXUnknown", "AXSplitter",
                     "AXMenu"}
-# What content is cut to: a window, and the viewport of a scroll area or web page inside it.
+# roles whose bounds clip their content
 _CLIP_ROLES = {"AXWindow", "AXScrollArea", "AXWebArea"}
-MIN_VISIBLE = 4.0                     # points: thinner than this on screen isn't something to point at
+MIN_VISIBLE = 4.0                     # pt: thinner isn't pointable
 _TYPED_ROLES = {"AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"}     # boxes you type in
-_VALUE_KEPT = 400             # characters of what's typed in a box the map keeps (a text area's last ones)
-_VALUE_MAX = 4000             # longer is a whole document or a terminal's scrollback: not copied on every look
-# Chromium browsers that ignore AXManualAccessibility still honor the older VoiceOver switch. By bundle id:
-# names drift (Chrome 154 calls itself "Chrome", not "Google Chrome").
+_VALUE_KEPT = 400             # chars of a box's value kept (a text area's last)
+_VALUE_MAX = 4000             # longer = a document/scrollback: not copied
+# Chromium bundle ids (names drift); these honor the older VoiceOver switch
 _CHROMIUM_IDS = {"com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev", "com.google.Chrome.canary",
                  "org.chromium.Chromium", "com.brave.Browser", "com.microsoft.edgemac", "company.thebrowser.Browser",
                  "company.thebrowser.dia", "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "ai.perplexity.comet"}
 _CHROMIUM = {"Google Chrome", "Chrome", "Chromium", "Brave Browser", "Microsoft Edge", "Arc", "Vivaldi", "Opera", "Dia",
              "Comet", "Google Chrome Canary"}
 _WEB_IDS = {"com.apple.Safari", "com.apple.SafariTechnologyPreview", "org.mozilla.firefox"}
-ASK_AGAIN = 3.0               # seconds between asks while an app's page still isn't in the map
+ASK_AGAIN = 3.0               # s between asks while a page is still missing
 
 
 class MacAXContext:
@@ -59,8 +45,8 @@ class MacAXContext:
         self.time_budget = time_budget
         self.max_controls = max_controls
         self.max_texts = max_texts
-        self._asked: dict[int, float] = {}  # pid -> when Plip last asked it to show its web content
-        self._exposed: set[int] = set()     # pids whose page has shown up in the map: no need to ask again
+        self._asked: dict[int, float] = {}  # pid -> last ask to expose web content
+        self._exposed: set[int] = set()     # pids whose page showed up: don't ask again
         self._kinds: dict[int, tuple[str, bool]] = {}
 
     def snapshot(self) -> ScreenContext:
@@ -77,7 +63,7 @@ class MacAXContext:
             pass
         app = _copy(AX, system, "AXFocusedApplication")
         if app is None or _pid(AX, app) == os.getpid():
-            return ScreenContext()            # nothing in front, or Plip's own windows: never describe those
+            return ScreenContext()            # nothing in front, or Plip's own windows
         return self._snapshot(AX, system, app)
 
     def _snapshot(self, AX: Any, system: Any, app: Any) -> ScreenContext:
@@ -96,7 +82,7 @@ class MacAXContext:
                 if isinstance(selected, str):
                     context.selection, context.selection_chars = selected[:SELECTION_LIMIT], len(selected)
         roots: list[Any] = []
-        # An open context menu or dropdown list is the app's own child, not the window's: list it first.
+        # open menus/dropdowns hang off the app, not the window
         for child in list(_copy(AX, app, "AXChildren") or [])[:20]:
             if _copy(AX, child, "AXRole") == "AXMenu":
                 roots.append(child)
@@ -106,7 +92,7 @@ class MacAXContext:
         if web:
             self._exposed.add(pid)
         elif window is not None and self._web_app(pid, context.app):
-            if asked:                                    # just switched on: the page builds its tree in a beat
+            if asked:                                    # just asked: the tree builds in a beat
                 time.sleep(0.2)
                 web = self._fill(AX, context, roots, app)
                 if web:
@@ -117,12 +103,12 @@ class MacAXContext:
     def _fill(self, AX: Any, context: ScreenContext, roots: list[Any], app: Any) -> bool:
         context.controls, context.texts, context.scroll_areas, context.url, web = self._walk_full(AX, roots)
         menu_bar = _copy(AX, app, "AXMenuBar")
-        if menu_bar is not None:                         # walked on its own: a busy page never crowds it out
+        if menu_bar is not None:                         # own walk: a busy page can't crowd it out
             context.controls += self._walk_full(AX, [menu_bar])[0]
         return web
 
     def _kind(self, pid: int) -> tuple[str, bool]:
-        """(bundle id, is it an Electron app) for a running app."""
+        """(bundle id, is Electron) for a pid."""
         if pid not in self._kinds:
             bundle, electron = "", False
             try:
@@ -140,12 +126,12 @@ class MacAXContext:
         return self._kinds[pid]
 
     def _web_app(self, pid: int, name: str) -> bool:
-        """Does this app show its content as a web page (so a map without one is blind)?"""
+        """Is its content a web page (so a map without one is blind)?"""
         bundle, electron = self._kind(pid)
         return electron or bundle in _CHROMIUM_IDS or bundle in _WEB_IDS or name in _CHROMIUM
 
     def _expose_web_content(self, AX: Any, app: Any, pid: int, name: str) -> bool:
-        """Ask Chromium/Electron apps to build the Accessibility tree for their pages. True: just asked."""
+        """Ask Chromium/Electron apps to build their page's AX tree; True if just asked."""
         now = time.monotonic()
         if pid < 0 or pid in self._exposed or now - self._asked.get(pid, -ASK_AGAIN) < ASK_AGAIN:
             return False
@@ -162,7 +148,7 @@ class MacAXContext:
         return True
 
     def read(self, *, node_cap: int = 6000, time_budget: float = 1.5) -> list[str]:
-        """Every text on the frontmost page or window, scrolled-out parts too, in reading order, as lines."""
+        """All text on the frontmost page/window, off-screen too, as lines in reading order."""
         try:
             import ApplicationServices as AX
         except ImportError:
@@ -196,10 +182,10 @@ class MacAXContext:
                     items.append(("text", value))
                 continue
             if role in {"AXTextField", "AXTextArea", "AXSecureTextField", "AXImage", "AXMenuBar"}:
-                continue                                # what's typed in boxes isn't the page's to read out
+                continue                                # typed text isn't page text
             children = list(_copy(AX, element, "AXChildren") or [])
             if role == "AXButton" and not children:
-                continue                                # a plain button ("Close", "Menu"): noise for reading
+                continue                                # plain button ("Close"): noise
             if not children and role in {"AXHeading", "AXLink"}:
                 own = _copy(AX, element, "AXTitle") or _copy(AX, element, "AXValue")
                 if isinstance(own, str) and own.strip():
@@ -212,8 +198,7 @@ class MacAXContext:
 
     def _walk_full(self, AX: Any, roots: list[Any]
                    ) -> tuple[list[Control], list[Control], list[Control], str, bool]:
-        """Breadth-first over (element, clip) pairs: controls, visible text, scroll areas, the page's address,
-        and whether a web page was in there (the map isn't blind to it)."""
+        """BFS over (element, clip): controls, texts, scroll areas, page url, and whether a web page was seen."""
         deadline = time.monotonic() + self.time_budget
         queue: deque[tuple[Any, Rect | None]] = deque((root, None) for root in roots)
         visited = 0
@@ -233,7 +218,7 @@ class MacAXContext:
                 if bounds is not None:
                     inside = bounds if clip is None else clip.intersect(bounds)
                     if inside is None:
-                        continue                  # scrolled away or hidden: nothing inside it is on screen
+                        continue                  # scrolled away or hidden
                     if role != "AXWindow" and len(areas) < 6 and bounds.width > 80 and bounds.height > 80:
                         name = _copy(AX, element, "AXDescription") or _copy(AX, element, "AXTitle") or \
                             ("page" if role == "AXWebArea" else "scroll area")
@@ -248,16 +233,15 @@ class MacAXContext:
             elif clip is not None and role in _CONTAINER_ROLES:
                 bounds = _bounds(AX, element)
                 if bounds is not None and bounds.width > 0 and bounds.height > 0 and clip.intersect(bounds) is None:
-                    continue                      # off screen (a long page's lower half): skip the whole subtree
+                    continue                      # off screen: skip the subtree
             if (role in CONTROL_ROLES and role not in _SKIP_ROLES) or role == "AXMenuBarItem":
                 bounds = _bounds(AX, element)
                 shown = bounds if bounds is None or clip is None else bounds.intersect(clip)
                 typed = role in _TYPED_ROLES
-                # An editor's stand-in box (google docs, vs code, math) is thinner than a 4 pt control anyway; a
-                # box goes by its title or placeholder, never by what's typed in it.
+                # a box goes by title/placeholder, never its value
                 name = "" if shown is None else _box_name(AX, element, role) if typed else _name(AX, element, role)
                 if shown is not None and shown.width >= MIN_VISIBLE and shown.height >= MIN_VISIBLE and name:
-                    x, y = shown.center           # the part on screen, so a half-scrolled control is still hit
+                    x, y = shown.center           # visible part: half-scrolled controls still hit
                     kind = _ROLE_NAMES.get(role, role.removeprefix("AX").lower())
                     key = (name, kind, round(x), round(y))
                     if key not in seen:           # Chrome lists its tab strip twice
@@ -276,7 +260,7 @@ class MacAXContext:
                     texts.append(Control(label=value.strip()[:200], role="text", x=x, y=y, w=shown.width,
                                          h=shown.height))
             if role in _CONTAINER_ROLES or role in {"AXCell", "AXRow"} or not role:
-                # A menu bar item's menu is closed unless it's the one open now.
+                # only the open menu bar item's menu
                 if role == "AXMenuBarItem" and not _copy(AX, element, "AXSelected"):
                     continue
                 children = _copy(AX, element, "AXChildren") or []
@@ -285,9 +269,8 @@ class MacAXContext:
 
 
 def _box_name(AX: Any, element: Any, role: str) -> str:
-    """A text box goes by its title or placeholder, never by what's typed in it. With neither it still gets a number,
-    but not a text area holding more than a short message: a whole note, a mail or a terminal, where typing by its
-    number is select all, then typing over all of it."""
+    """Title or placeholder, never the value; unnamed gets its role, unless it's a long text area
+    (typing by number there selects all and overwrites it)."""
     placeholder = _copy(AX, element, "AXPlaceholderValue")
     name = _name(AX, element, "") or (placeholder.strip() if isinstance(placeholder, str) else "")    # not its value
     if name or (role == "AXTextArea" and _length(AX, element) > _VALUE_KEPT):
@@ -296,7 +279,7 @@ def _box_name(AX: Any, element: Any, role: str) -> str:
 
 
 def _length(AX: Any, element: Any) -> int:
-    """How much a text box holds, counted without copying a whole document when it says (can't tell: a lot)."""
+    """Chars in a text box, without copying it when possible (unknown: a lot)."""
     size = _copy(AX, element, "AXNumberOfCharacters")
     if isinstance(size, (int, float)):
         return int(size)
@@ -305,9 +288,7 @@ def _length(AX: Any, element: Any) -> int:
 
 
 def _typed(AX: Any, element: Any, name: str, role: str) -> str:
-    """What's typed in a text box, so the model sees it landed. Never a card's, code's and the like (by its name;
-    a password box, by its subrole, never gets here). A text area keeps its end, where typing goes. A whole
-    document or a terminal's scrollback isn't copied at all."""
+    """What's typed in a box (a text area's end), so the model sees it landed; "" for secrets or huge text."""
     if looks_secret(name):
         return ""
     size = _copy(AX, element, "AXNumberOfCharacters")
@@ -326,9 +307,7 @@ _TEXT_BOXES = {"AXTextField", "AXTextArea", "AXSecureTextField", "AXSearchField"
 
 
 def find_text(AX: Any, window: Any, text: str, *, node_cap: int = 6000, time_budget: float = 1.0) -> Any:
-    """The element showing ``text`` anywhere on the window's page, scrolled-out parts too (depth first, like
-    ``read``). An exact label beats one that starts with it, a whole word, any substring; never what's typed in
-    a field."""
+    """Element showing ``text`` on the page, off-screen too (exact > prefix > word > substring; no text boxes)."""
     needle = " ".join(text.lower().split())
     if not needle or window is None:
         return None
@@ -358,9 +337,8 @@ def find_text(AX: Any, window: Any, text: str, *, node_cap: int = 6000, time_bud
 
 def visible_spot(AX: Any, element: Any, window: Rect | None, depth: int = 40
                  ) -> tuple[tuple[float, float] | None, Rect | None]:
-    """Where to wheel for an off-screen element: the visible part of its nearest ancestor that shows in the
-    window, i.e. inside the panel that scrolls it, even when that panel doesn't say it's a scroll area (chrome's
-    overflow divs). (centre, visible rect), or (None, None)."""
+    """(centre, rect) to wheel at for an off-screen element: its nearest visible ancestor, clipped by every
+    panel around it (catches unlabeled overflow divs). (None, None) if none."""
     boxes, node = [], _copy(AX, element, "AXParent")
     while node is not None and len(boxes) < depth and _copy(AX, node, "AXRole") not in {"AXWindow", "AXApplication"}:
         boxes.append(_bounds(AX, node))
@@ -382,13 +360,13 @@ _TYPING_ROLES = {"AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AX
 
 
 def _focused(AX: Any, element: Any) -> str:
-    """The text box typing goes into right now, like 'search field "Search mail"' ("" when none)."""
+    """Focused text box, like 'search field "Search mail"', or ""."""
     role = str(_copy(AX, element, "AXRole") or "")
     if role not in _TYPING_ROLES:
         return ""
     secure = role == "AXSecureTextField" or _copy(AX, element, "AXSubrole") == "AXSecureTextField"
     kind = "password field" if secure else _ROLE_NAMES.get(role, role.removeprefix("AX").lower())
-    name = " ".join(_name(AX, element, role).split())[:60]      # its label, never what's typed in it
+    name = " ".join(_name(AX, element, role).split())[:60]      # label, never the value
     return f'{kind} "{name}"' if name else kind
 
 
@@ -413,7 +391,7 @@ def _find_role(AX: Any, root: Any, wanted: str, cap: int = 400) -> Any:
 
 
 def _scrolled(AX: Any, area: Any) -> str:
-    """Where a scroll area is scrolled to, from its vertical scroll bar: " (at the top)", " (40% down)"."""
+    """Scroll position from the vertical bar, like " (40% down)"."""
     bar = _copy(AX, area, "AXVerticalScrollBar")
     value = _copy(AX, bar, "AXValue") if bar is not None else None
     if not isinstance(value, (int, float)):

@@ -97,7 +97,7 @@ export function GeneralTab({ state, composer: initial = null }: { state: Setting
   )
 }
 
-/** Hold-to-talk: pick the keys, and see straight away when macOS isn't letting Plip hear them. */
+/** Hold-to-talk keys, warning when macOS blocks them. */
 function ShortcutRow({ state }: { state: SettingsState }) {
   const { hotkey } = state
   return (

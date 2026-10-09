@@ -19,13 +19,13 @@ class Prefs:
     engine: str = ""                 # engine id; "" = best available
     depth: str = "balanced"          # fast | balanced | deep
     walkthroughs: bool = True
-    sounds: bool = True              # the notch's little UI sounds (buddy/sounds.py)
+    sounds: bool = True              # notch UI sounds (buddy/sounds.py)
     buddy: bool = True               # show Plip by the cursor while idle
     companion: str = "notch"         # notch: Plip lives in the notch and drips out to point | cursor | hidden
     tts: str = ""                    # "" = follow settings/env
     stt: str = ""
     onboarded: bool = False
-    tour_step: str = ""              # where the welcome walkthrough is, so a restart (Screen Recording) resumes there
+    tour_step: str = ""              # welcome tour step, resumed after a restart
     update_check: bool = True        # once a day, ask GitHub whether a newer Plip is out
     hotkey: str = "control+option"   # hold to talk: one of hotkey.CHORDS
 

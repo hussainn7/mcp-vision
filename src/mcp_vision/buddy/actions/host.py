@@ -89,13 +89,13 @@ class FileHit:
 
 @dataclass(frozen=True)
 class Reveal:
-    """What ``scroll_to_visible`` did with a text that's scrolled out of view."""
+    """Result of ``scroll_to_visible``."""
 
-    found: bool = False                                 # it's on the page, just not on screen
-    asked: bool = False                                 # the app took AXScrollToVisible (or may still be on it)
-    scroller: tuple[float, float] | None = None         # a visible spot in the panel holding it: wheel there
-    direction: str = ""                                 # "down" / "up": which way it is from that spot
-    at: tuple[float, float] | None = None               # it's in view already: its middle, global points
+    found: bool = False                                 # on the page, maybe off screen
+    asked: bool = False                                 # AXScrollToVisible taken (or still running)
+    scroller: tuple[float, float] | None = None         # visible spot in its panel: wheel there
+    direction: str = ""                                 # "down" / "up" from that spot
+    at: tuple[float, float] | None = None               # already in view: its center, global points
 
 
 def run(argv: list[str], timeout: float = 10.0, input_text: str | None = None) -> subprocess.CompletedProcess:
@@ -195,31 +195,29 @@ class PortableHost:
         """Scroll ``dy`` lines (positive = scroll down) at a global point."""
         raise NotSupported("Scrolling needs macOS.")
 
-    # what a scroll needs to know when the wheel moves nothing: no-ops here, so it falls back to the wheel alone
+    # scroll fallbacks when the wheel moves nothing; no-ops here
     def hover(self, x: float, y: float) -> None:
-        """The pointer to a global point, nothing pressed."""
+        """Move the pointer to a global point, nothing pressed."""
         raise NotSupported("Pointing needs macOS.")
 
     def mouse_position(self) -> tuple[float, float] | None:
         return None
 
     def focused_scroll_area(self):
-        """The scroll area around the focused element (a Rect, global points), or None."""
+        """Focused element's scroll area (Rect, global points), or None."""
         return None
 
     def focused_role(self) -> str | None:
-        """The focused element's role ("AXTextField", "AXWebArea"…), "" for nothing focused, None: can't tell."""
+        """Focused element's AX role; "" = nothing focused, None = can't tell."""
         return None
 
     def scroll_bar_step(self, x: float, y: float, direction: str, *, to_end: bool = False, pages: float = 1.0,
                         within: Rect | None = None) -> bool:
-        """Move the scroll bar of the area at (x, y) itself, ``pages`` on or all the way. ``within``: only an area
-        smaller than that (a side panel's own bar, not the whole window's). False: no bar to move."""
+        """Move the scroll bar at (x, y) directly. ``within``: only an area smaller than it. False: no bar."""
         return False
 
     def scroll_to_visible(self, text: str, *, ask: bool = True) -> Reveal:
-        """Find ``text`` on the front page, scrolled-out parts too, and have the app bring it into view (``ask``)
-        or just say where it is."""
+        """Find ``text`` on the front page (off-screen too); ``ask`` the app to scroll it into view."""
         return Reveal()
 
     def press(self, keys: str) -> None:
@@ -302,12 +300,8 @@ class MacHost(PortableHost):
 
     # keyboard / accessibility -------------------------------------------------------------
     def type_text(self, text: str) -> None:
-        """Type ``text`` where the cursor is.
-
-        Long or multi-line text is pasted: instant, exact, and no app drops or reorders it. Short text is
-        typed one character per key event (browsers and web editors lose characters from multi-character
-        events), with real Tab keys and no modifier flags, so a held ⌃⌥ can't turn letters into shortcuts.
-        """
+        """Type at the cursor. Long/multi-line text is pasted; short text goes one key per char, no modifiers
+        (browsers drop chars from multi-char events)."""
         if len(text) > PASTE_OVER or "\n" in text:
             self.paste(text)
             return
@@ -332,11 +326,11 @@ class MacHost(PortableHost):
         source = _source(Quartz)
         for down in (True, False):
             event = Quartz.CGEventCreateKeyboardEvent(source, keycode, down)
-            Quartz.CGEventSetFlags(event, flags)            # exactly these modifiers, none held by the user
+            Quartz.CGEventSetFlags(event, flags)            # ignore modifiers the user holds
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
     def focused_value(self) -> str | None:
-        """The focused text field's contents, to check typing landed (None: can't tell)."""
+        """Focused field's text, to verify typing (None: can't tell)."""
         try:
             import ApplicationServices as AX
 
@@ -350,7 +344,7 @@ class MacHost(PortableHost):
             return None
 
     def focused_frame(self) -> Rect | None:
-        """Where the focused element is, global points (None: can't tell). Tells a click's field from the last one."""
+        """Focused element's frame, global points (None: can't tell)."""
         try:
             import ApplicationServices as AX
 
@@ -362,7 +356,7 @@ class MacHost(PortableHost):
             return None
 
     def focused_secure(self) -> bool:
-        """A password box, or one labeled like a card number or a code? Then what it reads stays private."""
+        """Password, card or code field? Then its value stays private."""
         try:
             import ApplicationServices as AX
 
@@ -375,7 +369,7 @@ class MacHost(PortableHost):
             return _copy(AX, focused, "AXSubrole") == "AXSecureTextField" \
                 or looks_secret(_name(AX, focused, "AXTextField"))
         except Exception:
-            return True                                  # can't tell: keep it to itself
+            return True                                  # can't tell: assume secret
 
     def replace_selection(self, text: str) -> None:
         """Set the focused field's selected text via Accessibility; paste as a fallback."""
@@ -389,7 +383,7 @@ class MacHost(PortableHost):
         self.paste(text)
 
     def paste(self, text: str) -> None:
-        """Paste ``text`` with ⌘V, then put back whatever was on the clipboard (images and rich text too)."""
+        """⌘V ``text``, then restore the old clipboard (all types)."""
         import AppKit
         import Quartz
 
@@ -401,13 +395,13 @@ class MacHost(PortableHost):
         board.clearContents()
         item = AppKit.NSPasteboardItem.alloc().init()
         item.setString_forType_(text, AppKit.NSPasteboardTypeString)
-        item.setString_forType_("", "org.nspasteboard.TransientType")    # clipboard managers: don't keep this
+        item.setString_forType_("", "org.nspasteboard.TransientType")    # clipboard managers skip it
         board.writeObjects_([item])
         ours = board.changeCount()
         self._key(9, Quartz.kCGEventFlagMaskCommand)                  # ⌘V
-        time.sleep(0.5)                                                # the app reads the clipboard on its own time
+        time.sleep(0.5)                                                # app reads the clipboard async
         if board.changeCount() != ours:
-            return                                                     # they (or an app) copied since: keep theirs
+            return                                                     # copied over since: keep theirs
         board.clearContents()
         if saved:
             restored = []
@@ -421,7 +415,7 @@ class MacHost(PortableHost):
     def click(self, x: float, y: float, button: str = "left", count: int = 1) -> None:
         import Quartz
 
-        clear([(x, y)])                                  # the notch island lets this one through
+        clear([(x, y)])                                  # notch island steps aside
         point = Quartz.CGPointMake(x, y)
         down, up, which = {
             "right": (Quartz.kCGEventRightMouseDown, Quartz.kCGEventRightMouseUp, Quartz.kCGMouseButtonRight),
@@ -453,9 +447,9 @@ class MacHost(PortableHost):
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
             time.sleep(0.012)
 
-    # when the wheel moves nothing: Accessibility, every reply capped, on the caller's (worker) thread ----------
+    # wheel fallbacks: Accessibility, replies capped -------------------------------------------
     def _ax(self, timeout: float = 0.2):
-        """ApplicationServices + the system-wide element w/ replies capped at ``timeout``, or (None, None)."""
+        """(AX module, system-wide element) with replies capped at ``timeout``, or (None, None)."""
         try:
             import ApplicationServices as AX
         except ImportError:
@@ -464,13 +458,13 @@ class MacHost(PortableHost):
             return None, None
         system = AX.AXUIElementCreateSystemWide()
         try:
-            AX.AXUIElementSetMessagingTimeout(system, timeout)     # a hung app can't hold the scroll up
+            AX.AXUIElementSetMessagingTimeout(system, timeout)     # a hung app can't stall us
         except Exception:
             pass
         return AX, system
 
     def hover(self, x: float, y: float) -> None:
-        """The pointer to (x, y), nothing pressed: whatever lights up under it does so before a scroll there."""
+        """Move the pointer to (x, y) so hover effects show before a scroll."""
         import Quartz
 
         clear([(x, y)])
@@ -499,7 +493,7 @@ class MacHost(PortableHost):
 
     def scroll_bar_step(self, x: float, y: float, direction: str, *, to_end: bool = False, pages: float = 1.0,
                         within: Rect | None = None) -> bool:
-        """The scroll bar of the area at (x, y), moved itself: for panels that ignore synthetic wheel events."""
+        """Move the scroll bar directly, for panels that ignore synthetic wheel events."""
         AX, system = self._ax()
         if AX is None:
             return False
@@ -553,7 +547,7 @@ class MacHost(PortableHost):
 
 
 def theirs(AX, element):
-    """``element``, unless it's one of Plip's own windows (or None)."""
+    """``element``, or None if it's Plip's own."""
     if element is None:
         return None
     try:
@@ -576,12 +570,12 @@ def climb_to(AX, element, role: str, depth: int = 16):
     return None
 
 
-NOTHING_THERE = {-25212, -25205}      # kAXErrorNoValue, kAXErrorAttributeUnsupported: an answer, just "none"
-MAYBE = -25204                        # kAXErrorCannotComplete: no reply in time, the app may still be doing it
+NOTHING_THERE = {-25212, -25205}      # NoValue, AttributeUnsupported: a real "none"
+MAYBE = -25204                        # CannotComplete: timed out, may still happen
 
 
 def attribute(AX, element, name: str):
-    """(value, error): (value, 0), or (None, the AX error); MAYBE when it raised or didn't reply in time."""
+    """(value, 0) or (None, AX error); MAYBE if it raised or timed out."""
     try:
         result = AX.AXUIElementCopyAttributeValue(element, name, None)
     except Exception:
@@ -591,8 +585,7 @@ def attribute(AX, element, name: str):
 
 
 def focus_role(AX, system) -> str | None:
-    """The focused element's role, "AXTextArea" inside a web editor, "" when nothing has focus, None when the
-    app didn't say (busy, timed out): then no keys go in that could type or change something."""
+    """Focused role; "AXTextArea" in a web editor, "" = no focus, None = no answer (send no keys)."""
     focused, err = attribute(AX, system, "AXFocusedUIElement")
     if focused is None:
         return "" if err in NOTHING_THERE else None
@@ -604,14 +597,13 @@ def focus_role(AX, system) -> str | None:
     if subrole in {"AXSearchField", "AXSecureTextField"}:
         return str(subrole)
     if editable is not None:
-        return "AXTextArea"                                 # inside a web editor (contenteditable)
+        return "AXTextArea"                                 # contenteditable
     return str(role)
 
 
 def bar_step(AX, system, x: float, y: float, direction: str, *, to_end: bool = False, pages: float = 1.0,
              within: Rect | None = None) -> bool:
-    """The scroll bar of the scroll area under (x, y), moved itself. ``within``: only an area smaller than that,
-    so a side panel's step never moves the whole page instead."""
+    """Move the bar of the scroll area at (x, y). ``within``: skip areas nearly that big (the whole page)."""
     from mcp_vision.buddy.ax_locator import _bounds, _copy
 
     try:
@@ -632,7 +624,7 @@ def bar_step(AX, system, x: float, y: float, direction: str, *, to_end: bool = F
 
 
 def page_share(AX, area, sideways: bool = False) -> float:
-    """How much of a scroll bar's 0-1 range a page is: what shows over how far the content scrolls."""
+    """One page as a share of the bar's 0-1 range."""
     from mcp_vision.buddy.ax_locator import _bounds, _copy
 
     contents = list(_copy(AX, area, "AXContents") or [])
@@ -646,8 +638,7 @@ def page_share(AX, area, sideways: bool = False) -> float:
 
 
 def step_bar(AX, bar, forward: bool, *, to_end: bool = False, share: float = 0.1) -> bool:
-    """A scroll bar a step on (AXIncrement / AXDecrement, else its value nudged by ``share`` of the range), or
-    all the way (its value to 1 or 0)."""
+    """Step a scroll bar (AXIncrement/AXDecrement, else nudge by ``share``), or jump to the end."""
     from mcp_vision.buddy.ax_locator import _copy
 
     try:
@@ -655,7 +646,7 @@ def step_bar(AX, bar, forward: bool, *, to_end: bool = False, share: float = 0.1
             return AX.AXUIElementSetAttributeValue(bar, "AXValue", 1.0 if forward else 0.0) == 0
         if AX.AXUIElementPerformAction(bar, "AXIncrement" if forward else "AXDecrement") == 0:
             return True
-        value = _copy(AX, bar, "AXValue")                  # no step action: nudge the value instead
+        value = _copy(AX, bar, "AXValue")                  # no step action: nudge the value
         if isinstance(value, (int, float)):
             nudged = min(1.0, max(0.0, float(value) + (share if forward else -share)))
             return AX.AXUIElementSetAttributeValue(bar, "AXValue", nudged) == 0
@@ -665,9 +656,8 @@ def step_bar(AX, bar, forward: bool, *, to_end: bool = False, share: float = 0.1
 
 
 def reveal(AX, window, text: str, *, ask: bool = True) -> Reveal:
-    """Find ``text`` anywhere in ``window`` (scrolled-out parts too, like read_page) and have its app scroll it
-    into view: one AXScrollToVisible instead of a wheel loop. Also says where to wheel if the app ignores that,
-    or where it is when it's in view already (past what the screen map lists). ``ask``: False just looks."""
+    """Find ``text`` in ``window`` (off-screen too); ``ask``: AXScrollToVisible it. Also says where to wheel,
+    or where it is if already in view."""
     from mcp_vision.buddy.ax_context import find_text, visible_spot
     from mcp_vision.buddy.ax_locator import _bounds
 
@@ -689,11 +679,11 @@ def reveal(AX, window, text: str, *, ask: bool = True) -> Reveal:
     return Reveal(found=True, asked=asked, scroller=spot, direction=direction, at=at)
 
 
-PASTE_OVER = 40               # characters; longer text is pasted instead of typed
+PASTE_OVER = 40               # chars; longer text is pasted
 
 
 def poll(check, timeout: float, interval: float = 0.15):
-    """``check()`` until it returns something truthy (returned), or None after ``timeout`` seconds."""
+    """``check()`` until truthy (returned), or None after ``timeout`` s."""
     deadline = time.monotonic() + timeout
     while True:
         value = check()
@@ -705,15 +695,14 @@ def poll(check, timeout: float, interval: float = 0.15):
 
 
 def _source(Quartz):
-    """A private event source: keys we send don't pick up modifiers the user is holding."""
+    """Private event source: ignores modifiers the user holds."""
     try:
         return Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
     except Exception:
         return None
 
 
-# US virtual key codes, so apps that look at the key (not just the character) see a real one.
-# The character itself always travels in the event too, so other layouts still type correctly.
+# US key codes for apps that read the key; the char rides along too, so other layouts work
 _US_KEYS: dict[str, tuple[int, bool]] = {}
 for _chars, _shift in (("asdfhgzxcv\x00bqweryt123465=97-80]ou[ip\x00lj'k;\\,/nm.\x00 `", False),
                        ("ASDFHGZXCV\x00BQWERYT!@#$^%+(&_*)}OU{IP\x00LJ\"K:|<?NM>\x00 ~", True)):

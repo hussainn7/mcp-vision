@@ -31,7 +31,7 @@ class Rect:
         return self.x <= x < self.x + self.width and self.y <= y < self.y + self.height
 
     def intersect(self, other: Rect) -> Rect | None:
-        """The overlap of two rects, or ``None`` when they don't overlap."""
+        """Overlap of two rects, or ``None``."""
         left, top = max(self.x, other.x), max(self.y, other.y)
         right = min(self.x + self.width, other.x + other.width)
         bottom = min(self.y + self.height, other.y + other.height)

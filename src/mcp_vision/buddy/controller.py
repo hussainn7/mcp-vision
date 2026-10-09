@@ -34,8 +34,7 @@ class _NullPresenter:
 
 class BuddyController:
     FINAL_TIMEOUT = 3.5          # seconds to wait for a transcript after release
-    # The chord counts once it's held this long with no other key: Rectangle's ⌃⌥→ (and other apps' ⌃⌥ shortcuts)
-    # cut Plip off mid-answer and flashed "Listening". A quicker tap still interrupts. 0 = at once (tests).
+    # seconds held alone before it counts (other apps' ⌃⌥ shortcuts)
     PRESS_DELAY = 0.15
 
     def __init__(self, *, companion: Any, overlay: Any, loop: asyncio.AbstractEventLoop,
@@ -61,12 +60,12 @@ class BuddyController:
         self.transcript = ""
         self.generation = 0
         self.hotkey_mode = "none"
-        self.shortcut = "Control+Option"     # the talk shortcut picked in Settings, in words and in keys
+        self.shortcut = "Control+Option"     # talk shortcut, in words and in keys
         self.shortcut_keys = "⌃⌥"
         self.last_result = None
         self.press_delay = press_delay
         self.sound = sound or (lambda name: None)
-        self._pressing = 0                   # a press waiting out press_delay (its number), 0 = none
+        self._pressing = 0                   # press number waiting out press_delay, 0 = none
         self._presses = 0
         self._early = False                  # mic started at the press
 
@@ -81,7 +80,7 @@ class BuddyController:
         self.call_later(self.press_delay, lambda: self._press(press))
 
     def _listen_early(self) -> None:
-        # mic on now so the first word isn't lost; voice off so it isn't heard
+        # mic on now (first word); hush Plip so it isn't recorded
         self._early = False
         if self.setup_error or self.companion is None or self.listener is None or \
                 self.state in {"listening", "finalizing"}:
@@ -103,7 +102,7 @@ class BuddyController:
     def _press(self, press: int = 0) -> None:
         if press:
             if press != self._pressing:
-                return                       # let go, or another key came with it: not a request
+                return                       # released, or another key joined: not a request
             self._pressing = 0
         if self.setup_error or self.companion is None or self.listener is None:
             message = self.setup_error or "Speech input is unavailable."
@@ -115,7 +114,7 @@ class BuddyController:
         self.generation += 1
         self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
         warm = getattr(self.companion, "warm_brain", None)
-        if warm is not None:                         # the brain starts up while they talk (~0.3 s off the answer)
+        if warm is not None:                         # brain warms while they talk (~0.3 s)
             self.loop.call_soon_threadsafe(warm)
         self.state = "listening"
         self.transcript = ""
@@ -131,7 +130,7 @@ class BuddyController:
             self._idle(f"Microphone problem: {exc}")
 
     def ask(self, text: str) -> None:
-        """A request from a button (Yes to Plip's suggestion, Keep going) as if they'd held the keys and said it."""
+        """A button's request (Yes, Keep going), handled as if spoken."""
         if self.setup_error or self.companion is None:
             self.presenter.failed(self.setup_error or "I'm still waking up. Try again in a second.", True)
             return
@@ -145,7 +144,7 @@ class BuddyController:
         self.on_final(text)
 
     def on_release(self) -> None:
-        if self._pressing:                   # let go before it counted: a tap, which only stops Plip
+        if self._pressing:                   # a tap: only stops Plip
             self.stop()
             return
         if self.state != "listening":
@@ -161,7 +160,7 @@ class BuddyController:
         if tail > 0:
             self.call_later(tail + 0.02, lambda: self._toss(generation))
         else:
-            self.sound("sent")                           # after release: the mic is off, it can't hear it
+            self.sound("sent")                           # mic is off now, so it can't hear it
         self.call_later(self.FINAL_TIMEOUT, lambda: self._final_timeout(generation))
 
     def _toss(self, generation: int) -> None:
@@ -169,8 +168,7 @@ class BuddyController:
             self.sound("sent")
 
     def stop(self) -> None:
-        """Stop (the island's, the menu bar's, or a quick tap): whatever Plip is doing, and an answer to words it
-        is still waiting on (Stop right after letting go used to let that answer through)."""
+        """Stop (island, menu bar, quick tap): whatever Plip is doing, including a pending answer."""
         self._pressing = 0
         if self.state in {"listening", "finalizing"} and self.listener is not None:
             self.listener.cancel()
@@ -182,7 +180,7 @@ class BuddyController:
         self.presenter.idle()
 
     def on_cancel(self) -> None:
-        if self._pressing:                   # the chord was part of another app's shortcut: leave Plip alone
+        if self._pressing:                   # another app's shortcut: leave Plip alone
             self._pressing = 0
             self._drop_early()
             return

@@ -13,13 +13,13 @@ export const PRIVACY_URL = 'https://plip.dev/privacy'
 const ORDER: TourStep[] = ['welcome', 'permissions', 'brain', 'try', 'done']
 const COUNTED: TourStep[] = ['permissions', 'brain', 'try']
 
-/** Move the walkthrough (shown right away, kept by Plip so a restart picks it up there). */
+/** Move the walkthrough; Plip saves it for restarts. */
 function tour(step: TourStep) {
   settings.set((current) => ({ tour: { ...current.tour, step } }))
   send('tour-go', { step })
 }
 
-/** What still needs doing, in the order the walkthrough asks for it. */
+/** What's still missing, in walkthrough order. */
 export function readiness(state: SettingsState) {
   const perms = state.permissions
   const needSpeech = state.voice.stt === 'apple'
@@ -36,7 +36,7 @@ export function readiness(state: SettingsState) {
   }
 }
 
-/** First run, for people who've never used an AI app: what Plip is, three switches, a brain, one practice ask. */
+/** First run: intro, permissions, a brain, one practice ask. */
 export function Onboarding({ state }: { state: SettingsState }) {
   const step = ORDER.includes(state.tour?.step) ? state.tour.step : 'welcome'
   const index = ORDER.indexOf(step)
@@ -70,7 +70,7 @@ export function Onboarding({ state }: { state: SettingsState }) {
         </div>
       </header>
 
-      {/* m-auto, not items-center: a step taller than the window scrolls from its top instead of losing it. */}
+      {/* m-auto, not items-center: tall steps scroll from the top */}
       <main className="relative z-10 flex flex-1 overflow-y-auto scrollbar-none px-8 py-6">
         <AnimatePresence mode="wait">
           <motion.div
@@ -127,7 +127,7 @@ function Later({ onClick, label = 'Skip for now' }: { onClick: () => void; label
   return <Button variant="quiet" className="ml-auto" onClick={onClick}>{label}</Button>
 }
 
-/** Once a step's job is done, move on by itself after a beat (only if it wasn't already done on arrival). */
+/** Auto-advance once done (not if it was done on arrival). */
 function useAdvance(done: boolean, next: () => void, delay = 1300) {
   const arrivedDone = useRef(done)
   useEffect(() => {

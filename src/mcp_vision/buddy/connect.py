@@ -1,12 +1,6 @@
-"""One click to connect a brain: install its CLI if it's missing, sign in in the browser, switch to it.
+"""One click to connect a brain: install its CLI if missing, sign in in the browser, switch to it.
 
-No Terminal and nothing to copy. The installer and the CLI's own sign-in run in
-the background; the CLI opens the browser, and Plip watches the CLI's status
-until it says signed in, then makes it the brain. If the browser doesn't open,
-the sign-in link (and a box for the code some pages hand back) shows up in Settings.
-
-    connector = Connector(probe=..., on_change=push_settings, on_connected=use_engine)
-    connector.start("claude-code")
+All in the background; if the browser doesn't open, Settings shows the link (and a code box).
 """
 from __future__ import annotations
 
@@ -30,8 +24,7 @@ from mcp_vision.buddy.engines import BY_ID, EngineStatus, child_env
 
 URL_RE = re.compile(r"https://\S+")
 CODE_PROMPT = re.compile(r"paste (the )?code", re.IGNORECASE)
-# ChatGPT's Codex CLI is one binary per Mac on GitHub. The release's API entry names the file and its SHA-256, and
-# the download is checked against it before anything is unpacked.
+# Codex CLI: one GitHub binary per Mac, checked against the release's SHA-256
 CODEX_RELEASE = "https://api.github.com/repos/openai/codex/releases/latest"
 CODEX_DOWNLOADS = "https://github.com/openai/codex/releases/download/"
 
@@ -40,7 +33,7 @@ CODEX_DOWNLOADS = "https://github.com/openai/codex/releases/download/"
 class Progress:
     state: str = "idle"          # installing | signing-in | ready | failed | cancelled
     message: str = ""
-    url: str = ""                # the sign-in page, for when the browser didn't open
+    url: str = ""                # sign-in page, if the browser didn't open
     needs_code: bool = False     # the page shows a code to paste back
 
     def card(self) -> dict[str, Any]:
@@ -83,7 +76,7 @@ class Connector:
         with self._lock:
             running = self._workers.get(engine_id)
             if running is not None and running.is_alive():
-                return              # already on it, or a cancelled install still finishing: never two at once
+                return              # running (or a cancelled install finishing): never two
             self._cancelled.discard(engine_id)
             self.progress[engine_id] = Progress("installing", "Getting ready…")
             worker = self._workers[engine_id] = threading.Thread(target=self._connect, args=(engine_id,),
@@ -126,7 +119,7 @@ class Connector:
                 self._set(engine_id, "installing", f"Installing {spec.label}’s app… (about a minute)")
                 self._install(engine_id)
                 if engine_id in self._cancelled:
-                    return                              # cancelled while it installed: no browser after that
+                    return                              # cancelled mid-install: no browser
                 status = self.probe(engine_id)
                 if status.status == "not-installed":
                     raise ConnectError(f"{spec.label} installed, but I can't find it. Try again in a moment.")
@@ -135,7 +128,7 @@ class Connector:
             if engine_id in self._cancelled:
                 return
             status = self.probe(engine_id)
-            if status.status != "ready":                # the sign-in app quit, but it isn't signed in
+            if status.status != "ready":                # sign-in quit without signing in
                 raise ConnectError(f"Signing in to {spec.label} didn't finish. Click Connect to try again.")
             self._set(engine_id, "ready", status.detail or "Connected")
             self.on_connected(engine_id)
@@ -165,7 +158,7 @@ class Connector:
 
     def _shell(self, command: str, env: dict[str, str], what: str) -> None:
         try:
-            # pipefail: "curl … | bash" with no internet fails here, not later as "installed, but I can't find it"
+            # pipefail: offline "curl | bash" fails here, not later
             result = self.run(["/bin/bash", "-c", "set -o pipefail; " + command], env=env, cwd=str(self.home),
                               capture_output=True, text=True, timeout=self.timeout)
         except subprocess.TimeoutExpired:
@@ -176,7 +169,7 @@ class Connector:
                                + (f" ({tail})" if tail else ""))
 
     def _install_codex(self) -> None:
-        """ChatGPT's Codex CLI is one binary on GitHub: no Node needed. Checked against the release's SHA-256."""
+        """Codex CLI from GitHub (no Node), checked against the release's SHA-256."""
         arch = "aarch64" if platform.machine() in {"arm64", "aarch64"} else "x86_64"
         name = f"codex-{arch}-apple-darwin.tar.gz"
         target = self.home / ".local" / "bin" / "codex"
@@ -233,17 +226,13 @@ class Connector:
             if code is not None and code != 0 and self.probe(engine_id).status != "ready":
                 raise ConnectError(f"Signing in to {spec.label} didn't finish. Try again.")
             if code == 0:
-                return                                   # the CLI says it's done; the final probe confirms
+                return                                   # CLI done; the final probe confirms
             if time.monotonic() - started > self.timeout:
                 raise ConnectError("Sign-in timed out. Click Connect to try again.")
             time.sleep(self.poll)
 
     def _watch_output(self, engine_id: str, process: Any) -> None:
-        """Pick the sign-in link and any "paste code" prompt out of the CLI's output.
-
-        Reads whatever has arrived rather than whole lines: a prompt waiting for input
-        ("Paste code here if prompted > ") has no newline after it.
-        """
+        """Spot the sign-in link and "paste code" prompt (chunked reads: a prompt has no newline)."""
         stream = process.stdout
         if stream is None:
             return

@@ -133,7 +133,7 @@ def test_the_screen_map_is_read_at_key_release_too():
     companion.brain = brain
     released = time.perf_counter()
     companion.prefetch()                                   # key release
-    time.sleep(0.3)                                        # their last words are still being finalized
+    time.sleep(0.3)                                        # last words still being finalized
     asyncio.run(companion.respond("where's buy"))
-    assert len(reads) == 1 and reads[0] - released < 0.2  # walked once, at release, not again once words were final
+    assert len(reads) == 1 and reads[0] - released < 0.2  # walked once, at release
     assert "Buy | AXButton" in brain.calls[0][-1].text

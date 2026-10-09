@@ -1,7 +1,6 @@
-"""Memory as actions: Plip saves what you ask it to remember, and forgets what you ask it to forget.
+"""Memory as actions: remember / forget, only when the user's own words ask.
 
-Only when you asked, in your own words: a web page or a document on screen can't plant a "fact" (it rides in every
-prompt after) or wipe what Plip knows, however the model was talked into it.
+So on-screen text can't plant a fact (it rides in every prompt) or wipe memory.
 """
 from __future__ import annotations
 

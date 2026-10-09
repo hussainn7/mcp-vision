@@ -31,7 +31,7 @@ if (!isNative()) {
     if (command.cmd === 'tour-start') settings.set({ onboarded: false, tour: { step: 'welcome' } })
     if (command.cmd === 'quick-connect') settings.set({ connect: 'Pick the AI you use below, or get a free one from Google.' })
     if (command.cmd === 'engine-connect') {
-      // Browser preview: walk through what the app does (install, browser sign-in, connected).
+      // Browser preview: fake install, sign-in, connected.
       const id = String(command.id)
       const step = (connect: Engine['connect'], patch: Partial<Engine> = {}) =>
         settings.set((current) => ({ engines: current.engines.map((engine) => (engine.id === id ? { ...engine, ...patch, connect } : engine)) }))
@@ -44,7 +44,7 @@ if (!isNative()) {
       })), installed ? 2600 : 4200)
     }
     if (command.cmd === 'paste-key' || (command.cmd === 'set-key' && command.name === 'GEMINI_API_KEY')) {
-      // Browser preview: Google "takes" the key after a beat; with no other brain ready, Gemini becomes the brain.
+      // Browser preview: key accepted; Gemini picked if nothing else is ready.
       settings.set({ keyCheck: { name: 'GEMINI_API_KEY', state: 'checking', message: 'Checking the key with Google…' } })
       window.setTimeout(() => settings.set((current) => {
         const other = current.engines.some((engine) => engine.status === 'ready' && engine.id !== 'gemini-api')

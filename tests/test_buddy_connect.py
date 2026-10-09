@@ -12,7 +12,7 @@ from mcp_vision.buddy.engines import BY_ID, EngineStatus
 
 
 class FakeLogin:
-    """A CLI sign-in: prints its link and a paste-code prompt, then waits until told it's done."""
+    """CLI sign-in: prints a link and code prompt, then waits."""
 
     def __init__(self, lines=(), code=None):
         self.stdout = io.BytesIO(b"".join(line.encode() + b"\n" for line in lines))
@@ -34,7 +34,7 @@ class FakeLogin:
 
 
 class Brain:
-    """Probe results that change as the connection goes: not installed -> signed out -> ready."""
+    """Probe results that advance: not installed -> signed out -> ready."""
 
     def __init__(self, *states):
         self.states = list(states)
@@ -230,7 +230,7 @@ def test_cancel_during_the_install_never_opens_the_browser_and_never_runs_two_at
     made.start("claude-code")
     assert installing.wait(2)
     made.cancel("claude-code")
-    made.start("claude-code")                          # clicked Connect again while the old install runs
+    made.start("claude-code")                          # Connect again mid-install
     release.set()
     made._workers["claude-code"].join(2)
     assert spawned == [] and connected == [] and made.snapshot() == {}

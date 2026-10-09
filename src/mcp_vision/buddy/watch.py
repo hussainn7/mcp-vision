@@ -22,7 +22,7 @@ def fingerprint(image: Image.Image) -> bytes:
 
 GLANCE_SIZE = (160, 100)
 GLANCE_LEVEL = 24             # gray levels a pixel has to move to count
-GLANCE_PIXELS = 3             # this many pixels moving is a change (a checkbox ticking moves ~4, JPEG noise 0)
+GLANCE_PIXELS = 3             # checkbox tick moves ~4, JPEG noise 0
 
 
 def glance(image: Image.Image, box: tuple[float, float, float, float] | None = None) -> bytes:
@@ -35,7 +35,7 @@ def glance(image: Image.Image, box: tuple[float, float, float, float] | None = N
 
 
 def changed(a: bytes, b: bytes) -> bool:
-    """True when enough pixels moved for something real to have happened (not JPEG noise, which moves none)."""
+    """True when enough pixels moved to beat JPEG noise."""
     if not a or not b or len(a) != len(b):
         return True
     return sum(1 for x, y in zip(a, b, strict=True) if abs(x - y) > GLANCE_LEVEL) >= GLANCE_PIXELS

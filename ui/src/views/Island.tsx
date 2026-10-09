@@ -20,7 +20,7 @@ const MOOD: Record<Mode, Mood> = {
 
 const SPRING = { type: 'spring', stiffness: 420, damping: 34, mass: 0.9 } as const
 const LINGER_MS = 7000
-const HOVER_DWELL_MS = 400       // the mouse rests on the notch this long before it opens: passing by isn't asking
+const HOVER_DWELL_MS = 400       // rest before opening: passing by isn't asking
 const MAX_BODY = 360
 
 /** Concave "shoulder" that makes the island read as part of the notch. */
@@ -58,12 +58,11 @@ export function Island() {
     if (state.confirm) setMinimized(false)
   }, [state.confirm])
 
-  // Finished answers linger once Plip stops talking, then tuck back into the notch unless hovered or waiting on
-  // a confirm. Counting from the end of the text closed it mid-sentence on a long answer.
+  // Answers linger after the voice stops, then tuck away unless hovered or confirming.
   useEffect(() => {
     setLingerOver(false)
     if (state.phase !== 'answering' || !state.done || state.speaking || state.confirm) return
-    // A suggestion waiting on a yes stays up longer, so there's time to click it.
+    // an open suggestion stays longer, to leave time to click
     const timer = window.setTimeout(() => setLingerOver(true), LINGER_MS + state.plan.length * 2500 + (state.offer ? 8000 : 0))
     return () => window.clearTimeout(timer)
   }, [state.phase, state.done, state.speaking, state.answer, state.confirm, state.plan.length, state.offer])
@@ -99,7 +98,7 @@ export function Island() {
   const height = expanded ? notchH + Math.min(bodyHeight, MAX_BODY) : notchH
   const radius = expanded ? 26 : Math.round(notchH * 0.42)
 
-  // Hover sounds: resting <-> peek only (never listening, the mic's on); edge jitter = one plip, fly-by = silent.
+  // Hover sounds: resting <-> peek only (never with the mic on); jitter plays once.
   const lastMode = useRef(mode)
   const openedAt = useRef(-Infinity)
   useEffect(() => {
@@ -328,7 +327,7 @@ function Body({ mode }: { mode: Mode }) {
   )
 }
 
-/** Stops whatever Plip is doing: thinking, acting, or talking. */
+/** Stops thinking, acting, or talking. */
 function StopButton() {
   return (
     <button
@@ -340,7 +339,7 @@ function StopButton() {
   )
 }
 
-/** ``on``, once it has stayed true for ``ms``; false again right away. */
+/** `on`, once it holds for `ms`; drops at once. */
 function useDwell(on: boolean, ms: number) {
   const [settled, setSettled] = useState(false)
   useEffect(() => {
@@ -472,7 +471,7 @@ function ConfirmCard() {
   )
 }
 
-/** Yes / No thanks for the suggestion Plip ended on: one click instead of holding the keys to say it. */
+/** Yes / No thanks for Plip's closing suggestion. */
 function OfferButtons() {
   const answer = (accept: boolean) => {
     island.set({ offer: null })

@@ -311,8 +311,7 @@ class EngineRegistry:
         return self._keys_now(self._cache) if self._cache is not None else [EngineStatus(spec) for spec in SPECS]
 
     def _keys_now(self, statuses: list[EngineStatus]) -> list[EngineStatus]:
-        """API engines only check for a key, which costs nothing: always current, so a key pasted a second ago
-        counts without waiting for the CLIs to be probed again."""
+        """Re-probe API engines (a free key check), so a just-pasted key counts."""
         settings = self.settings()
         return [probe(status.spec, settings) if status.spec.kind == "api" else status for status in statuses]
 
@@ -446,8 +445,7 @@ class StreamParser:
         return texts
 
     def refuse_tools(self) -> None:
-        """The CLI started running a command or a tool of its own (Plip only wants words and tags back). Stop
-        reading right there: nothing it read reaches a reply or an action, and the turn ends saying why."""
+        """The CLI ran its own tool: stop reading, so nothing it read reaches a reply or an action."""
         self.error, self.ended, self.produced, self.final = RAN_TOOLS, True, False, ""
 
     def handle(self, event: dict[str, Any]) -> list[str]:
@@ -468,7 +466,7 @@ class CLIBrain:
     vision = True
     effort_map: dict[str, str] = {}
     last_usage: Usage | None = None     # what the last stream() used, as the CLI reported it
-    exit_timeout = 10.0                 # seconds to wait for the CLI to exit once its answer is in
+    exit_timeout = 10.0                 # seconds for the CLI to exit after answering
 
     def __init__(self, binary: str, *, model: str = "", effort: str = "low", timeout: float = 120.0,
                  first_output_timeout: float = 45.0, spawn: Callable[..., Any] | None = None):
@@ -488,7 +486,7 @@ class CLIBrain:
         raise NotImplementedError
 
     def _effort(self, detailed: bool, effort: str | None = None) -> str:
-        """This call's effort: the one asked for, else the user's (a step up for a walkthrough)."""
+        """Asked-for effort, else the user's (a step up for a walkthrough)."""
         from mcp_vision.buddy.brain_claude import _EFFORT_STEP
 
         if not effort:
@@ -557,14 +555,14 @@ class CLIBrain:
                 # Once the answer's in, a CLI still flushing its own traffic isn't worth waiting for.
                 code = await asyncio.wait_for(process.wait(), 0.3 if parser.ended else self.exit_timeout)
             except asyncio.TimeoutError:
-                # The answer is in but the CLI won't exit (a stuck flush or child process): don't hang the turn.
+                # answered but won't exit (stuck flush or child): don't hang
                 with contextlib.suppress(ProcessLookupError):
                     process.kill()
                 code = 0 if parser.produced or parser.final else -9
             try:
                 stderr = (await asyncio.wait_for(asyncio.shield(errors), 2.0)).decode("utf-8", "replace")
             except asyncio.TimeoutError:
-                stderr = ""                          # a child still holds stderr open; the cleanup below cancels it
+                stderr = ""                          # a child holds stderr open; cleanup cancels it
             self.last_usage = parser.usage
             if self.last_usage is not None and not self.last_usage.model:
                 self.last_usage.model = self.model or ""
@@ -683,10 +681,7 @@ class ClaudeCodeBrain(CLIBrain):
     def parser(self):
         return ClaudeCodeParser()
 
-    # Claude Code's command line doesn't depend on the question (it arrives on stdin), so a process can
-    # start before the question exists: at launch, while the keys are held, after a turn. A turn then skips
-    # the CLI's start-up (~0.2-0.4 s). One spare per command line (effort is part of it), and a spare nobody
-    # uses within a couple of minutes goes away (each holds ~100 MB).
+    # question comes on stdin, so a spare can start early (~0.3 s saved; ~100 MB, reaped when idle)
     # Only the long-running app turns this on; one-shot runs (plip ask, tests) would leave it waiting.
     prewarm = False
     idle_ttl = 120.0
@@ -710,7 +705,7 @@ class ClaudeCodeBrain(CLIBrain):
         self._spawn_spare(call)
 
     def ensure_warm(self, system: str, effort: str | None = None) -> None:
-        """Have a process for this prompt and effort ready before the question is (call on the loop)."""
+        """Start a spare for this prompt and effort ahead of the question (call on the loop)."""
         call = self.invocation(system=system, turns=[Turn("user", "")], workdir="", detailed=False, effort=effort)
         self._spawn_spare(call)
 
@@ -739,7 +734,7 @@ class ClaudeCodeBrain(CLIBrain):
         if not self.prewarm:                         # closed while it was starting
             _discard(process, folder)
             return
-        while len(spares) >= self.max_spares:        # the oldest other one makes room
+        while len(spares) >= self.max_spares:        # evict the oldest
             _discard(*spares.pop(next(iter(spares)))[:2])
         born = time.monotonic()
         spares[key] = (process, folder, born)
@@ -747,7 +742,7 @@ class ClaudeCodeBrain(CLIBrain):
             asyncio.get_running_loop().call_later(self.idle_ttl, self._reap, key, born)
 
     def _reap(self, key: tuple, born: float) -> None:
-        """Nobody used this spare in time: don't keep paying ~100 MB for it."""
+        """Drop a spare nobody used in time (~100 MB)."""
         spare = self._spares.get(key)
         if spare is not None and spare[2] == born:
             del self._spares[key]
@@ -785,7 +780,7 @@ class CodexParser(StreamParser):
         kind = event.get("type", "")
         item = event.get("item") or {}
         if kind in {"item.started", "item.updated", "item.completed"} and item.get("type") in _CODEX_TOOLS:
-            self.refuse_tools()                      # its sandbox still runs shell commands that read your files
+            self.refuse_tools()                      # even its sandbox's shell can read your files
             return []
         if kind in {"item.updated", "item.completed"}:
             if item.get("type") in {"agent_message", "assistant_message"}:

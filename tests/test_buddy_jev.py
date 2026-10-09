@@ -299,14 +299,14 @@ def test_elevenlabs_request_shape():
 
 
 def test_a_walkthrough_always_looks_and_rules_think_harder_about_it_too():
-    # Live Jev on this Mac said "no screen" to these two (depth: detailed), so step one was guessed blind.
+    # live Jev said "no screen" to these; walkthroughs must still look
     for said in ("walk me through turning on two factor in github", "step by step, how do i make a new branch"):
         jev, _ = client((200, jev_answers(needs=0.2, intent="answer", depth="detailed")))
         route = asyncio.run(JevRouter(jev).route(said, SCREENS[:1]))
         assert route.needs_screen and route.detailed
     jev, _ = client((200, jev_answers(needs=0.1, intent="answer", depth="detailed")))
     assert not asyncio.run(JevRouter(jev).route("explain how black holes form", SCREENS[:1])).needs_screen
-    # Without a key, rules give the same asks the deeper think Jev does (they never did).
+    # without a key, rules pick the deeper think too
     deep = ["walk me through turning on two factor in github", "how do i export this as a pdf",
             "help me set up a pivot table", "why isn't this code compiling", "explain how black holes form"]
     quick = ["where's the save button", "what's the capital of france", "thanks plip", "how many ounces in a cup",

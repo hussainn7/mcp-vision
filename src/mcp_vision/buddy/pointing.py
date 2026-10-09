@@ -13,8 +13,7 @@ screen when omitted). It can also act and plan::
     [PLAN: open settings | pick privacy | turn on two-factor]
     [GOAL: find remote backend jobs on linkedin]
 
-``[GOAL:...]`` opens a task that takes several actions; Plip keeps looking and
-acting until ``[DONE]``.
+``[GOAL:...]`` opens a multi-step task that runs until ``[DONE]``.
 
 Action arguments are JSON and may contain brackets, so ``[DO:`` tags are
 scanned with a JSON-aware matcher. Tags never reach the speech engine. Each tag is
@@ -46,8 +45,7 @@ _MAX_ACTION_LEN = 6000               # fill_form tags carry every field
 _ACTION_HEAD_RE = re.compile(r"\[\s*DO\s*:\s*(?P<name>[a-z][a-z_]{1,40})\s*", re.IGNORECASE)
 _PLAN_RE = re.compile(r"\[\s*PLAN\s*:(?P<steps>[^\[\]]*)\]", re.IGNORECASE)
 _GOAL_RE = re.compile(r"\[\s*GOAL\s*:(?P<goal>[^\[\]]*)\]", re.IGNORECASE)
-# A tool call written out as text ("<invoke name=…>", "<function_calls>"), with or without a namespace: the brain
-# has no tools here, so it never ran, and it's never read out.
+# tool-call markup written as text: it never ran, never spoken
 _LEAK_RE = re.compile(r"<\s*(?:[\w-]+:)?(?:function_calls\s*>|invoke\s+name\s*=|parameter\s+name\s*=|"
                       r"tool_(?:use|call|code)\b)", re.IGNORECASE)
 _THINKING_RE = re.compile(r"<\s*thinking\s*>", re.IGNORECASE)
@@ -239,8 +237,8 @@ class ReplyStream:
         self.actions: list[ActionTag] = []
         self.plan: tuple[str, ...] = ()
         self.goal = ""                     # set by [GOAL: ...]
-        self.leaked = False                # it wrote a tool call out as text: nothing from there on is said
-        self._thinking = False             # inside a long <thinking> block: nothing until it closes
+        self.leaked = False                # wrote a tool call as text: mute from here
+        self._thinking = False             # in a long <thinking>: mute till it closes
 
     @property
     def spoken_text(self) -> str:
@@ -248,12 +246,12 @@ class ReplyStream:
 
     def feed(self, delta: str) -> list[Event]:
         if self.leaked:
-            return []                                # it was waiting for a tool's result: none of it is said
+            return []                                # it's waiting on a tool result: say nothing
         raw, self._raw = self._raw + delta, ""
         if self._thinking:
             end = _THINKING_END_RE.search(raw)
             if end is None:
-                self._raw = raw[-24:]                # the closing tag may be split across chunks
+                self._raw = raw[-24:]                # closing tag may straddle chunks
                 return []
             raw, self._thinking = raw[end.end():], False
         events: list[Event] = []
@@ -267,7 +265,7 @@ class ReplyStream:
             if raw[0] == "<":
                 rest = self._angle(raw, events)
                 if rest is None:
-                    break                            # it may still turn into markup: wait for more
+                    break                            # may still become markup: wait
                 raw = rest
                 continue
             special = raw[:12].upper().replace(" ", "")
@@ -295,7 +293,7 @@ class ReplyStream:
             inner = raw.find("[", 1)
             leak = _LEAK_RE.search(raw, 1)
             if leak is not None and (inner == -1 or leak.start() < inner):
-                inner = leak.start()                 # "[note <invoke …": the markup counts, not the bracket
+                inner = leak.start()                 # "[note <invoke …": markup wins
             if inner != -1 and (end == -1 or inner < end):
                 # "array[0 ... [POINT:..]": the first bracket never closed, so it
                 # is prose; restart at the next bracket so the tag still parses.
@@ -337,7 +335,7 @@ class ReplyStream:
         """Flush everything left at the end of the stream."""
         events: list[Event] = []
         if self._thinking:
-            self._raw = ""                           # a thinking block that never closed: none of it is said
+            self._raw = ""                           # unclosed <thinking>: drop it
         for _ in range(32):
             leftover, self._raw = self._raw, ""
             if not leftover:
@@ -358,20 +356,20 @@ class ReplyStream:
         return events + self._release(final=True)
 
     def _angle(self, raw: str, events: list[Event], *, final: bool = False) -> str | None:
-        """``<`` at the start of ``raw``: a tool call written out as text, a <thinking> block, or prose ("a < b")."""
+        """Leading ``<``: leaked tool call, <thinking> block, or prose ("a < b")."""
         if _THINKING_RE.match(raw):
             end = _THINKING_END_RE.search(raw)
             if end is not None:
                 return raw[end.end():]
             if final:
                 return ""
-            if len(raw) > _MAX_ACTION_LEN:           # a long one: stop buffering it, but stay quiet till it closes
+            if len(raw) > _MAX_ACTION_LEN:           # long: stop buffering, stay quiet till it closes
                 self._thinking, self._raw = True, raw[-24:]
                 return ""
             self._raw = raw
             return None
         if _LEAK_RE.match(raw):
-            events.extend(self._release(merge=False))  # what it said before the markup still counts
+            events.extend(self._release(merge=False))  # speech before the markup still counts
             self.leaked = True
             return ""
         if not final and len(raw) < 48 and ">" not in raw and "\n" not in raw:

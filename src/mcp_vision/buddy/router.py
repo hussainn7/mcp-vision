@@ -25,21 +25,21 @@ _SCREEN_WORDS = re.compile(
 )
 _POINT_WORDS = re.compile(r"\b(where|point|show me|which (button|menu|icon|one)|find the|locate)\b", re.I)
 _CHAT_WORDS = re.compile(r"^\s*(hi|hey|hello|thanks|thank you|good (morning|night|evening)|how are you)\b", re.I)
-# Asking how to do something: a walkthrough of what's on their screen, so it's worth a look and a deeper think.
+# how-to: a walkthrough of their screen (needs a look)
 _HOWTO = re.compile(r"\b(how (do|can|would|should) i|how to|walk me|step by step|show me how|guide me|teach me)\b", re.I)
-# Worth a deeper think: a walkthrough, debugging, or an explanation they asked to go into.
+# worth a deeper think: walkthroughs, debugging, explanations
 _DEEP = re.compile(
     r"\b(how (do|can|would|should) i|how to|walk me|step by step|show me how|guide me|teach me|"
     r"help me (set|fix|figure|debug|understand|get|make|create|build)|debug|in detail|go deeper|"
     r"why (is|isn't|does|doesn't|did|didn't|won't|can't|am i|do i)|explain (how|why|in))\b",
     re.IGNORECASE,
 )
-# "open spotify and play X", "go to indeed, then find...": a second action after the first.
+# a second action after the first ("open X and play Y")
 _ACT = (r"(open|go|navigate|click|tap|find|search|look|play|send|text|email|type|write|fill|book|buy|order|add|check|"
         r"tell|show|read|get|download|reply|post|scroll|sort|filter|apply|sign|create|make|put|set|turn|start|pick|"
         r"choose|select|compare|summari[sz]e|grab|copy|paste|save|share|close|move|rename|upload|attach|watch|list)")
 _THEN_ACT = re.compile(rf"(\band\b|\bthen\b|,|\bafter that\b)\s+(also\s+|please\s+|then\s+)?{_ACT}\b", re.IGNORECASE)
-# "find me good jobs here", "search for a blue lamp on amazon": seek something somewhere, then read what comes up.
+# seek something somewhere, then read what comes up
 _SEEK_THERE = re.compile(r"\b(find|search|look (up|for|through)|hunt|browse|shop|compare|check out|go through)\b"
                          r".{0,80}?\b(here|on|at|from|in this|in my)\b", re.IGNORECASE)
 _GENERAL_LEADS = re.compile(
@@ -50,7 +50,7 @@ _GENERAL_LEADS = re.compile(
 
 
 def multistep(transcript: str) -> bool:
-    """Rough rule: doing this takes several actions. Only used when the model forgets to open a goal."""
+    """Rough rule: it takes several actions (fallback if the model opens no goal)."""
     return bool(_THEN_ACT.search(transcript) or _SEEK_THERE.search(transcript))
 
 
@@ -150,8 +150,7 @@ class JevRouter:
             fallback = await self.fallback.route(transcript, screens)
             return Route(**{**fallback.__dict__, "provider": "rules (jev unavailable)"})
         detailed = depth.choice == "detailed" and depth.p("detailed") >= 0.6
-        # A walkthrough starts from where they are: Jev said "no screen" to some of them ("walk me through
-        # turning on two factor in github"), and the first step was then guessed blind.
+        # walkthroughs need the screen, even when Jev says no
         several = several or multistep(transcript)
         needs_screen = (needs >= self.screen_threshold or intent.choice in {"point", "explain"} or several
                         or (detailed and bool(_HOWTO.search(transcript))))

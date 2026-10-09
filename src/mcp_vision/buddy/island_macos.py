@@ -17,8 +17,8 @@ from typing import Any
 from mcp_vision.buddy.web_host import WebSurface
 
 WIDTH, HEIGHT = 760.0, 420.0
-YIELD_SECONDS = 1.0                            # Plip's click / scroll / drag has the screen for this long
-PARK_SLOP = 3.0                                # points the cursor Plip left can drift before it's the user's again
+YIELD_SECONDS = 1.0                            # Plip's click/scroll/drag owns the screen this long
+PARK_SLOP = 3.0                                # points a parked cursor drifts before it's the user's
 HOVER_MARGIN = 6.0
 _CLASSES: dict[str, type] = {}
 
@@ -95,12 +95,7 @@ def _ticker_class():
 
 
 class HoverGate:
-    """Whether the island takes the mouse, given where it is and what Plip just did with it.
-
-    While Plip clicks, scrolls or drags, the island is click-through no matter where the cursor
-    is. Afterwards the cursor stays where Plip left it, and that isn't the user hovering: the
-    island ignores it until the user moves the mouse.
-    """
+    """Whether the island takes the mouse: not while Plip uses it, nor until the user moves it after."""
 
     def __init__(self) -> None:
         self.parked: tuple[float, float] | None = None
@@ -160,7 +155,7 @@ class IslandWindow:
         AppKit.NSRunLoop.mainRunLoop().addTimer_forMode_(self._timer, AppKit.NSRunLoopCommonModes)
         from mcp_vision.buddy.clear_path import on_clear
 
-        self._stop_clearing = on_clear(self._clear)      # Plip's own clicks go through to the app underneath
+        self._stop_clearing = on_clear(self._clear)      # Plip's clicks pass through to the app below
         center = AppKit.NSNotificationCenter.defaultCenter()
         self._screens_changed = center.addObserverForName_object_queue_usingBlock_(
             AppKit.NSApplicationDidChangeScreenParametersNotification, None, None,
@@ -190,7 +185,7 @@ class IslandWindow:
 
     # -- Plip's own clicks (clear_path) --------------------------------------------------------
     def _clear(self, points: list[tuple[float, float]], act: bool) -> None:
-        """Any thread. Returns once the island is out of the way, so the click that follows goes through."""
+        """Any thread; returns once the island is out of the next click's way."""
         if not act or not points:
             return
         if threading.current_thread() is threading.main_thread():
@@ -209,7 +204,7 @@ class IslandWindow:
         done.wait(0.3)
 
     def make_way(self, points: list[tuple[float, float]]) -> None:
-        """Main thread: click-through for Plip's own mouse, and the cursor it parks here isn't a hover."""
+        """Main thread: click-through for Plip's mouse; its parked cursor isn't a hover."""
         import AppKit
 
         primary = float(AppKit.NSScreen.screens()[0].frame().size.height)

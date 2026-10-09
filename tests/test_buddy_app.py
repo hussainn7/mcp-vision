@@ -82,7 +82,7 @@ def test_presenter_turns_companion_events_into_island_messages():
     assert moods[-1] == ("happy", 0.0)
     view("phase", {"phase": "answering"})
     assert posted[-1]["state"] == {"phase": "answering", "done": False, "speaking": True, "offer": None}
-    view("quiet", {})                                         # the voice finished: now it may tuck away
+    view("quiet", {})                                         # voice done: it may tuck away
     assert posted[-1]["state"] == {"speaking": False}
     view("error", {"message": "That took too long. Try asking again."})
     assert posted[-1]["state"] == {"phase": "error", "error": "That took too long. Try asking again.", "fixable": False}
@@ -157,7 +157,7 @@ def test_controller_hooks_and_result_callback():
     assert results == [("where is export", "It's under File.")]
     view.calls.clear()
     main_calls.clear()
-    controller.ask("yes")                              # the island's Yes: a request without holding the keys
+    controller.ask("yes")                              # island's Yes: a request, no keys held
     deadline = time.monotonic() + 2
     while not main_calls and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -200,8 +200,8 @@ def test_another_apps_control_option_shortcut_never_cuts_plip_off_and_a_tap_stil
     controller = BuddyController(companion=Companion(), overlay=Overlay(), loop=Loop(), listener=listener,
                                  call_later=lambda delay, fn: later.append((delay, fn)), on_main=lambda f, *a: f(*a),
                                  presenter=view, press_delay=BuddyController.PRESS_DELAY)
-    controller.on_press()                              # Rectangle's ⌃⌥→: the chord, then an arrow key
-    assert listener.started == 1 and hushed == [1]     # mic on at once (no lost first word), voice off
+    controller.on_press()                              # another app's ⌃⌥ + arrow shortcut
+    assert listener.started == 1 and hushed == [1]     # mic on at once (keeps first word), voice off
     controller.on_cancel()
     controller.on_release()
     later.pop()[1]()
@@ -215,7 +215,7 @@ def test_another_apps_control_option_shortcut_never_cuts_plip_off_and_a_tap_stil
     delay, fn = later.pop()
     fn()
     assert delay == 0.15 and listener.started == 3 and view.calls[-1][0] == "listening"   # not started twice
-    controller.on_release()                            # let go; then Stop before the words come back
+    controller.on_release()                            # then Stop before the words arrive
     controller.stop()
     controller.on_final("play some music")
     assert controller.state == "idle" and view.calls[-1][0] == "idle"          # no answer to it after Stop
@@ -317,7 +317,7 @@ def test_the_welcome_walkthrough_keeps_its_step_and_watches_the_practice_ask(ser
     svc, calls, tmp_path = service
     svc.handle({"cmd": "tour-go", "step": "brain"})
     svc.handle({"cmd": "tour-go", "step": "nowhere"})
-    assert Prefs.load(tmp_path / "prefs.json").tour_step == "brain"            # a restart for Screen Recording resumes
+    assert Prefs.load(tmp_path / "prefs.json").tour_step == "brain"            # survives a restart
     assert calls["posted"][-1]["state"]["tour"] == {"step": "brain"}
     svc.handle({"cmd": "tour-start"})
     assert calls["posted"][-1]["state"]["tour"] == {"step": "welcome"} and not calls["posted"][-1]["state"]["onboarded"]
@@ -582,7 +582,7 @@ def test_the_island_lets_plips_own_clicks_through_and_ignores_the_cursor_it_park
     from mcp_vision.buddy.island_macos import PARK_SLOP, YIELD_SECONDS, HoverGate
 
     gate = HoverGate()
-    assert gate.takes((500, 900), over=True, now=0.0)                       # the user hovering: it takes the mouse
+    assert gate.takes((500, 900), over=True, now=0.0)                       # user hovering: it takes the mouse
     gate.plip_moved((500, 900), now=10.0)                                    # plip clicks a tab under the notch
     assert not gate.takes((500, 900), over=True, now=10.0 + YIELD_SECONDS / 2)     # click-through while it acts
     assert not gate.takes((500 + PARK_SLOP / 2, 900), over=True, now=20.0)  # where plip left it: not a hover
@@ -597,7 +597,7 @@ def test_the_island_lets_plips_own_clicks_through_and_ignores_the_cursor_it_park
 
 def test_the_shortcut_warnings_button_and_the_voice_test_use_what_the_app_handles(service):
     svc, calls, tmp_path = service
-    svc.handle({"cmd": "grant", "permission": "accessibility"})      # what the "Open Accessibility" button sends
+    svc.handle({"cmd": "grant", "permission": "accessibility"})      # the "Open Accessibility" button
     assert ("grant", "accessibility") in calls["platform"]
     svc.handle({"cmd": "set-hotkey", "id": "option+command"})
     svc.handle({"cmd": "test-voice"})
@@ -674,12 +674,12 @@ def test_the_toss_waits_out_parakeets_tail_and_skips_a_new_press():
         on_main=lambda f, *a: None, sound=played.append)
     controller.on_press()
     controller.on_release()
-    assert played == [] and later[0][0] == 0.22          # the mic's still on for the last word
+    assert played == [] and later[0][0] == 0.22          # mic still on for the last word
     later[0][1]()
     assert played == ["sent"]
     controller.on_press()
     controller.on_release()
-    controller.on_press()                                 # pressed again inside the tail: its mic is on
+    controller.on_press()                                 # re-pressed within the tail: mic is on
     later[-2][1]()
     assert played == ["sent"]
 

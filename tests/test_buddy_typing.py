@@ -1,4 +1,4 @@
-"""Typing that lands once: fields that show keys late (Chrome, Electron), never pasted on top, read back after."""
+"""Typing lands once: late fields (Chrome, Electron), no paste on top, read back after."""
 from __future__ import annotations
 
 import asyncio
@@ -29,15 +29,15 @@ def hands(context=None, host=None):
 
 
 class Box:
-    """One text field: what's really in it, whether it's all selected, and what Accessibility reads (late)."""
+    """A text field: real value, select-all state, what Accessibility reads (late)."""
 
     def __init__(self, value="", frame=Rect(450, 46, 300, 28)):           # page()'s Search field
         self.value, self.frame, self.selected = value, frame, False
-        self.seen = [(0.0, value)]                 # (when Accessibility catches up, what it reads from then)
+        self.seen = [(0.0, value)]                 # (when AX catches up, what it reads)
 
     def put(self, text, lag):
         self.value = text if self.selected else self.value + text
-        self.selected = False                      # typing replaces a select-all; then the caret sits at the end
+        self.selected = False                      # typing replaces a select-all; caret at end
         self.seen.append((time.monotonic() + lag, self.value))
 
     def read(self):
@@ -46,12 +46,10 @@ class Box:
 
 
 class Fields(FakeHost):
-    """Text fields that answer like real apps do, not instantly.
+    """Text fields that answer late, like real apps.
 
-    ``lag``: Accessibility shows typing that much later (chrome, electron, busy pages); ``focus_lag``: it follows
-    a click into another field that much later. ``deaf`` ignores synthetic keys, ``paste_works=False`` pastes too.
-    ``hidden``: an editor typing through a tiny stand-in box (google docs, vs code) whose value never shows it.
-    ``secure``: the boxes with these names are password boxes.
+    lag/focus_lag: AX shows typing/focus moves that late; deaf: ignores keys; paste_works=False: paste fails too;
+    hidden: editor typing via a stand-in box (Docs, VS Code); secure: names of password boxes.
     """
 
     def __init__(self, value="old search", *, deaf=False, paste_works=True, lag=0.0, focus_lag=0.0, hidden=False,
@@ -59,7 +57,7 @@ class Fields(FakeHost):
         super().__init__()
         self.boxes = boxes or {"search": Box(value)}
         self.focus = next(iter(self.boxes))        # where keys land
-        self.followed = (0.0, self.focus, self.focus)   # (when Accessibility's focus moves, to, from)
+        self.followed = (0.0, self.focus, self.focus)   # (when AX focus moves, to, from)
         self.deaf, self.paste_works, self.lag, self.focus_lag, self.hidden = deaf, paste_works, lag, focus_lag, hidden
         self.secure = set(secure)
 
@@ -122,7 +120,7 @@ def test_typing_into_a_named_field_replaces_it_and_append_keeps_it():
 
 
 def test_a_field_that_shows_typing_late_gets_it_once_not_typed_and_pasted():
-    for lag in (0.06, 0.3):                      # chrome shows keys a beat late; a check that reads once pastes on top
+    for lag in (0.06, 0.3):                      # Chrome shows keys late; one read would paste on top
         host = Fields("", lag=lag)
         e, _ = hands(host=host)
         out = run(e.handle("type_text", {"text": "active", "id": 2, "submit": True}))
@@ -168,7 +166,7 @@ def test_typing_that_doesnt_land_is_pasted_instead_and_reported_if_that_fails_to
 
 
 def test_hidden_editor_inputs_are_never_pasted_into_or_select_alled():
-    host = Fields("", hidden=True)                # google docs, vs code, math boxes: the value never changes
+    host = Fields("", hidden=True)                # Docs, VS Code, math boxes: value never changes
     e, _ = hands(host=host)
     started = time.monotonic()
     out = run(e.handle("type_text", {"text": "x^2 + 1"}))
@@ -208,7 +206,7 @@ def test_a_field_showing_something_else_is_never_read_back_or_submitted(monkeypa
     monkeypatch.setattr(core, "VERIFY", 0.1)
 
     class LatePaste(Fields):
-        """Keys don't land, and the paste lands late: the field gets their own clipboard (a copied password)."""
+        """Keys don't land; the paste drops in their clipboard (a copied password)."""
 
         def paste(self, text):
             self.calls.append(("paste", text))

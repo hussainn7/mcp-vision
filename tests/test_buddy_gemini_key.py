@@ -1,4 +1,4 @@
-"""The free way in: Gemini with a Google AI Studio key, no AI plan and nothing to install."""
+"""Free path: Gemini via a Google AI Studio key, no plan, no install."""
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +12,7 @@ from mcp_vision.buddy.conversation import Turn
 
 
 class Response:
-    """An HTTP response read line by line, like Google's server-sent events."""
+    """HTTP response read line by line (Google's SSE)."""
 
     def __init__(self, chunks=(), body=b""):
         self.lines = [f"data: {json.dumps(chunk)}\r\n".encode() for chunk in chunks]
@@ -71,10 +71,10 @@ def test_a_turn_streams_with_the_screenshot_and_reports_what_it_used():
                           "cachedContentTokenCount": 200}, "modelVersion": "gemini-3.8-flash"}]))
     brain = GeminiKeyBrain(api_key="AIza-test", opener=google)
     turns = [Turn("user", "hi"), Turn("assistant", "hey"), Turn("user", "where is export", images=[shot()])]
-    assert run(brain, turns) == "It's under File."                                # the thought part isn't said
+    assert run(brain, turns) == "It's under File."                                # thought parts aren't said
     url, body, headers = google.sent[0]
     assert url.endswith("/models/gemini-flash-latest:streamGenerateContent?alt=sse")
-    assert headers["X-goog-api-key"] == "AIza-test" and "AIza" not in url          # the key never rides in the link
+    assert headers["X-goog-api-key"] == "AIza-test" and "AIza" not in url          # key never in the URL
     assert body["systemInstruction"] == {"parts": [{"text": "be plip"}]}
     assert [content["role"] for content in body["contents"]] == ["user", "model", "user"]
     assert "inlineData" in body["contents"][2]["parts"][0] and body["contents"][2]["parts"][-1] == {"text": "where is export"}
@@ -88,7 +88,7 @@ def test_a_detailed_ask_thinks_harder_and_turns_from_one_side_merge():
     body = brain.request(system="s", turns=[Turn("assistant", "earlier"), Turn("user", "a"), Turn("user", "b")],
                          detailed=True)
     assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
-    assert [c["role"] for c in body["contents"]] == ["user", "model", "user"]      # starts with the user, alternates
+    assert [c["role"] for c in body["contents"]] == ["user", "model", "user"]      # user first, then alternates
     assert body["contents"][2]["parts"] == [{"text": "a"}, {"text": "b"}]
 
 
@@ -104,7 +104,7 @@ def test_a_bad_key_and_the_free_limit_are_said_plainly():
     quota = "Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests"
     for error, said in ((http_error(400, "API key not valid. Please pass a valid API key."), "Check the API key"),
                         (http_error(429, quota, "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"),
-                         "Give it a minute"),                              # a busy minute isn't "come back tomorrow"
+                         "Give it a minute"),                              # per-minute limit, not daily
                         (http_error(429, quota, "GenerateRequestsPerDayPerProjectPerModel-FreeTier"),
                          "resets tomorrow")):
         try:
@@ -143,10 +143,10 @@ def test_a_pasted_google_key_is_checked_first_then_saved_and_becomes_the_brain(t
         platform=Platform(clipboard=lambda: clipboard["text"]),
         check_key=lambda name, value: checked.append((name, value)) or ("" if value == key else "nope"),
         background=lambda job: job())
-    service.handle({"cmd": "paste-key"})                                          # nothing key-like copied yet
+    service.handle({"cmd": "paste-key"})                                          # no key copied yet
     state = posted[-1]["state"]["keyCheck"]
     assert state["state"] == "bad" and "no key on your clipboard" in state["message"] and checked == []
-    assert "grocery" not in json.dumps(posted)                                    # what else was copied isn't kept
+    assert "grocery" not in json.dumps(posted)                                    # other clipboard text isn't kept
     clipboard["text"] = f"  {key}\n"
     service.handle({"cmd": "paste-key"})
     assert checked == [("GEMINI_API_KEY", key)] and f"GEMINI_API_KEY={key}" in (tmp_path / ".env").read_text()
@@ -154,7 +154,7 @@ def test_a_pasted_google_key_is_checked_first_then_saved_and_becomes_the_brain(t
     assert Prefs.load(tmp_path / "prefs.json").engine == "gemini-api"             # their only working brain
     service.handle({"cmd": "set-key", "name": "GEMINI_API_KEY", "value": "AIza" + "y" * 35})
     assert posted[-1]["state"]["keyCheck"] == {"name": "GEMINI_API_KEY", "state": "bad", "message": "nope"}
-    assert "y" * 35 not in (tmp_path / ".env").read_text()                         # a rejected key isn't saved
+    assert "y" * 35 not in (tmp_path / ".env").read_text()                         # rejected key isn't saved
 
 
 def test_the_free_engine_is_ready_with_a_key_and_builds_a_gemini_brain():

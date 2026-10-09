@@ -135,7 +135,7 @@ class ScreenCapturer:
         return Screenshot(screen=screen, data=buffer.getvalue(), width=width, height=height)
 
     def glance(self) -> Image.Image:
-        """The cursor screen as it is right now, unencoded: did a step change it where the map can't see?"""
+        """The cursor screen right now, unencoded."""
         screen = order_cursor_first(self.screens())[0]
         return self._grab(self._monitor_for(screen))
 
@@ -147,8 +147,7 @@ class ScreenCapturer:
         return fingerprint(self._grab(self._monitor_for(screen)))
 
     def fingerprint_at(self, x: float, y: float, size: float = 300.0) -> bytes | None:
-        """The same tiny thumbnail of just the ``size``-point square around a global point (~16 ms): did a
-        scroll move anything there, even when the Accessibility map can't tell. None off every screen."""
+        """Fingerprint of the ``size``-pt square around a global point (~16 ms); None off-screen."""
         from mcp_vision.buddy.watch import fingerprint
 
         for monitor in self._monitors():

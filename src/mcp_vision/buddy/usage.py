@@ -175,10 +175,10 @@ class Request:
     outcome: str = "answered"   # one of OUTCOMES
     goal: bool = False          # a multi-step task (more than one model call)
     ms: int = 0                 # start until Plip stopped talking
-    first_ms: int = 0           # start to the first word it said (0: it never spoke)
-    model_ms: int = 0           # waiting on the brain, every turn (actions it ran mid-reply not included)
+    first_ms: int = 0           # start to first word (0: never spoke)
+    model_ms: int = 0           # waiting on the brain, all turns (not mid-reply actions)
     act_ms: int = 0             # carrying out actions
-    settle_ms: int = 0          # waiting for the screen to settle or load between steps
+    settle_ms: int = 0          # screen settling/loading between steps
 
 
 class UsageLog:

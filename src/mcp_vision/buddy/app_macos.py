@@ -43,7 +43,7 @@ def _menu_target_class():
                 if action:
                     action()
 
-            def menuWillOpen_(self, _menu):              # NSMenuDelegate: show Stop / Keep going as they are now
+            def menuWillOpen_(self, _menu):              # NSMenuDelegate: refresh Stop / Keep going
                 action = self.actions.get("will_open")
                 if action:
                     action()
@@ -138,7 +138,7 @@ class StatusMenu:
             button.setToolTip_(f"Plip - hold {chord.label} and ask")
 
     def set_activity(self, busy: bool, unfinished: str) -> None:
-        """Stop while Plip is working; Keep going when a task stopped before it was done."""
+        """Stop while busy; Keep going for an unfinished task."""
         self.stop_item.setHidden_(not busy)
         if unfinished:
             self.resume_item.setTitle_(f"Keep going: {unfinished}"[:60])
@@ -362,7 +362,7 @@ def run_buddy_app() -> None:
     sounds = Sounds(enabled=lambda: Prefs.load().sounds)
 
     def touring() -> None:
-        """The welcome tour's "try it" step shows the request as it goes: only while the tour is open."""
+        """Live-update the welcome tour's "try it" step while the tour is open."""
         if state["settings_window"] is not None and not Prefs.load().onboarded:
             service.push()
 
@@ -495,24 +495,24 @@ def run_buddy_app() -> None:
         post_shortcut()
 
     def post_shortcut() -> None:
-        """The island's "hold ⌃⌥" follows the shortcut, and says so when macOS isn't passing it to Plip."""
+        """Send the island the shortcut, and whether macOS passes it to Plip."""
         if island is not None:
             card = chord(Prefs.load().hotkey).card()
             island.post([{"type": "shortcut", "state": {**card, "works": hotkey_mode() != "none"}}])
 
     def hotkey_mode() -> str:
-        """Asked fresh: Accessibility granted since launch starts listening again (hotkeys.mode)."""
+        """Asked fresh, so Accessibility granted after launch counts."""
         hotkeys = state.get("hotkeys")
         controller.hotkey_mode = hotkeys.mode() if hotkeys is not None else "none"
         return controller.hotkey_mode
 
     def apply_hotkey(name: str | None = None) -> None:
-        """Listen for the talk shortcut from Settings, and say it everywhere Plip says "hold ⌃⌥"."""
+        """Listen for the Settings shortcut and show it everywhere."""
         picked = chord(name if name is not None else Prefs.load().hotkey)
         detector.set_chord(picked.mask)
         controller.shortcut, controller.shortcut_keys = picked.label.replace(" + ", "+"), picked.symbols
         menu.set_shortcut(picked)
-        if controller.companion is not None:          # at launch it's still waking up: don't say ready yet
+        if controller.companion is not None:          # still waking up: don't say ready yet
             update_setup_error()
         else:
             post_shortcut()
@@ -604,13 +604,13 @@ def run_buddy_app() -> None:
         threading.Thread(target=work, daemon=True, name="plip-probe").start()
 
     def refreshed() -> None:
-        """"Check again" (or coming back to Settings): the menu bar, the island and the brain all catch up."""
+        """"Check again" / back to Settings: menu bar, island and brain catch up."""
         from mcp_vision.buddy.engines import choose_engine
 
         service.push()
         if controller.companion is None and not state["building"] and \
                 choose_engine(state["settings"], registry.cached()) is not None:
-            rebuild(probe=False)                     # signed in to one somewhere else since: use it now
+            rebuild(probe=False)                     # signed in elsewhere since: use it
         else:
             update_setup_error()
 
@@ -650,7 +650,7 @@ def run_buddy_app() -> None:
         service.push()
 
     def connected(engine_id: str) -> None:
-        """A brain finished connecting (installed, signed in): probe again and make it the brain."""
+        """A brain finished connecting: re-probe and select it."""
         registry.statuses(refresh=True)
         AppHelper.callAfter(lambda: service.handle({"cmd": "select-engine", "id": engine_id}))
 
@@ -706,7 +706,7 @@ def run_buddy_app() -> None:
                 default_host_cached().open(path)
         elif name == "sound":
             if command.get("name") in {"open", "close"}:
-                sounds.play(str(command["name"]))      # the island opening / tucking back under the pointer
+                sounds.play(str(command["name"]))      # island opening / tucking back
         elif name == "stop":
             stop()
         elif name == "offer-answer":                          # Yes / No thanks under a suggestion
@@ -716,7 +716,7 @@ def run_buddy_app() -> None:
                 if controller.companion is not None:
                     loop.call_soon_threadsafe(controller.companion.decline)
                 presenter.idle()
-        elif name == "ready" and island is not None:          # the island loaded: show it the talk shortcut
+        elif name == "ready" and island is not None:          # island loaded: send it the shortcut
             post_shortcut()
         elif name != "island-rect":
             service.handle(command)

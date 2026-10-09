@@ -49,4 +49,4 @@ def test_the_system_voice_speaks_in_process_stops_on_the_spot_and_falls_back_to_
     assert synth.stopped                                                                 # cut off right away
     broken = SystemVoice(synthesizer=lambda: Synth(ok=False), runner=lambda command, stop: ran.append(command))
     broken.play("still heard", threading.Event())
-    assert ran == [["say", "-r", "200", "--", "still heard"]]                            # the old way still works
+    assert ran == [["say", "-r", "200", "--", "still heard"]]                            # falls back to say

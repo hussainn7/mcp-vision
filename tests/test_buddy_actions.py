@@ -510,7 +510,7 @@ def test_a_rewrite_sees_the_whole_email_and_never_replaces_more_than_it_saw():
                       height=831)
     email = "Hi Sam,\n\nThanks for the   notes on the deck.\r\n\n\n\nBest,\nAda " + "and more. " * 70
     text = ScreenContext(app="Mail", selection=email, selection_chars=len(email)).describe([shot])
-    # The model gets every paragraph back, not the first 600 characters run together.
+    # every paragraph comes back, not a 600-char run-on
     assert 'selected text:\n"""\nHi Sam,\n\nThanks for the notes on the deck.\n\nBest,\nAda and more.' in text
     assert text.rstrip().endswith('and more.\n"""') and "only the first" not in text
 
@@ -529,7 +529,7 @@ def test_a_search_left_running_cant_swap_the_list_and_open_stays_inside_home(tmp
     from mcp_vision.buddy.actions.core import keep_files, search_number
 
     e = engine(FakeHost(home=str(tmp_path / "sam")))
-    old = search_number(e.ctx)                          # an interrupted turn's search, still running
+    old = search_number(e.ctx)                          # interrupted turn's search, still running
     new = search_number(e.ctx)                          # this turn's
     assert keep_files(e.ctx, new, ["/Users/sam/Documents/lease.pdf"])
     assert not keep_files(e.ctx, old, ["/Users/sam/Downloads/other.pdf"])      # finishes later: ignored
@@ -538,5 +538,5 @@ def test_a_search_left_running_cant_swap_the_list_and_open_stays_inside_home(tmp
     (tmp_path / "samantha").mkdir()
     theirs = tmp_path / "samantha" / "diary.txt"
     theirs.write_text("not sam's")
-    out = asyncio.run(e.handle("open_file", {"path": str(theirs)}))   # same first letters as sam's home, not in it
+    out = asyncio.run(e.handle("open_file", {"path": str(theirs)}))   # shares sam's home prefix, not inside it
     assert out.status == "failed" and "home folder" in out.message

@@ -164,7 +164,7 @@ def test_capturer_fingerprint_is_small():
 
 
 class FakeAX:
-    """Just enough of ApplicationServices for the screen map walk: elements are dicts with a frame."""
+    """Minimal ApplicationServices: elements are dicts with a frame."""
 
     kAXValueCGPointType, kAXValueCGSizeType = "point", "size"
 
@@ -192,9 +192,8 @@ def ax(role, frame=None, title="", children=()):
 def test_the_screen_map_only_lists_what_is_actually_on_screen():
     from mcp_vision.buddy.ax_context import MacAXContext
 
-    # A full-screen Chrome window scrolled down a page, as this Mac's Accessibility tree reports it: the hidden
-    # toolbar sits above the screen, its tabs are listed twice, the skip link is a 1x1 dot, links scrolled off
-    # the top are pinned to the page's top edge as slivers, and a list scrolled inside the page hides its rows.
+    # real AX quirks: toolbar above the screen, tabs listed twice, 1x1 skip link,
+    # scrolled-off links as top-edge slivers, an inner list hiding its rows
     tab = ax("AXRadioButton", (380, -60, 60, 30), "Recordings tab")
     toolbar = ax("AXToolbar", (0, -100, 1512, 63), children=[ax("AXButton", (20, -90, 30, 30), "Back"), tab, tab])
     inner = ax("AXScrollArea", (800, 400, 300, 200), children=[
@@ -214,7 +213,7 @@ def test_the_screen_map_only_lists_what_is_actually_on_screen():
 
     assert [c.label for c in controls] == ["File", "Half scrolled", "Invite", "Row shown"]
     half = next(c for c in controls if c.label == "Half scrolled")
-    assert (half.x, half.y) == (550, 48.5)          # the middle of the part on screen, so a click lands on it
+    assert (half.x, half.y) == (550, 48.5)          # middle of the on-screen part
 
 
 def test_the_screen_map_says_where_typing_goes_but_never_what_is_typed():
@@ -236,7 +235,7 @@ def test_a_walkthrough_is_routed_once_and_keeps_its_effort_and_screen_every_step
     from mcp_vision.buddy.router import rule_route
 
     class Router:
-        """Like Jev: the user's question is a deep one, Plip's own check-in words read as a quick one."""
+        """User's question routes deep; Plip's check-ins would route quick."""
 
         def __init__(self):
             self.heard = []
@@ -257,9 +256,9 @@ def test_a_walkthrough_is_routed_once_and_keeps_its_effort_and_screen_every_step
     result = asyncio.run(Companion(brain=brain, capturer=capturer(), router=router,
                                    watcher=ScriptedWatcher([True, True])).respond("walk me through exporting a pdf"))
     assert result.finished and result.turns == 3
-    assert router.heard == ["walk me through exporting a pdf"]      # check-ins aren't routed as if the user spoke
+    assert router.heard == ["walk me through exporting a pdf"]      # check-ins aren't re-routed
     assert brain.depths == [True, True, True]                       # one effort for the whole task
-    assert all(turns[-1].images for _, turns in brain.seen)          # every check-in sees the screen it talks about
+    assert all(turns[-1].images for _, turns in brain.seen)          # every check-in sees the screen
 
 
 def test_check_ins_follow_the_checklist_the_user_sees():
@@ -273,11 +272,11 @@ def test_check_ins_follow_the_checklist_the_user_sees():
                                    watcher=ScriptedWatcher([True, True, True])).respond("export as pdf"))
     assert result.finished and result.plan == ("open file menu", "pick export", "save pdf")
     first, second, third = (turns[-1].text for _, turns in brain.seen[1:])
-    # It only knows the screen changed, not that they did it right; and it names what the island shows next.
+    # says the screen changed (not that it's right) and names the next step
     assert 'my screen changed after step 1 of 3 ("open file menu")' in first and 'next step ("pick export")' in first
     assert '("pick export")' in second and 'next step ("save pdf")' in second
     assert 'step 3 of 3 ("save pdf")' in third and "next step," in third
-    history = brain.seen[1][1][-2].text                     # what the model said on step one, as it reads it back
+    history = brain.seen[1][1][-2].text                     # step one's reply, as read back
     assert history.startswith("[STEPS:3] [PLAN: open file menu | pick export | save pdf] First, open the File menu.")
 
 
@@ -296,7 +295,7 @@ def test_a_point_on_a_listed_control_lands_on_it_without_waiting_for_a_snap():
         def snapshot(self):
             return context
 
-    # The map lists Invite at 1143,73 in the 1280 px screenshot; Plip's pixel guess elsewhere still gets snapped.
+    # Invite is mapped at 1143,73 (1280 px shot); the other point still snaps
     brain = ScriptedBrain([["Invite them up here. [POINT:1143,73:Invite] Or the help icon. [POINT:40,700:help]"]])
     snapper, events = Snapper(), Events()
     result = asyncio.run(Companion(brain=brain, capturer=capturer(), context=FixedContext(), snapper=snapper,

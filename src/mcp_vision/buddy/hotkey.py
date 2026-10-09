@@ -1,17 +1,7 @@
-"""Hold Control+Option (or the shortcut picked in Settings) to talk.
+"""Hold Control+Option (or the Settings shortcut) to talk; a regular key during the chord cancels.
 
-``ChordDetector`` is the platform-neutral rule (tested on any OS); the macOS
-listener feeds it from a listen-only Quartz event tap, falling back to
-NSEvent global monitors when the tap cannot be created.
-
-Like Clicky, it is a modifier-only chord: pressing both Control and Option
-starts listening, releasing either stops. If a regular key is pressed while
-the chord is held (Control+Option+Arrow in some app), it was a different
-shortcut, so the recording is cancelled instead of submitted.
-
-macOS hands keystrokes only to a process with Accessibility (or Input
-Monitoring): without it the tap is still made, and then never sees a key.
-Run from a terminal, it's the terminal's permission that counts, not Plip's.
+``ChordDetector`` is the OS-neutral rule; macOS feeds it from a Quartz tap (NSEvent monitors as fallback).
+Keys only arrive with Accessibility / Input Monitoring: Plip's, or the launching terminal's.
 """
 from __future__ import annotations
 
@@ -64,7 +54,7 @@ def chord(name: str | None) -> Chord:
 
 
 def can_listen() -> bool:
-    """Whether macOS passes keystrokes on to this process (Accessibility, or Input Monitoring)."""
+    """Whether macOS passes us keystrokes (Accessibility or Input Monitoring)."""
     try:
         import ApplicationServices as AX
         import Quartz
@@ -79,7 +69,7 @@ def can_listen() -> bool:
 
 
 def keyboard_owner() -> str:
-    """The app whose permission macOS checks: Plip when it's the app, else the terminal it was started from."""
+    """App whose permission macOS checks: Plip, or the terminal that launched it."""
     if ".app/Contents/" in sys.prefix + "/":
         return "Plip"
     terminals = {"Apple_Terminal": "Terminal", "iTerm.app": "iTerm", "vscode": "your code editor",
@@ -98,15 +88,12 @@ class ChordDetector:
         self._cancelled = False
 
     def chord_down(self, flags: int) -> bool:
-        """All of its modifiers held, and no other Control, Option or Command (that's another app's shortcut).
-
-        An extra Shift is fine: it's held by accident more than it means anything.
-        """
+        """All its modifiers held and no other ⌃/⌥/⌘ (another app's shortcut); a stray Shift is fine."""
         others = (CONTROL | OPTION | COMMAND) & ~self.chord
         return flags & self.chord == self.chord and not flags & others
 
     def set_chord(self, mask: int) -> None:
-        """A new shortcut from Settings. A press of the old one in progress is dropped, never sent."""
+        """New shortcut from Settings; an in-progress press of the old one is dropped."""
         if self.held:
             self.held, self._cancelled = False, False
             self.on_cancel()
@@ -119,7 +106,7 @@ class ChordDetector:
             self._cancelled = False
             self.on_press()
         elif not down and self.held and flags & self.chord == self.chord:
-            self.key_down()                  # ⌘ joined ⌃⌥ (Rectangle's ⌃⌥⌘→): another app's shortcut, not a release
+            self.key_down()                  # e.g. ⌘ joined: another app's shortcut, not a release
         elif not down and self.held:
             self.held = False
             if self._cancelled:
@@ -145,17 +132,13 @@ class MacHotkeyListener:
         self._live = False            # made while macOS was passing keys on
 
     def start(self) -> str:
-        """Returns which mechanism works: 'event-tap', 'nsevent', or 'none'.
-
-        'none' also when the tap was made but macOS won't hand it a key (no Accessibility for whoever
-        runs Plip): it used to say 'event-tap' there, so Plip looked ready and ⌃⌥ did nothing.
-        """
+        """Which mechanism works: 'event-tap', 'nsevent', or 'none' (also when macOS withholds keys)."""
         self._live = self.allowed()
         self.mechanism = "event-tap" if self._start_tap() else "nsevent" if self._start_monitors() else "none"
         return self.mode()
 
     def mode(self) -> str:
-        """What works right now. Permission granted since start: listen again, a tap made before never hears."""
+        """What works now; re-listens if permission came since (an older tap never hears)."""
         if not self.allowed():
             return "none"
         if not self._live:

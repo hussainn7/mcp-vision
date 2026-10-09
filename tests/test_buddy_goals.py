@@ -1,4 +1,4 @@
-"""Tasks that take several steps: [GOAL]…[DONE], failures handed back, [DONE] checked, x,y clicks guarded."""
+"""Multi-step tasks: [GOAL]…[DONE], failures handed back, [DONE] checked, x,y clicks guarded."""
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +12,7 @@ from mcp_vision.buddy.screen_context import Control, ScreenContext
 
 
 class Spotify(FakeHost):
-    """Opening Spotify shows its window; clicking Play (where it is) starts the music; Buy does nothing."""
+    """Open shows the window; Play starts music; Buy does nothing."""
 
     def __init__(self, play_works=True):
         super().__init__()
@@ -51,7 +51,6 @@ def test_a_goal_keeps_going_after_the_open_until_done():
                                 '[GOAL: play discover weekly] opening spotify. [DO:open_app {"name": "spotify"}]',
                                 'hitting play. [DO:click {"id": 2}] playing it now. [DONE]')
     result = asyncio.run(companion.respond("open spotify and play my discover weekly"))
-    # It stopped after the open before: nothing told it to look again.
     assert host.playing and result.finished and result.turns == 2 and result.outcome == "done"
     step = brain.calls[1][-1].text
     assert "(step 1 toward: play discover weekly" in step and "open_app: done" in step
@@ -172,7 +171,7 @@ def test_routine_steps_think_less_and_anything_that_went_wrong_keeps_their_depth
     companion = Companion(brain=brain, capturer=Capturer(), context=host, speaker=Speaker(),
                           actions=ActionEngine(ActionContext(host=host)), settle_interval=0.01)
     result = asyncio.run(companion.respond("open spotify and play discover weekly"))
-    # the ask: their depth · after a clean open that moved the screen: low · after a failed click: their depth
+    # ask: their depth; clean open: low; failed click: their depth
     assert brain.efforts == [None, "low", None] and result.finished and host.playing
 
 
@@ -184,7 +183,7 @@ def test_a_yes_to_plips_own_question_is_the_confirmation_but_never_for_money():
     assert Consent.given("yes", asked).covers(Preview(title="Click “Send”", confirm="Click it"))   # the "it"
     assert Consent.given("do it", asked).covers(Preview(title="Click “Send”", confirm="Click it"))
     assert not Consent.given("yes", asked).covers(Preview(title="Send to Sam"))        # someone else: its card
-    # a yes is about what was asked: removing a filter never deletes the account, a search never submits a payment
+    # a yes covers only what was asked
     assert not Consent.given("yes", "Want me to remove that filter?").covers(Preview(title="Click “Delete account”"))
     assert not Consent.given("yes", "Submit the search?").covers(Preview(title="Click “Submit”"))
     assert Consent.given("send it", "Anything else?") is None                       # their own words: its one card
@@ -304,7 +303,7 @@ def test_a_long_scroll_stops_when_they_press_the_shortcut_again():
     engine.ctx.screen = ([], context)
     scrolled = []
 
-    def observe():                                   # a page that keeps moving; they press the keys mid-way
+    def observe():                                   # page keeps moving; keys pressed mid-way
         scrolled.append(1)
         if len(scrolled) == 3:
             engine.ctx.generation += 1

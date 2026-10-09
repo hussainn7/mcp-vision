@@ -1,12 +1,6 @@
-"""Plip's own windows step aside for what it points at and clicks.
+"""Plip's own windows (the notch island) step aside for points it's about to click or point at.
 
-The notch island floats above every app. When Plip clicks, scrolls or drags somewhere it covers (a
-browser tab, the address bar, a menu right under the notch), the island must let that click through
-to the app.
-
-Hosts call ``clear`` right before they move the real mouse (``act=True``), pointers right before
-they fly somewhere (``act=False``). The island listens. Points are global top-left points, the
-coordinates hosts click at. A listener that fails never stops the click.
+Points are global top-left; a failing listener never blocks the click.
 """
 from __future__ import annotations
 
@@ -21,7 +15,7 @@ _listeners: list[Listener] = []
 
 
 def on_clear(listener: Listener) -> Callable[[], None]:
-    """Call ``listener(points, act)`` before Plip touches those points. Returns a function that stops it."""
+    """Call ``listener(points, act)`` before Plip touches points; returns an unsubscribe."""
     _listeners.append(listener)
 
     def stop() -> None:
@@ -31,7 +25,7 @@ def on_clear(listener: Listener) -> Callable[[], None]:
 
 
 def clear(points: Iterable[Point], *, act: bool = True) -> None:
-    """Plip is about to click / scroll / drag at (``act``), or point at, these points."""
+    """About to act at (``act``) or just point at these points."""
     where = [(float(x), float(y)) for x, y in points]
     for listener in list(_listeners):
         try:

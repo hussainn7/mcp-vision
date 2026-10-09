@@ -59,7 +59,7 @@ def test_chord_with_command_is_not_ours_and_key_during_chord_cancels():
     assert events == ["press", "cancel"]
     chord.key_down()                                    # keys outside the chord are ignored
     assert events == ["press", "cancel"]
-    chord.flags_changed(CONTROL | OPTION)              # ⌃⌥ then ⌘ joins (Rectangle's ⌃⌥⌘→): not ours, not a release
+    chord.flags_changed(CONTROL | OPTION)              # ⌃⌥ then ⌘ (Rectangle's ⌃⌥⌘→): not ours
     chord.flags_changed(CONTROL | OPTION | COMMAND)
     chord.flags_changed(CONTROL | OPTION)
     chord.flags_changed(0)
@@ -425,12 +425,12 @@ def test_every_offered_shortcut_presses_releases_and_ignores_other_apps_shortcut
         chord_.flags_changed(picked.mask | SHIFT if not picked.mask & SHIFT else picked.mask)   # a stray Shift is fine
         chord_.flags_changed(0)
         assert events == ["press", "release"], name
-        for extra in (CONTROL, OPTION, COMMAND):           # one more Control/Option/Command: someone else's shortcut
+        for extra in (CONTROL, OPTION, COMMAND):           # an extra modifier: another app's shortcut
             if not picked.mask & extra:
                 chord_.flags_changed(picked.mask | extra)
                 chord_.flags_changed(0)
         assert events == ["press", "release"], name
-    # The old default no longer answers once another one is picked.
+    # old default stops answering
     chord_, events = detector()
     chord_.set_chord(chord("option+command").mask)
     chord_.flags_changed(CONTROL | OPTION)
@@ -451,7 +451,7 @@ def test_the_listener_only_says_it_works_when_macos_passes_it_keys():
     from mcp_vision.buddy.hotkey import MacHotkeyListener
 
     class Listener(MacHotkeyListener):
-        """The real logic, minus the Quartz tap (a real one in a test would hear this Mac's keyboard)."""
+        """Real logic minus the Quartz tap (a real one would hear this Mac's keys)."""
 
         made = 0
 
@@ -468,10 +468,10 @@ def test_the_listener_only_says_it_works_when_macos_passes_it_keys():
     allowed = [False]
     listener = Listener(ChordDetector(on_press=lambda: None, on_release=lambda: None, on_cancel=lambda: None),
                         allowed=lambda: allowed[0])
-    # Run from Terminal without Accessibility: macOS makes the tap and never hands it a key. It said 'event-tap'.
+    # no Accessibility: the tap is made but never gets keys
     assert listener.start() == "none" and listener.made == 1
     assert listener.mode() == "none"
-    allowed[0] = True                                   # they turn it on: listen again, the old tap never hears
+    allowed[0] = True                                   # turned on: re-listen (old tap stays deaf)
     assert listener.mode() == "event-tap" and listener.made == 2
     assert listener.mode() == "event-tap" and listener.made == 2
 

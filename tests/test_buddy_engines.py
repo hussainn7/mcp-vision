@@ -627,7 +627,7 @@ def test_the_app_keeps_the_next_claude_process_warm_and_reuses_it(tmp_path):
         brain = ClaudeCodeBrain(binary)
         brain.prewarm = True
         answers = [await collect(brain, TURNS)]
-        for _ in range(50):                                   # the next process starts in the background
+        for _ in range(50):                                   # next process starts in the background
             if brain._spares:
                 break
             await asyncio.sleep(0.02)
@@ -680,18 +680,18 @@ def test_a_process_starts_while_the_keys_are_held_and_an_unused_one_goes_away(tm
     async def press_then_ask():
         brain = ClaudeCodeBrain(binary, effort="medium")
         brain.prewarm, brain.idle_ttl = True, 0.6
-        brain.ensure_warm("SYSTEM")                          # the press: nothing to say yet
-        brain.ensure_warm("SYSTEM")                          # a second press doesn't start another
+        brain.ensure_warm("SYSTEM")                          # key press: nothing to say yet
+        brain.ensure_warm("SYSTEM")                          # second press: no extra process
         for _ in range(100):
             if brain._spares:
                 break
             await asyncio.sleep(0.02)
         spare_pid = next(iter(brain._spares.values()))[0].pid
-        answer = await collect(brain, TURNS)                 # the question arrives: uses that one
-        brain.ensure_warm("SYSTEM", effort="low")            # a quick check-in is coming: a low-effort spare
+        answer = await collect(brain, TURNS)                 # question arrives: uses the spare
+        brain.ensure_warm("SYSTEM", effort="low")            # low-effort spare for a check-in
         await asyncio.sleep(0.3)
         efforts = sorted(key[0][key[0].index("--effort") + 1] for key in brain._spares)
-        await asyncio.sleep(1.0)                             # nobody used them: reaped
+        await asyncio.sleep(1.0)                             # unused: reaped
         left = dict(brain._spares)
         await brain.aclose()
         return answer, spare_pid, efforts, left

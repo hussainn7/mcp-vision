@@ -233,5 +233,5 @@ def test_companion_turns_carry_what_plip_knows(memory):
     system, text = brain.systems[0], brain.calls[0][-1].text
     assert "about the user" in system and "- name: Hussain Syed" in system and "- vegetarian" in system
     assert system.index("you're plip") < system.index("about the user")
-    # It's in the cached prompt, not the turn (where each call paid for it in full); the clock stays per turn.
+    # notes ride in the cached prompt; the clock stays per turn
     assert "about the user" not in text and text.startswith("now: ") and text.endswith("what should I eat tonight")

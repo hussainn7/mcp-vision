@@ -70,15 +70,15 @@ await test('island: stays open while Plip is still talking, opens on hover only 
   await page.mouse.move(5, 400)
   await setIsland(page, { phase: 'thinking', transcript: 'what is this' })
   await page.waitForTimeout(400)
-  await page.getByRole('button', { name: 'Stop' }).click()                    // stop while it's still thinking
+  await page.getByRole('button', { name: 'Stop' }).click()                    // stop mid-thinking
   assert.deepEqual(await take('stop'), { cmd: 'stop' })
-  await page.mouse.move(5, 400)                                               // off the island, or it stays for the hover
+  await page.mouse.move(5, 400)                                               // off the island, or hover keeps it open
   await setIsland(page, { phase: 'answering', answer: 'A long answer.', done: true, speaking: true })
-  await page.waitForTimeout(500)                                              // the thinking view finishes leaving
+  await page.waitForTimeout(500)                                              // let the thinking view exit
   await page.clock.install()
   await page.clock.runFor(12000)                                              // past the linger: still talking
   assert.equal(last('island-rect').mode, 'answering')
-  assert.equal(await page.getByRole('button', { name: 'Stop' }).count(), 1)   // the voice can still be stopped
+  assert.equal(await page.getByRole('button', { name: 'Stop' }).count(), 1)   // voice still stoppable
   await setIsland(page, { speaking: false })
   await page.clock.runFor(7500)
   await page.waitForTimeout(50)
@@ -150,11 +150,11 @@ await test('island: hovering the notch plips open and tucks back, once per hover
   const sounds = () => sent.filter((item) => item.cmd === 'sound').map((item) => item.name)
   await page.mouse.move(5, 400)
   await setIsland(page, { phase: 'idle', hovered: true })
-  await page.waitForTimeout(900)                                   // the 0.4 s hover delay, then open a while
+  await page.waitForTimeout(900)                                   // 0.4 s hover delay, then stay open
   await setIsland(page, { hovered: false })
   await page.waitForTimeout(450)
   assert.deepEqual(sounds(), ['open', 'close'])
-  for (const hovered of [true, false, true, false, true]) {     // a jittery pointer on the notch's edge
+  for (const hovered of [true, false, true, false, true]) {     // jittery pointer on the edge
     await setIsland(page, { hovered })
     await page.waitForTimeout(60)
   }
@@ -162,7 +162,7 @@ await test('island: hovering the notch plips open and tucks back, once per hover
   assert.deepEqual(sounds(), ['open', 'close', 'open'])
   await setIsland(page, { hovered: false })
   await page.waitForTimeout(450)
-  await setIsland(page, { phase: 'listening' })                   // ⌃⌥ opens it too, but the mic is on: quiet
+  await setIsland(page, { phase: 'listening' })                   // mic is on: no sound
   await page.waitForTimeout(450)
   await setIsland(page, { phase: 'idle' })
   await page.waitForTimeout(450)
@@ -262,7 +262,7 @@ await test('onboarding: plain steps, a brain without a terminal, practice, kept 
     ] } }))
   await page.getByText('Hi, I’m Plip').waitFor()
   await page.getByRole('button', { name: 'Set me up' }).click()
-  assert.deepEqual(await take('tour-go'), { cmd: 'tour-go', step: 'permissions' })    // kept: a restart comes back here
+  assert.deepEqual(await take('tour-go'), { cmd: 'tour-go', step: 'permissions' })    // saved for restarts
   await page.getByText('Let Plip see and hear you').waitFor()
   await page.getByText('Microphone and Speech Recognition').waitFor()               // Apple's listening needs both
   await page.getByRole('button', { name: 'Allow', exact: true }).first().click()
@@ -291,7 +291,7 @@ await test('general: the talk shortcut is picked here, and every "hold" hint fol
   assert.equal(await page.getByRole('alert').count(), 0)
   await page.getByRole('button', { name: 'Option + Command' }).click()
   assert.deepEqual(await take('set-hotkey'), { cmd: 'set-hotkey', id: 'option+command' })
-  // What Python pushes back: the new shortcut, and that the terminal Plip runs in can't see keys yet.
+  // Python's reply: new shortcut, host terminal can't see keys
   await page.evaluate(() => window.__plip({ type: 'settings', state: { hotkey: {
     id: 'option+command', keys: ['⌥', '⌘'], label: 'Option + Command', works: false, owner: 'Terminal',
     choices: [{ id: 'control+option', keys: ['⌃', '⌥'], label: 'Control + Option' }, { id: 'option+command', keys: ['⌥', '⌘'], label: 'Option + Command' }] } } }))
@@ -299,7 +299,7 @@ await test('general: the talk shortcut is picked here, and every "hold" hint fol
   const alert = page.getByRole('alert')
   assert.match(await alert.innerText(), /macOS isn’t passing your keys to Terminal, so ⌥⌘ does nothing yet/)
   await alert.getByRole('button', { name: 'Open Accessibility' }).click()
-  assert.deepEqual(await take('grant'), { cmd: 'grant', permission: 'accessibility' })     // the command the app handles
+  assert.deepEqual(await take('grant'), { cmd: 'grant', permission: 'accessibility' })
   assert.deepEqual(await page.locator('aside kbd').allInnerTexts(), ['⌥', '⌘'])        // the sidebar's hint
   await page.close()
   const island = await open('island', { width: 760, height: 420 })

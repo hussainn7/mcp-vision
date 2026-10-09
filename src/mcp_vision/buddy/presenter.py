@@ -23,20 +23,20 @@ class Presenter:
         self.post_island = post_island
         self.set_mood = set_mood or (lambda mood, level: None)
         self.clock = clock
-        self.on_live = on_live
-        self.sound = sound or (lambda name: None)         # the request moved to a new phase (the welcome tour's "try it" step watches)
+        self.on_live = on_live                            # phase changed (the tour's "try it" step watches)
+        self.sound = sound or (lambda name: None)
         self.live: dict[str, Any] = {"phase": "idle", "transcript": "", "answer": "", "error": "", "at": 0.0}
         self._last_level = 0.0
         self.phase = "idle"
         self.walkthrough: dict[str, Any] | None = None
         self.plan: list[str] = []
-        self.goal: dict[str, Any] | None = None       # the multi-step task's island step, kept across check-ins
+        self.goal: dict[str, Any] | None = None       # goal chip, kept across check-ins
 
     def _island(self, **state: Any) -> None:
         self.post_island([{"type": "island", "state": state}])
 
     def _live(self, **changes: Any) -> None:
-        """Where the request is, in a few words, for Settings. Only phase changes are passed on (not every word)."""
+        """Request phase for Settings (phase changes only, not every word)."""
         self.live.update(changes, at=time.time())
         try:
             self.on_live()
@@ -54,7 +54,7 @@ class Presenter:
         self._live(phase="listening", transcript="", answer="", error="")
 
     def asked(self, text: str) -> None:
-        """A request from a button (Yes, Keep going), as if they'd held the keys and said it."""
+        """A button's request (Yes, Keep going), shown as if spoken."""
         self.phase = "thinking"
         self.walkthrough = None
         self.plan = []
@@ -88,7 +88,7 @@ class Presenter:
         self.set_mood("idle", 0.0)
 
     def failed(self, message: str, setup: bool | None = None) -> None:
-        """``setup``: the fix is in settings (no brain, no permission); by default when the message says so."""
+        """``setup``: the fix is in settings (default: the message says so)."""
         self.phase = "error"
         fixable = "settings" in message.lower() if setup is None else setup
         self._island(phase="error", error=message, fixable=fixable)
@@ -107,7 +107,7 @@ class Presenter:
             self.phase = "thinking"
             state: dict[str, Any] = {"phase": "thinking", "done": False, "level": 0}
             if data.get("guide"):
-                # A walkthrough check-in or a task's next step: fresh step text, keep progress.
+                # check-in or next task step: fresh step text, keep progress
                 state.update(answer="", steps=[], walkthrough=self.walkthrough)
                 if self.goal is not None:
                     self._island(**state)
@@ -159,15 +159,15 @@ class Presenter:
         self._live(phase="done")
 
     def _on_offer(self, data: dict[str, Any]) -> None:
-        """It ended on a yes-or-no suggestion: the island answers it with a click."""
+        """Ended on a yes/no suggestion: the island shows buttons."""
         self._island(offer=str(data.get("text") or "")[:160] or None)
 
     def _on_quiet(self, _data: dict[str, Any]) -> None:
-        """Plip stopped talking: only now may a finished answer tuck back into the notch."""
+        """Plip stopped talking: a finished answer may tuck away now."""
         self._island(speaking=False)
 
     def _on_goal(self, data: dict[str, Any]) -> None:
-        """A multi-step task: one chip that says what it's working toward and which step it's on."""
+        """Multi-step task: one chip with the goal and current step."""
         text = str(data.get("text") or "")[:80]
         if not text:
             return

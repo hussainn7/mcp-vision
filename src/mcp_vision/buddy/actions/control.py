@@ -1,26 +1,6 @@
-"""Plip's hands: click, scroll, press keys, drag, on whatever is on screen.
+"""Plip's hands: click, scroll, press keys, drag. Targets: a map id, a visible label, or screenshot x,y.
 
-Targets come from the numbered screen map (``{"id": 7}``), a visible label
-(``{"text": "Export"}``) or screenshot pixels (``{"x": 410, "y": 88}``).
-Numbers and labels are exact and cost a few tokens; pixels are the fallback.
-
-``scroll_to`` is the token saver: it has the app scroll the text into view
-itself (found anywhere in the page, scrolled-out parts too), or scrolls and
-re-reads the Accessibility map locally until it shows up, so "find the pricing
-section" takes one model turn instead of one per page.
-
-A scroll aims at the panel they mean: the one Plip last clicked in (while
-they're still on that page and haven't moved the pointer), else the focused
-one, the pointer, not just the biggest. Every scroll checks itself: the
-pointer goes there first, then the pixels around that spot and the map,
-before and after. When nothing moved it tries the panel's scroll bar, other
-spots and page keys before saying so, and the result says which panel moved,
-what worked or everything it tried, so the model never has to ask them to
-scroll for it. After a scroll the numbers in the old map point at
-the wrong places; a click by number then re-finds the same label on the fresh
-map instead of clicking where the thing used to be.
-
-Clicks on things that spend money, send, delete or submit ask first.
+Scrolls check themselves and try fallbacks; scroll_to searches locally, no model turns. Risky clicks ask first.
 """
 from __future__ import annotations
 
@@ -44,8 +24,7 @@ RISKY = re.compile(r"\b(buy|purchase|pay|place (your |an? )?(order|bid)|order no
                    # applying sends your details to someone; "apply filters" or "apply changes" doesn't
                    r"apply(?!\s+(filters?|changes|settings|coupon|code|promo|discount|theme|style|formatting)\b))\b",
                    re.IGNORECASE)
-# Keys that quit, delete, log out or send (cmd+return sends in mail, chat and comment boxes), by what they press,
-# so "command+q", "⌘+q" or "shift+cmd+delete" are caught as well as "cmd+q".
+# keys that quit, delete, log out or send; parsed, so "⌘+q" matches too
 RISKY_KEYS = {parse_keys(keys) for keys in ("cmd+q", "cmd+alt+esc", "cmd+delete", "cmd+shift+delete", "cmd+return",
                                             "cmd+shift+return", "cmd+shift+d", "cmd+shift+q", "cmd+alt+q",
                                             "cmd+shift+alt+q")}
@@ -64,16 +43,12 @@ def _screen(ctx: ActionContext):
 
 
 def resolve(ctx: ActionContext, args: dict, *, key: str = "", refind: bool = True) -> tuple[float, float, str]:
-    """A target in args -> (global x, global y, label).
-
-    ``refind``: after a scroll, look a numbered control up again by its label (clicks); scrolling
-    itself can aim at the old spot, since a scroll area doesn't move when its content does.
-    """
+    """A target in args -> (global x, global y, label). ``refind``: re-find an id by label after a scroll."""
     prefix = f"{key}_" if key else ""
     shots, context = _screen(ctx)
     raw_id = args.get(f"{prefix}id", args.get(key) if key and isinstance(args.get(key), int) else None)
     if ctx.state.get("stale_map") and (raw_id is not None or f"{prefix}x" in args):
-        # An earlier step in the same reply loaded something new: those numbers point at what used to be there.
+        # an earlier step loaded something new: old ids are stale
         raise ActionError("The screen changed, so I'll take a fresh look first.")
     scrolled = bool(ctx.state.get("scrolled")) and refind
     if scrolled and raw_id is None and f"{prefix}x" in args:
@@ -87,7 +62,6 @@ def resolve(ctx: ActionContext, args: dict, *, key: str = "", refind: bool = Tru
             raise ActionError(f"I can't find number {raw_id} on screen anymore. Let me look again.",
                               hint="aim by its text or by x,y from the screenshot instead")
         if scrolled:
-            # The page scrolled since that map: find the same thing where it is now.
             moved = _refind(ctx, control)
             if moved is None:
                 raise ActionError(f"The screen changed and {control.label[:40]} isn't where it was, "
@@ -116,7 +90,7 @@ def resolve(ctx: ActionContext, args: dict, *, key: str = "", refind: bool = Tru
         shot = next((item for item in shots if screen and item.screen.index == int(screen)), None) or \
             next((item for item in shots if item.screen.is_cursor_screen), shots[0])
         gx, gy = shot.to_global(px, py)
-        # Named by what it lands on, not what the model calls it: "Buy now" clicked by x,y still asks first.
+        # named by what it lands on, so a risky x,y click still asks
         return gx, gy, _under(ctx, context, gx, gy) or str(args.get("label") or "there")
     raise ActionError("Tell me what to click: a number from the screen map, its label, or x and y.",
                       hint='give "id", "text" or "x" and "y"')
@@ -127,12 +101,7 @@ def _norm(label: str) -> str:
 
 
 def _refind(ctx: ActionContext, control):
-    """The same control on a fresh map after a scroll.
-
-    A unique label is enough. For a repeated one ("Add to cart" on every row), work out how far
-    the page moved from labels that appear once in both maps, and take the copy that sits where
-    the old one should have moved to.
-    """
+    """The same control on a fresh map after a scroll (a repeated label: the copy where the page shift puts it)."""
     fresh = ctx.observe()
     if fresh is None:
         return None
@@ -150,7 +119,7 @@ def _refind(ctx: ActionContext, control):
 
 
 def _unique(context) -> dict:
-    """Label -> the one control or text with it (labels that show up more than once left out)."""
+    """Label -> its control or text, for labels that appear once."""
     counts: dict[str, list] = {}
     for item in [*context.controls, *context.texts]:
         counts.setdefault(_norm(item.label), []).append(item)
@@ -158,7 +127,7 @@ def _unique(context) -> dict:
 
 
 def _shift(old, fresh) -> tuple[float, float] | None:
-    """How far the page moved between two maps: the median move of labels that appear once in both."""
+    """Page shift between two maps: the median move of labels unique in both."""
     before, after = _unique(old), _unique(fresh)
     moves = sorted((after[label].x - item.x, after[label].y - item.y) for label, item in before.items()
                    if label in after)
@@ -169,7 +138,7 @@ def _shift(old, fresh) -> tuple[float, float] | None:
 
 
 def _nearest(context, text: str, near: str):
-    """The ``text`` control closest to the ``near`` label: the "Add to cart" in that product's row."""
+    """The ``text`` control closest to the ``near`` label (that row's button)."""
     anchor = context.find(near)
     if anchor is None:
         return None
@@ -177,19 +146,17 @@ def _nearest(context, text: str, near: str):
     matches = [item for item in [*context.controls, *context.texts] if needle in _norm(item.label)]
     if not matches:
         return None
-    # Same row or just below the anchor reads as "its" button; above it belongs to the previous item.
+    # same row or below is "its" button; above is the previous item's
     return min(matches, key=lambda item: abs(item.x - anchor.x) * 0.3 + abs(item.y - anchor.y)
                + (60 if item.y < anchor.y - 8 else 0))
 
 
 def _under(ctx: ActionContext, context, x: float, y: float, reach: float = 40.0) -> str:
-    """The label of the control a point lands on: the smallest one whose frame holds it (a wide "Place your order"
-    button clicked near its edge too), else the nearest center within ``reach`` points for controls without a size,
-    else ""."""
+    """Label under a point: the smallest frame holding it, else the nearest sizeless control within ``reach``."""
     for candidate in (context, None):
         if candidate is None:
             try:
-                candidate = ctx.observe()             # the map the model saw may be gone: read it fresh
+                candidate = ctx.observe()             # the model's map may be gone
             except Exception:
                 candidate = None
         controls = list(getattr(candidate, "controls", None) or [])
@@ -214,7 +181,7 @@ def _glide(ctx: ActionContext, x: float, y: float, label: str) -> None:
 # -- click ------------------------------------------------------------------------------------
 def preview_click(ctx: ActionContext, args: dict) -> Preview | None:
     x, y, label = resolve(ctx, args)
-    # what it lands on, and what the model says it is (a page the map can't see names nothing under the point)
+    # what it lands on, or the model's label (a blind page names nothing)
     if not (RISKY.search(label) or RISKY.search(str(args.get("label") or ""))):
         return None
     return Preview(title=f"Click “{label[:40]}”", lines=["This one can't be undone, so I'm checking first."],
@@ -225,7 +192,7 @@ OPENING_ROLES = {"link", "tab", "menu item", "menu bar item", "row", "cell", "ou
 
 
 def _role(ctx: ActionContext, args: dict) -> str:
-    """What kind of control a click targets (by its map number or label), if the map says."""
+    """The clicked control's role, if the map knows it."""
     _, context = _screen(ctx)
     if context is None:
         return ""
@@ -254,17 +221,13 @@ def click(ctx: ActionContext, args: dict, state: tuple | None = None) -> ActionR
 
 
 # -- scroll -----------------------------------------------------------------------------------
-# Where the wheel goes, best guess first: the panel they last clicked in, the focused one, the pointer if they
-# moved it, the biggest area, the window. The pointer goes there first, then a scroll counts as moved when the
-# pixels around that spot change or something on the map shifts. If nothing moved: that panel's own scroll bar,
-# the wheel at two more spots, then page keys where they scroll (never into a field, a slider or a menu). The
-# report says what worked, or every way it tried.
-MOVED = 2.5                   # mean gray-level change around the spot (0-255) that means the content moved
-NEAR = 40                     # points: two spots this close wheel the same thing
-SHIFT = 6                     # points a label has to move on the map to count as scrolled
+# wheel at the best-guess panel; if nothing moved: its scroll bar, other spots, then page keys
+MOVED = 2.5                   # mean gray change (0-255) that counts as moved
+NEAR = 40                     # points: spots this close wheel the same thing
+SHIFT = 6                     # points a label must move to count as scrolled
 _EDGES = {"down": "bottom", "up": "top", "left": "left edge", "right": "right edge"}
 _OTHER_WAY = {"down": "up", "up": "down", "left": "right", "right": "left"}
-# focus where page keys scroll: in a field they'd type, in a slider, stepper, menu or list they'd change it
+# focus roles where page keys scroll, not type or change a value
 _PAGEABLE = {"", "AXWebArea", "AXScrollArea", "AXGroup", "AXLayoutArea", "AXSplitGroup", "AXWindow", "AXTable",
              "AXOutline", "AXRow", "AXCell", "AXBrowser", "AXStaticText", "AXHeading", "AXLink", "AXButton",
              "AXImage", "AXUnknown"}
@@ -280,22 +243,22 @@ class _Spot(NamedTuple):
     x: float
     y: float
     where: str                  # "the 'Inbox' panel", "the page"
-    aside: bool = False         # a guess that isn't the main area: the report names it
-    raw: bool = False           # a point (where they clicked, the pointer), not a panel's middle
+    aside: bool = False         # not the main area: the report names it
+    raw: bool = False           # a raw point, not a panel's middle
 
 
 class _Click(NamedTuple):
-    """Where Plip last clicked, and on what: a plain "scroll up" next means that panel."""
+    """Plip's last click: a plain scroll next means that panel."""
 
     x: float
     y: float
     app: str
-    window: str                 # its title, digits masked (an unread count isn't another page)
+    window: str                 # title, digits masked (unread counts)
     url: str
 
 
 def _ask(ctx: ActionContext, name: str, *args, default=None, **kwargs):
-    """A host question the scroll fallbacks need; ``default`` when this host can't answer (or it fails)."""
+    """Call an optional host method; ``default`` if it's missing or fails."""
     method = getattr(ctx.host, name, None)
     if method is None:
         return default
@@ -310,22 +273,21 @@ def _near(a, b, gap: float = NEAR) -> bool:
 
 
 def _deepest(areas, x: float, y: float):
-    """The innermost scroll area under a point: a panel inside the page is smaller than the page."""
+    """The innermost (smallest) scroll area under a point."""
     holding = [area for area in areas if area.w > 0 and area.h > 0
                and abs(x - area.x) <= area.w / 2 and abs(y - area.y) <= area.h / 2]
     return min(holding, key=lambda area: area.w * area.h, default=None)
 
 
 def _named(area) -> str:
-    name = _SCROLLED_TO.sub("", area.label).strip()      # "Inbox (scrolled 40% down)" -> "Inbox", "Inbox (3)" stays
+    name = _SCROLLED_TO.sub("", area.label).strip()      # drop the "(scrolled 40% down)" suffix
     if area.role == "page" or name in {"", "page"}:
         return "the page"
     return "the scroll area" if name == "scroll area" else f"the {name[:30]!r} panel"
 
 
 def _remember(ctx: ActionContext, x: float, y: float, role: str) -> None:
-    """Plip left the pointer here, and a plain "scroll up" next means this panel, unless the click switched what
-    the window shows (a tab, a menu, a sidebar entry like Mail's mailboxes): then it's that content they mean."""
+    """Remember this panel for the next plain scroll, unless the click switched content (tab, menu, sidebar)."""
     ctx.state["pointer"] = (x, y)
     _, context = _screen(ctx)
     if role in _SWITCHES or _sidebar(list(getattr(context, "scroll_areas", None) or []),
@@ -338,7 +300,7 @@ def _remember(ctx: ActionContext, x: float, y: float, role: str) -> None:
 
 
 def _sidebar(areas, frame, x: float, y: float) -> bool:
-    """A narrow column down the window's left edge: Mail's mailboxes, a web app's folder list."""
+    """A narrow column at the window's left edge (Mail's mailboxes)."""
     if frame is None or frame.width < 600:
         return False
     biggest = max(areas, key=lambda area: area.w * area.h, default=None)
@@ -349,8 +311,7 @@ def _sidebar(areas, frame, x: float, y: float) -> bool:
 
 
 def _clicked(ctx: ActionContext, now, frame, *, moved_on: bool) -> _Click | None:
-    """The last click while a plain scroll still means its panel: the pointer's where Plip left it (else they've
-    moved on), and it's the same app, window and page, or one opened from it (an email from the list)."""
+    """The last click, if a plain scroll still means its panel (pointer unmoved, same app and page)."""
     click = ctx.state.get("last_click")
     if not isinstance(click, _Click):
         return None
@@ -376,8 +337,7 @@ def _address(url: str) -> str:
 
 
 def _spots(ctx: ActionContext, args: dict, seen, lead: list | None = None) -> list[_Spot]:
-    """Where to wheel, best guess first. A named target (the id of anything inside the panel, or its x,y), then
-    the middle of the panel it sits in; else the guesses."""
+    """Where to wheel, best first: a named target and its panel's middle, else the guesses."""
     _, context = _screen(ctx)
     now = seen if seen is not None and not seen.empty else context
     areas = list(getattr(now, "scroll_areas", None) or getattr(context, "scroll_areas", None) or [])
@@ -410,7 +370,7 @@ def _guesses(ctx: ActionContext, now, areas, frame, biggest) -> list[_Spot]:
     if click is not None:
         inner = _deepest(areas, click.x, click.y)
         if inner is not None and inner is not biggest:
-            spots.append(_Spot(inner.x, inner.y, _named(inner), aside=True))     # the side panel, mid-panel
+            spots.append(_Spot(inner.x, inner.y, _named(inner), aside=True))     # side panel's middle
         elif inner is not None or not areas:                                 # maybe a panel the map can't name
             spots.append(_Spot(click.x, click.y, "the panel you last clicked in", aside=True, raw=True))
     focused = _ask(ctx, "focused_scroll_area")
@@ -428,9 +388,7 @@ def _guesses(ctx: ActionContext, now, areas, frame, biggest) -> list[_Spot]:
 
 
 def _distinct(spots: list[_Spot], areas, biggest) -> list[_Spot]:
-    """Each spot once: a few points from an earlier one, or in the same panel, wheels the same thing. A point in
-    the page itself (where they clicked, the pointer) may be over a panel the map can't see, so the page's middle
-    is still worth a go after it."""
+    """Drop spots that wheel the same thing (close by or same panel); a raw point keeps the page's middle."""
     kept: list[tuple[_Spot, Any]] = []
     for spot in spots:
         area = _deepest(areas, spot.x, spot.y)
@@ -476,8 +434,7 @@ def _pixels(ctx: ActionContext, x: float, y: float) -> bytes | None:
 
 
 def _shifted(before, after) -> bool:
-    """The map says it scrolled: something on both maps sits elsewhere now, or most of the text was swapped (a
-    list that reuses its rows). A toolbar that shows on hover or a ticking clock is neither."""
+    """The map says it scrolled: a label moved, or most of the text swapped (recycled rows)."""
     if before is None or after is None or before.empty or after.empty:
         return False
     old, new = _unique(before), _unique(after)
@@ -489,10 +446,7 @@ def _shifted(before, after) -> bool:
 
 
 def _moved(ctx: ActionContext, seen, way: _Way, pixels: list, tries: int):
-    """Did a push move anything: the pixels at the spots it watches (every 0.1 s), and the map against ``seen``
-    (read once at the end; polled when there are no pixels to watch). (yes/no, the map after: None when nothing
-    read it). None for yes/no: nothing to tell by (a blind app off every screen), so it gets the benefit of the
-    doubt."""
+    """Did a push move anything (pixels, then map)? -> (moved, map after); moved is None when it can't tell."""
     mapped = seen is not None and not seen.empty
     watched = [(point, shot) for point, shot in zip(way.watch, pixels, strict=False) if shot is not None]
     if watched:
@@ -521,8 +475,7 @@ def _changed(ctx: ActionContext, point, shot: bytes) -> bool:
 
 
 def _aim(ctx: ActionContext, x: float, y: float) -> bool:
-    """The pointer onto the spot before the 'before' look, so a row lighting up or a toolbar showing under it
-    isn't taken for a scroll. True when it moved."""
+    """Pointer onto the spot before the 'before' look, so hover effects aren't a scroll. True if it moved."""
     left = ctx.state.get("pointer")
     hover = getattr(ctx.host, "hover", None)
     if hover is None or (left is not None and _near(left, (x, y), 1)):
@@ -537,8 +490,7 @@ def _aim(ctx: ActionContext, x: float, y: float) -> bool:
 
 
 def _before(ctx: ActionContext, way: _Way, seen, stale: bool, *, first: bool):
-    """Aim, then the 'before' look: the pixels it watches, and the map if this way checks it (the first, page
-    keys, or no pixels to watch), read again when the pointer moved since. (map, pixels, mapped, still stale)."""
+    """Aim, then the 'before' pixels (and map, if checked). -> (map, pixels, mapped, still stale)."""
     stale = way.aim() or stale
     pixels = [_pixels(ctx, x, y) for x, y in way.watch]
     mapped = seen is not None and (first or way.wide or all(shot is None for shot in pixels))
@@ -550,20 +502,19 @@ def _before(ctx: ActionContext, way: _Way, seen, stale: bool, *, first: bool):
 
 @dataclass
 class _Way:
-    """One way to scroll a step: the wheel at a spot, that panel's scroll bar, or a page key."""
+    """One way to scroll: the wheel at a spot, a scroll bar, or a page key."""
 
-    what: str                                   # "the wheel at the 'Inbox' panel", "its scroll bar", "pressing pageup"
+    what: str                                   # for the report: "its scroll bar"
     watch: list[tuple[float, float]]            # where to look for it moving
-    push: Callable[[str], bool]                 # once, toward a direction. False: nothing to do it with
-    aim: Callable[[], bool] = lambda: False     # before the 'before' look: True when the pointer moved
-    jumps: bool = False                         # one push goes all the way (the scroll bar's value, home/end)
+    push: Callable[[str], bool]                 # one push; False: nothing to push with
+    aim: Callable[[], bool] = lambda: False     # True when it moved the pointer
+    jumps: bool = False                         # one push goes all the way (home/end)
     spot: _Spot | None = None                   # the spot it scrolls, for the report
-    wide: bool = False                          # it moves whatever has focus: check the whole map too
+    wide: bool = False                          # moves the focused thing: check the whole map
 
 
 def _ways(ctx: ActionContext, spots: list[_Spot], direction: str, lines: int, seen=None, *, to_end: bool = False):
-    """The wheel at the best spot, that spot's own scroll bar (cheap and sure), the wheel at two more spots, then
-    page keys if the focus is somewhere they scroll."""
+    """Wheel at the best spot, its scroll bar, two more spots, then page keys where they scroll."""
     def wheel(spot: _Spot) -> _Way:
         def push(toward: str) -> bool:
             ctx.host.scroll(spot.x, spot.y, *_deltas(toward, lines))
@@ -575,7 +526,7 @@ def _ways(ctx: ActionContext, spots: list[_Spot], direction: str, lines: int, se
     first = spots[0]
     yield wheel(first)
     frame = getattr(seen, "window_frame", None) or getattr(_screen(ctx)[1], "window_frame", None)
-    within = frame if first.aside else None            # a side panel's own bar, never the whole page's
+    within = frame if first.aside else None            # a side panel's bar, not the page's
     yield _Way("its scroll bar", [(first.x, first.y)],
                lambda toward: bool(_ask(ctx, "scroll_bar_step", first.x, first.y, toward, to_end=to_end,
                                         pages=lines / PAGE_LINES, within=within, default=False)),
@@ -600,16 +551,15 @@ def _press(ctx: ActionContext, key: str | None) -> bool:
 
 @dataclass
 class _Push:
-    moved: bool | None = False                  # None: nothing to tell by, the wheel is trusted
+    moved: bool | None = False                  # None: can't tell, so trusted
     way: _Way | None = None                     # what moved it
     tried: list[str] = field(default_factory=list)
     seen: Any = None                            # the map after
-    end: str = ""                               # nothing moved, and that panel says it's already at this end
+    end: str = ""                               # already at this end, per its scroll bar
 
 
 def _push(ctx: ActionContext, ways, direction: str, seen) -> _Push:
-    """Each way in turn until something moves. The first gets 0.4 s and the map; the fallbacks 0.2 s of pixels
-    (the map too for page keys, or when there are no pixels to watch)."""
+    """Each way in turn until something moves (first: 0.4 s + map; fallbacks: 0.2 s of pixels)."""
     tried: list[str] = []
     stale = False                               # the pointer moved since ``seen`` was read
     generation = ctx.generation
@@ -629,7 +579,7 @@ def _push(ctx: ActionContext, ways, direction: str, seen) -> _Push:
 
 
 def _at_end(seen, x: float, y: float, direction: str) -> bool:
-    """The map says the scroll area there is already as far as it goes that way (from its scroll bar)."""
+    """The map says the scroll area there is already at that end."""
     area = _deepest(seen.scroll_areas, x, y) if seen is not None else None
     says = {"down": "to the bottom)", "up": "(at the top)"}.get(direction)
     return area is not None and says is not None and says in area.label
@@ -640,12 +590,12 @@ def _listed(items: list[str]) -> str:
 
 
 def _how(pushed: _Push) -> str:
-    """' (the wheel at the page did nothing; its scroll bar did)' when the plain wheel wasn't enough."""
+    """' (X did nothing; Y did)' when the first way failed."""
     return f" ({_listed(pushed.tried)} did nothing; {pushed.way.what} did)" if pushed.tried and pushed.way else ""
 
 
 def _said(what: str, pushed: _Push, then: str = "") -> str:
-    """'scrolled down', or "scrolled the 'Email' panel down; for another …" when it guessed a side panel."""
+    """'scrolled down', naming the panel when it guessed a side one."""
     spot = pushed.way.spot if pushed.way is not None else None
     if spot is None or not spot.aside:
         return f"scrolled {what}{_how(pushed)}{then}"
@@ -654,7 +604,7 @@ def _said(what: str, pushed: _Push, then: str = "") -> str:
 
 
 def _stuck(direction: str, pushed: _Push) -> str:
-    """Nothing moved: one line the model can act on, never "ask them to scroll"."""
+    """Nothing moved: one actionable line for the model."""
     if pushed.end:
         where = pushed.tried[0].removeprefix("the wheel at ")
         return (f"scrolled {direction}, but nothing moved: {where} is already at the {pushed.end}. if you meant "
@@ -682,7 +632,7 @@ def scroll(ctx: ActionContext, args: dict) -> ActionResult:
 
 
 def _scroll_all_the_way(ctx: ActionContext, spots, direction: str, seen) -> ActionResult:
-    """Keep going until it stops: the top or bottom in one action. Says so when it never moved or never stopped."""
+    """Push until it stops: the top or bottom in one action."""
     edge = _EDGES[direction]
     pushed = _push(ctx, _ways(ctx, spots, direction, 60, seen, to_end=True), direction, seen)
     if pushed.moved is False:
@@ -708,8 +658,7 @@ def _scroll_all_the_way(ctx: ActionContext, spots, direction: str, seen) -> Acti
 
 
 def _reveal(ctx: ActionContext, text: str, seen):
-    """Have the app bring ``text`` into view itself: found anywhere in the page's tree, scrolled-out parts
-    too, then AXScrollToVisible on it. Confirmed on a fresh map. (what the host said, the control, the map)."""
+    """App scrolls ``text`` into view (AXScrollToVisible). -> (host reply, control, map)."""
     reveal = _ask(ctx, "scroll_to_visible", text) or Reveal()
     if not reveal.asked:
         return reveal, None, seen
@@ -721,8 +670,8 @@ def _reveal(ctx: ActionContext, text: str, seen):
         if found is not None:
             return reveal, found, seen
     if seen.signature(values=False) != before.signature(values=False):     # a live field isn't the page moving
-        ctx.state["scrolled"] = True        # it went somewhere, even if the map can't show the text
-    now = _ask(ctx, "scroll_to_visible", text, ask=False)       # where it is now: a slow app may be half way
+        ctx.state["scrolled"] = True        # it moved, even if the text isn't mapped
+    now = _ask(ctx, "scroll_to_visible", text, ask=False)       # re-check: a slow app may be half way
     reveal = now if now is not None and now.found else reveal
     if reveal.at is not None:               # in view, past what the map lists
         ctx.state["scrolled"] = True
@@ -731,14 +680,13 @@ def _reveal(ctx: ActionContext, text: str, seen):
 
 
 def scroll_to(ctx: ActionContext, args: dict) -> ActionResult:
-    """Bring ``text`` on screen: the app scrolls it into view itself when it can, else the wheel at the panel
-    holding it, reading the Accessibility map between steps (no model calls)."""
+    """Bring ``text`` on screen: the app's own scroll-into-view, else wheel + re-read the map (no model calls)."""
     text = str(args.get("text") or "").strip()
     if not text:
         raise ActionError("Tell me what to look for.")
     direction = str(args.get("direction") or "down").lower()
     direction = direction if direction in _EDGES else "down"
-    either_way = "direction" not in args        # not told which way: hitting the end turns around once
+    either_way = "direction" not in args        # no direction: turn around once at the end
     limit = max(1, min(int(args.get("max") or MAX_SCROLL_TO), 30))
     seen = ctx.observe()
     if seen is None:
@@ -752,7 +700,7 @@ def scroll_to(ctx: ActionContext, args: dict) -> ActionResult:
         return _found(ctx, found, "and scrolled it into view", "Scrolled it into view")
     lead = []
     if reveal.found and reveal.scroller is not None:
-        lead = [_Spot(*reveal.scroller, "the panel it's in", raw=True)]    # the app ignored the ask: wheel there
+        lead = [_Spot(*reveal.scroller, "the panel it's in", raw=True)]    # app ignored the ask: wheel there
         if reveal.direction in _EDGES:
             direction, either_way = reveal.direction, False
     spots = _spots(ctx, {key: value for key, value in args.items() if key in {"id", "x", "y"}}, seen, lead)
@@ -762,7 +710,7 @@ def scroll_to(ctx: ActionContext, args: dict) -> ActionResult:
     generation = ctx.generation
     while found is None and way is not None and scrolls < limit * (2 if either_way else 1):
         _stop_if_cut_off(ctx, generation)
-        seen, pixels, _, stale = _before(ctx, way, seen, stale, first=True)     # it reads the map for the text anyway
+        seen, pixels, _, stale = _before(ctx, way, seen, stale, first=True)     # map read anyway, for the text
         if not way.push(direction):
             way = next(ways, None)
             continue
@@ -776,13 +724,13 @@ def scroll_to(ctx: ActionContext, args: dict) -> ActionResult:
         still += 1
         if moved_ever and still < 2:
             continue                            # lazy loading at the end: one more go
-        if either_way and not turned:           # the end, and it wasn't that way: look the other way
+        if either_way and not turned:           # hit the end: look the other way
             direction, turned, still = _OTHER_WAY[direction], True, 0
         elif moved_ever or _at_end(seen, *way.watch[0], direction):
-            ended = True                        # the end (both ends): it moved, or its scroll bar says so
+            ended = True                        # it moved, or its scroll bar says so
             break
         else:
-            tried.append(way.what)              # this never moved anything: the next way
+            tried.append(way.what)              # never moved: next way
             way, direction, turned, still = next(ways, None), start, False, 0
     if moved_ever:
         ctx.state["scrolled"] = True
@@ -844,7 +792,7 @@ _BINS = re.compile(r"\b(trash|bin|recycle|delete)\b", re.IGNORECASE)
 
 
 def preview_drag(ctx: ActionContext, args: dict) -> Preview | None:
-    """Dragging onto the Trash (or a delete zone) throws things away: ask first."""
+    """Ask before dragging onto the Trash or a delete zone."""
     x1, y1, label1 = resolve(ctx, args, key="from")
     x2, y2, label2 = resolve(ctx, args, key="to")
     if not (_BINS.search(label2) or RISKY.search(label2)):
@@ -868,7 +816,7 @@ def wait(ctx: ActionContext, args: dict) -> ActionResult:
         seconds = max(0.5, min(float(args.get("seconds") or 2), 15.0))
     except (TypeError, ValueError):
         seconds = 2.0
-    # Up to that long, and over as soon as the screen holds still (a beat at least), not a blind sleep.
+    # ends early once the screen holds still
     return ActionResult(report=f"waited for it to settle (up to {seconds:g}s)", look_after=min(seconds, 1.0),
                         settle=seconds, detail="Waiting")
 

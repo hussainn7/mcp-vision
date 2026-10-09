@@ -67,9 +67,7 @@ class SayVoice:
 
 
 class SystemVoice(SayVoice):
-    """macOS speech in this process (NSSpeechSynthesizer): the same system voice and words-per-minute as
-    ``say``, without starting a ``say`` process for every sentence (~0.3-0.4 s before each one was heard).
-    Falls back to ``say`` if the synthesizer won't start."""
+    """In-process NSSpeechSynthesizer: ``say``'s voice, no process per sentence (~0.3 s); else ``say``."""
 
     def __init__(self, voice: str | None = None, rate: int = 200, runner=_run_until_stopped,
                  synthesizer: Callable[[], Any] | None = None):
@@ -92,7 +90,7 @@ class SystemVoice(SayVoice):
                     _pump(0.02)
         except Exception:
             self._synth = None
-            super().play(prepared, stop)              # the old way still works
+            super().play(prepared, stop)              # fall back to say
 
 
 def _ns_synthesizer() -> Any:
@@ -111,7 +109,7 @@ def _autorelease():
 
 
 def _pump(seconds: float) -> None:
-    """Let the synthesizer's run loop callbacks through for a moment, without spinning when there are none."""
+    """Run the run loop briefly for synthesizer callbacks, without spinning."""
     started = time.monotonic()
     try:
         import AppKit
@@ -308,7 +306,7 @@ def default_voice(settings: Any = None) -> tuple[Voice, Voice | None]:
     local: Voice
     if sys.platform == "darwin" and shutil.which("say"):
         chosen = getattr(settings, "say_voice", None) or None
-        # A voice picked by name stays on `say -v`; the system voice speaks in-process.
+        # named voice: say -v; system voice: in-process
         local = SayVoice(voice=chosen) if chosen else SystemVoice()
     elif shutil.which("espeak"):
         local = EspeakVoice()

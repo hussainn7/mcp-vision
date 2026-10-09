@@ -7,11 +7,7 @@ from typing import Any
 
 
 class ActionError(RuntimeError):
-    """The action ran but couldn't do what was asked; the message is spoken.
-
-    ``hint`` is for the model only (what to try instead, in its terms: ids, x,y, other actions), so a goal
-    can recover by itself instead of the message ending up as instructions for the user.
-    """
+    """The action ran but couldn't do what was asked; the message is spoken. ``hint``: model-only next try."""
 
     def __init__(self, message: str, hint: str = ""):
         super().__init__(message)
@@ -26,7 +22,7 @@ class Preview:
     lines: list[str] = field(default_factory=list)
     confirm: str = "Do it"                  # button label
     state: Any = None                       # whatever run() needs (e.g. the computed move plan)
-    firm: bool = False                      # the card itself has a question: always shown, a yes in words never covers it
+    firm: bool = False                      # card asks its own question: a spoken yes never covers it
 
 
 @dataclass
@@ -35,10 +31,9 @@ class ActionResult:
     say: str = ""                           # spoken after the action when the model didn't cover it
     report: str = ""                        # handed to the model in a follow-up turn
     look_after: float | None = None         # take a fresh look this many seconds later
-    settle: float | None = None             # screen is changing (app launching, page loading): if the task goes
-                                            # on, wait up to this long for the screen map to stop changing first
-    opens: bool = False                     # it opened something (a link, a page, an app): rarely the end of a task
-    note: str = ""                          # what the model should know next, without asking for another turn
+    settle: float | None = None             # screen changing: wait up to this long for the map to settle
+    opens: bool = False                     # opened a link/page/app: rarely the task's end
+    note: str = ""                          # for the model next, without another turn
     detail: str = ""                        # one line for the island step
     items: list[dict] = field(default_factory=list)    # results to list in the island
     undo: dict | None = None                # how to reverse it (kept by the engine)
@@ -55,13 +50,11 @@ class ActionContext:
     schedule: Callable[[float, Callable[[], None]], Any] = lambda delay, fn: None
     screen: Any = None                                         # last screenshots/context, for forms
     observe: Callable[[], Any] = lambda: None                  # a fresh screen map now (no screenshot, no tokens)
-    # The whole frontmost page's text as lines, scrolled-out parts included (worker thread, no tokens).
+    # frontmost page's full text as lines, scrolled-out parts too
     read: Callable[[], list[str]] = lambda: []
-    # A tiny gray thumbnail of the ~300 points around a global point (None: can't tell), so a scroll knows it
-    # moved even where the map can't say (a blind page, a panel past the walk's caps).
+    # tiny gray thumbnail around a point: a scroll can tell it moved where the map can't
     fingerprint: Callable[[float, float], bytes | None] = lambda x, y: None
-    # Bumped when they press the shortcut again: a long scroll still running on a worker thread for the turn that
-    # was cut off stops between pushes instead of scrolling on under the next request.
+    # bumped per new request, so a cut-off long scroll stops
     generation: int = 0
     animate: Callable[[float, float, str], Any] = lambda x, y, label: None   # Plip flies to where it acts
 

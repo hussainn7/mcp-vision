@@ -49,13 +49,13 @@ export interface IslandState {
   transcript: string
   answer: string
   done: boolean
-  speaking: boolean          // the voice is still going (the text can finish well before it does)
-  offer: string | null       // it ended on a yes-or-no suggestion ("Want me to add it to your cart?")
+  speaking: boolean          // voice still playing (can outlast the text)
+  offer: string | null       // yes/no suggestion it ended on
   steps: Step[]
   walkthrough: Walkthrough | null
   engine: EngineBadge | null
   error: string
-  fixable: boolean           // the error is fixed in settings: the card shows "Fix setup"
+  fixable: boolean           // fixable in settings: shows "Fix setup"
   latencyMs: number | null
   notch: { width: number; height: number; hasNotch: boolean }
   idleVisible: boolean
@@ -91,7 +91,7 @@ export interface Engine {
   keyName?: string
   selected?: boolean
   vision?: boolean
-  connect?: ConnectProgress  // while Plip installs its app and waits for the browser sign-in
+  connect?: ConnectProgress  // install + browser sign-in progress
 }
 
 export type TourStep = 'welcome' | 'permissions' | 'brain' | 'try' | 'done'
@@ -101,11 +101,11 @@ export interface LiveState {
   transcript: string
   answer: string
   error: string
-  at: number                 // seconds (epoch) when it reached this phase
+  at: number                 // epoch seconds this phase began
 }
 
 export interface KeyCheck {
-  name: string               // GEMINI_API_KEY, ANTHROPIC_API_KEY, or '' when no key was found to check
+  name: string               // e.g. GEMINI_API_KEY; '' if no key found
   state: 'checking' | 'ok' | 'bad'
   message: string
 }
@@ -113,8 +113,8 @@ export interface KeyCheck {
 export interface ConnectProgress {
   state: 'installing' | 'signing-in' | 'ready' | 'failed'
   message: string
-  url?: string               // the sign-in page, for when the browser didn't open
-  needsCode?: boolean        // the page shows a code to paste back
+  url?: string               // sign-in page, if the browser didn't open
+  needsCode?: boolean        // page shows a code to paste back
 }
 
 export interface HistoryItem {
@@ -222,18 +222,18 @@ export interface AccountState {
   user?: { name: string; email: string; provider: string; since: number | null } | null
 }
 
-/** The hold-to-talk shortcut, as keys (⌃⌥) and words (Control + Option). */
+/** Hold-to-talk shortcut: keys (⌃⌥) and words. */
 export interface Shortcut {
   id: string
   keys: string[]
   label: string
-  works?: boolean            // the island: false when macOS isn't passing the keys to Plip (no Accessibility)
+  works?: boolean            // false without Accessibility
 }
 
-/** The shortcut picker in General: what's picked, what it can be, and whether macOS lets Plip hear it. */
+/** General's shortcut picker: choice, options, whether it works. */
 export interface HotkeyState extends Shortcut {
   works: boolean
-  owner: string              // whose Accessibility it needs: "Plip", or the terminal it was started from
+  owner: string              // app needing Accessibility: Plip or its terminal
   choices: Shortcut[]
 }
 
@@ -267,10 +267,10 @@ export interface SettingsState {
   stats: { actionsWeek: number; answers: number; minutesSaved: number }
   usage: UsageState | null
   onboarded: boolean
-  tour: { step: TourStep }   // where the welcome walkthrough is (kept across a restart)
-  live: LiveState | null     // the request as it goes, for the walkthrough's "try it" step
+  tour: { step: TourStep }   // walkthrough step, survives restarts
+  live: LiveState | null     // live request, for the "try it" step
   connect: string
-  keyCheck?: KeyCheck | null  // a pasted key being checked with its provider, or what was wrong with it
+  keyCheck?: KeyCheck | null  // pasted key's check with its provider
   report: '' | 'sent' | 'failed'     // a bug report or feature request, after Send
   account: AccountState
   update: UpdateState

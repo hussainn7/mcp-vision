@@ -34,7 +34,7 @@ def answer_kind(text: str) -> str:
     return ""
 
 
-# The consequential things a step does, by name. A yes covers a step only when both name the same thing.
+# consequential doings; a yes covers a step only if both name the same one
 _DOINGS = {
     "send": r"send|sending",
     "delete": r"delete|deleting|remove|removing|erase|erasing|trash|trashing|discard|discarding|wipe|wiping",
@@ -51,7 +51,7 @@ _DOINGS = {
     "deploy": r"deploy|deploying",
 }
 _DOING_RES = {name: re.compile(rf"\b(?:{pattern})\b", re.IGNORECASE) for name, pattern in _DOINGS.items()}
-# Spending money always gets its card, however clearly they said so.
+# spending money always gets its card
 MONEY_RE = re.compile(r"\b(buy|buying|purchas\w*|order|ordering|pay|paying|payment|checkout|check ?out|book|booking|"
                       r"reserv\w*|transfer\w*|donat\w*|subscribe|subscribing|tip)\b|[$€£¥]", re.IGNORECASE)
 _HOLD_RE = re.compile(r"\b(don'?t|do not|not|never|no|wait|hold|later|before|after|unless|instead|yet|first)\b",
@@ -59,36 +59,30 @@ _HOLD_RE = re.compile(r"\b(don'?t|do not|not|never|no|wait|hold|later|before|aft
 _ASKING_RE = re.compile(r"^\W*(should|shall|do(?!\s+(it|that|this|so)\b)|does|did|is|are|was|what|why|how|when|where|"
                         r"which|who|whose)\b", re.IGNORECASE)
 _POINTING_RE = re.compile(r"\b(it|that|this|them|these|those)\b", re.IGNORECASE)
-# Words that don't say what a step is about: a card's "Click “Send”" names nothing beyond the send itself.
+# words that don't say what a step is about
 _FILLER = {"the", "and", "for", "you", "your", "want", "should", "shall", "can", "could", "would", "like", "now", "ahead",
            "click", "press", "button", "yes", "with", "into", "from", "this", "that", "them", "these", "those", "its",
            "all", "just", "okay", "sure", "then", "too", "also", "about", "going", "will", "let", "please", "here"}
 
 
 def _about(text: str) -> set[str]:
-    """The words that say what a sentence or a card is about, minus the doing itself and filler."""
+    """Words saying what a sentence or card is about, minus doings and filler."""
     words = {word for word in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(word) > 2 and word not in _FILLER}
     return {word for word in words if not any(pattern.fullmatch(word) for pattern in _DOING_RES.values())}
 
 
 def doings(text: str) -> set[str]:
-    """The consequential things a sentence talks about doing: {"send"}, {"delete", "fill"}, ..."""
+    """Consequential doings a sentence names, e.g. {"send"}."""
     return {name for name, pattern in _DOING_RES.items() if pattern.search(text or "")}
 
 
 @dataclass
 class Consent:
-    """A yes the user already gave to Plip's own question, so the confirm card doesn't ask again.
-
-    "Want me to send it?" "Yes." That was the confirmation: the step it described (the next one that
-    names the same thing, once, this request) runs without a card. A request in their own words ("send
-    it", "apply to this job") is not a yes to anything yet: it gets its one card. Never a step that spends
-    money, never a card with its own question, never a yes with a "but", "wait" or "not yet".
-    """
+    """A yes to Plip's own question: skips the next matching card once (never money, a firm card or a "but")."""
 
     doings: set[str]
-    about: set[str] = field(default_factory=set)    # what the question was about ("sara", "draft")
-    pointing: bool = False                          # it asked about "it" / "that": the thing just talked about
+    about: set[str] = field(default_factory=set)    # what the question was about
+    pointing: bool = False                          # question said "it"/"that"
 
     @classmethod
     def given(cls, transcript: str, asked: str = "") -> Consent | None:
@@ -96,19 +90,17 @@ class Consent:
         if not asked or answer_kind(text) != "yes" or _ASKING_RE.match(text):
             return None
         if MONEY_RE.search(asked) or MONEY_RE.search(text):
-            return None                                # "want me to send Sam the $20?" still gets its card
+            return None                                # money always gets its card
         if _HOLD_RE.search(YES_RE.sub("", text, count=1)):
             return None
-        found = doings(asked)                          # what Plip asked about, not what they added ("and delete X")
+        found = doings(asked)                          # what Plip asked, not what they added
         if not found:
             return None
         question = re.findall(r"[^.!?]*\?", asked)
         return cls(found, _about(asked), bool(_POINTING_RE.search(question[-1] if question else asked)))
 
     def covers(self, preview: Preview) -> bool:
-        """The next card only, matched or not: same doing, and the same thing ("Send to Sara" after "...to Sara.
-        want me to send it?"), or a bare button for the "it" they were just asked about. A yes about a filter never
-        clicks "Delete account"."""
+        """Next card only: same doing and same subject, or a bare button for the "it" just asked about."""
         text = f"{preview.title} {preview.confirm}"
         doing, self.doings = self.doings, set()       # one card per yes
         if preview.firm or MONEY_RE.search(text) or not doing & doings(text):
@@ -133,8 +125,8 @@ class Outcome:
     result: ActionResult | None = None
     preview: Preview | None = None
     message: str = ""
-    agreed: bool = False           # it would have asked, but they'd already said yes
-    hint: str = ""                 # for the model: what to try instead (ActionError.hint)
+    agreed: bool = False           # card skipped: they'd already said yes
+    hint: str = ""                 # model-only: what to try instead
 
     @property
     def label(self) -> str:
@@ -154,8 +146,7 @@ class ActionLog:
         self.path = path or state_dir() / "actions.jsonl"
 
     def add(self, name: str, args: dict, ok: bool, source: str = "voice") -> None:
-        # what kind of thing it did, never what it was about: no typed text, facts, searches, file paths or titles,
-        # and a link only by its site
+        # what kind of thing, never what about; links by site only
         safe = {key: value for key, value in args.items() if key not in _PRIVATE_ARGS}
         if isinstance(safe.get("url"), str):
             from urllib.parse import urlparse
@@ -212,7 +203,7 @@ class ActionEngine:
 
     # -- running -----------------------------------------------------------------------------
     async def handle(self, name: str, args: dict | None = None, consent: Consent | None = None) -> Outcome:
-        """Run an action, or hold it for a yes. ``consent``: a yes they already gave covers it."""
+        """Run an action, or hold it for a yes (unless ``consent`` covers it)."""
         args = dict(args or {})
         spec = self.specs.get(name)
         if spec is None:

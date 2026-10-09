@@ -86,7 +86,7 @@ class Route:
     intent: str = "explain"          # point | explain | answer | chat
     cursor_screen_only: bool = False # multi-display: send just the screen under the cursor
     detailed: bool = False           # walkthrough / deeper explanation wanted
-    multistep: bool = False          # doing it takes several actions ("open X and do Y", "find me jobs here")
+    multistep: bool = False          # takes several actions ("open X and do Y")
     provider: str = "default"
     confidence: float = 0.0
     latency_ms: float = 0.0
@@ -134,18 +134,18 @@ class TurnResult:
     failed: list[str] = field(default_factory=list)       # actions that didn't work
     outcome: str = ""                # how the request ended (usage.OUTCOMES), set when it's over
     usage: Usage | None = None       # tokens the whole request used (as the brain reported, or estimated)
-    goal: str = ""                   # the multi-step task this request worked toward ([GOAL: ...])
-    acted: list[str] = field(default_factory=list)        # what this model turn's actions did (incl. failures)
-    settle: float | None = None      # an action changed the screen: wait up to this long for it to settle
-    hands: bool = False              # Plip clicked, scrolled or pressed keys on screen this request
-    opened: str = ""                 # this turn's last action opened something (a link, a page): what it was
-    verified: bool | None = None     # [DONE] after acting: True = the screen confirmed it, False = couldn't tell
-    hushed: bool = False             # a step failed: the rest of the reply was written as if it worked
-    said: int = 0                    # characters spoken this model turn (the speech budget)
-    held: bool = False               # stopped reading aloud; the rest of the answer is on screen
-    typed: list[str] = field(default_factory=list)        # text this reply put in fields: it showing isn't a change
-    muted: dict[int, str] = field(default_factory=dict)  # ...so those chunks (by position) aren't said, or only this
-    heard: int = 0                   # chunks the reply has streamed so far
+    goal: str = ""                   # the multi-step task ([GOAL: ...])
+    acted: list[str] = field(default_factory=list)        # this turn's action results, failures too
+    settle: float | None = None      # max wait for the screen to settle after an action
+    hands: bool = False              # Plip clicked, scrolled or typed on screen
+    opened: str = ""                 # what the last action opened (a link, a page)
+    verified: bool | None = None     # [DONE] after acting: did the screen confirm it?
+    hushed: bool = False             # a step failed: the rest assumed it worked
+    said: int = 0                    # chars spoken this turn (speech budget)
+    held: bool = False               # stopped reading aloud; the rest is on screen
+    typed: list[str] = field(default_factory=list)        # text typed into fields: not a screen change
+    muted: dict[int, str] = field(default_factory=dict)  # chunk index -> what's said instead ("" = nothing)
+    heard: int = 0                   # chunks streamed so far
 
 
 @dataclass
@@ -234,21 +234,21 @@ class Companion:
         self.notes = notes
         self.capture_timeout = capture_timeout
         self.max_followups = max_followups
-        self.max_agent_steps = max_agent_steps        # click/scroll/type loops and goals get a bigger budget
-        self.step_effort = step_effort                # routine task steps think this hard (None: the user's depth)
-        self._goal = ""                               # the open multi-step task, until [DONE]
+        self.max_agent_steps = max_agent_steps        # step budget for on-screen loops and goals
+        self.step_effort = step_effort                # effort for routine task steps (None: the user's)
+        self._goal = ""                               # open multi-step task, until [DONE]
         self._goal_waiting = False                    # the task stopped to ask the user something
-        self._paused = False                          # the task ran out of steps and asked to keep going
-        self._rejected = 0                            # [DONE]s sent back this task because the last step didn't land
-        self._extra_note = ""                         # one-turn context for the model ("you were working toward…")
-        self._goal_route: Route | None = None         # how the task's request was routed (its depth), for keep going
-        self._trail: list[str] = []                   # the last few actions, to notice the same one on repeat
+        self._paused = False                          # out of steps, asked to keep going
+        self._rejected = 0                            # [DONE]s sent back this task
+        self._extra_note = ""                         # one-turn note for the model
+        self._goal_route: Route | None = None         # the task's route, for keep going
+        self._trail: list[str] = []                   # last few actions, to spot repeats
         self._hiccups = 0                             # steps that failed or went nowhere this task
-        self._screens_seen: dict[str, int] = {}       # screens visited this task, to notice going in circles
-        self._leaks = 0                               # tool calls it wrote out as text this request
+        self._screens_seen: dict[str, int] = {}       # screen visits this task, to spot circling
+        self._leaks = 0                               # tool calls written out as text this request
         self._asked = ""                              # the question Plip's last reply ended on
-        self._consent = None                          # a yes they gave this request: the step it names won't ask
-        self._authored = False                        # Plip typed something this request (they haven't seen it yet)
+        self._consent = None                          # this request's yes: the step it names won't ask
+        self._authored = False                        # Plip typed something they haven't seen yet
         self.settle_interval = settle_interval
         self.usage = usage                      # buddy.usage.UsageLog, or None to keep no record
         self.usage_kind = usage_kind
@@ -265,11 +265,7 @@ class Companion:
 
     @property
     def system_prompt(self) -> str:
-        """Plip's instructions, then what it knows about the user.
-
-        What it knows changes only when they tell it something, so it rides in the cached prompt rather than in
-        each turn, where every call (each walkthrough step and action result too) paid for it again in full.
-        """
+        """Instructions + user notes (notes rarely change, so they ride in the cached prompt)."""
         base = self._system_prompt or system_prompt(vision=self.vision)
         known = ""
         if self.notes is not None:
@@ -293,11 +289,11 @@ class Companion:
         ignored, so a stale screen never answers a new question.
         """
         self._prefetched = (self.clock(), self._pool.submit(self.capturer.capture))
-        if self.context is not None:                  # the screen map too: a browser page can take ~0.3 s to walk
+        if self.context is not None:                  # map too: a browser page walks in ~0.3 s
             self._mapped = (self.clock(), self._pool.submit(self._observe))
 
     def _route_effort(self, route: Route) -> str | None:
-        """The effort a call on this route runs at, so a warm process matches it (a detailed ask steps it up)."""
+        """This route's call effort, so a warm process matches it."""
         effort_of = getattr(self.brain, "_effort", None)
         try:
             return effort_of(route.detailed) if effort_of is not None and route.detailed else None
@@ -305,7 +301,7 @@ class Companion:
             return None
 
     def warm_brain(self, effort: str | None = None) -> None:
-        """Have a brain process ready before the question exists (key press, app start). On the loop."""
+        """Start a brain process before the question exists. On the loop."""
         ensure = getattr(self.brain, "ensure_warm", None)
         if ensure is None or not getattr(self.brain, "prewarm", False):
             return
@@ -330,12 +326,12 @@ class Companion:
     # The app calls these on the companion's event loop thread.
     @property
     def busy(self) -> bool:
-        """Working on a request right now (thinking, acting, or talking)."""
+        """Working on a request (thinking, acting, or talking)."""
         return self._task is not None and not self._task.done()
 
     @property
     def unfinished(self) -> str:
-        """The task that stopped before it was done (out of steps, or stopped), for "Keep going"; "" otherwise."""
+        """The stopped, unfinished task for "Keep going", or ""."""
         return self._goal if self._goal and not self.busy else ""
 
     def hush(self) -> None:
@@ -351,7 +347,7 @@ class Companion:
         if token is not None:
             self._token = token
         if self.actions is not None:
-            self.actions.ctx.generation += 1          # a long scroll for the turn being cut off stops between pushes
+            self.actions.ctx.generation += 1          # stops a long scroll from the cut-off turn
         self._stop_current()
 
     def _stop_current(self) -> None:
@@ -372,7 +368,7 @@ class Companion:
         return await self._own(self._answer(accept, "yes" if accept else "no"), "")
 
     async def _drain(self) -> None:
-        """Let it finish talking, then say so: the island stays open until the voice is done, not the text."""
+        """Finish talking, then emit "quiet" (the island waits for the voice)."""
         await self.speaker.drain()
         self.emit("quiet")
 
@@ -386,14 +382,14 @@ class Companion:
         except asyncio.CancelledError:
             result = TurnResult(transcript=transcript, state="cancelled")
         finally:
-            self.emit("quiet")                        # however it ended, nothing more is coming out loud
+            self.emit("quiet")                        # nothing more will be said
         result.usage = meter.usage if meter.turns else None
         result.outcome = _outcome(result)
         result.timings.update(meter.timings())
         self._asked = _question(result.spoken) if result.state == "done" and not result.pending else ""
         offer = _offer(self._asked)
         if offer:
-            self.emit("offer", text=offer)            # the island shows Yes / No thanks under it
+            self.emit("offer", text=offer)            # island shows Yes / No thanks
         self._consent, self._authored = None, False   # a yes lasts one request
         self._record(meter, result)
         self.emit("finished", outcome=result.outcome)
@@ -441,10 +437,10 @@ class Companion:
             else:
                 self.actions.cancel_pending()          # they moved on to something else
                 self.emit("confirm", cleared=True)
-        # "Yes" to Plip's "want me to send it?" was the confirmation: the step it named doesn't ask again.
+        # a "yes" to Plip's question confirms the step it named
         self._consent = Consent.given(transcript, asked)
         if self.actions is not None:
-            self.actions.ctx.state["said"] = transcript    # their own words: only these can save or forget a fact
+            self.actions.ctx.state["said"] = transcript    # only their words can save or forget a fact
         waiting, self._goal_waiting = self._goal_waiting, False
         paused, self._paused = self._paused, False
         if self._goal and paused:
@@ -458,12 +454,12 @@ class Companion:
                 self._goal = ""
                 return await self._reply_only(transcript, "Okay, I'll leave it there.")
         if self._goal and CONTINUE_RE.match(transcript):
-            return await self._resume(transcript)       # the same steps, picked back up: a retype is still a repeat
+            return await self._resume(transcript)       # same steps resumed: a retype is still a repeat
         if self.actions is not None:
-            # They said something (an answer, or something new): typing what came before again isn't a repeat.
+            # new user input: retyping earlier text isn't a repeat
             self.actions.ctx.state.pop("typed", None)
         if waiting and self._goal:
-            # The task stopped to ask them something; this is most likely the answer, so the task goes on.
+            # likely the answer to the task's question: carry on
             self._screens_seen = {}
             self._extra_note = (f"(you were working toward: {self._goal}, and stopped to ask them something. if this "
                                 "answers it, carry on with the task; if they've moved on to something else, drop it.)")
@@ -477,13 +473,13 @@ class Companion:
         result = await self._turn(transcript)
         if not self._goal and (result.acted or result.pending) and not result.finished and result.state == "done" \
                 and (result.route.multistep or result.hands):
-            # The model forgot [GOAL] on something that clearly takes several steps: hold it to the request.
+            # model forgot [GOAL] on a multi-step ask: use the request
             self._goal = result.goal = _clip(transcript, 160)
             self.emit("goal", text=self._goal, done=False)
         return await self._drive(result)
 
     async def _reply_only(self, transcript: str, text: str) -> TurnResult:
-        """A short answer that needs no model ("okay, I'll leave it there"): said, shown, and kept in the history."""
+        """A canned reply, no model: said, shown, and recorded."""
         self.emit("phase", phase="answering")
         self.speaker.speak(text)
         self.emit("answer", text=text)
@@ -493,18 +489,18 @@ class Companion:
         return TurnResult(transcript=transcript, spoken=text)
 
     def decline(self) -> None:
-        """"No thanks" on the island's offer: there's nothing to do, and a task that asked to keep going is over."""
+        """"No thanks" on the island's offer: also drops a paused task."""
         self._asked = ""
         if self._paused:
             self._paused, self._goal = False, ""
 
     async def _resume(self, transcript: str) -> TurnResult:
-        """"Keep going": pick an unfinished goal back up with a fresh look and a fresh step budget."""
+        """"Keep going": resume the goal with a fresh look and step budget."""
         self.emit("phase", phase="thinking", transcript=transcript, guide=False)
         self.emit("goal", text=self._goal, done=False)
         result = TurnResult(transcript=transcript, acted=[f"the user said: {transcript}"], goal=self._goal,
                             route=self._goal_route or Route())
-        self._screens_seen = {}                       # a fresh go: old visits don't count toward "going in circles"
+        self._screens_seen = {}                       # fresh go: old visits don't count as circling
         return await self._drive(result)
 
     def _continues(self, result: TurnResult) -> bool:
@@ -514,22 +510,22 @@ class Companion:
         if result.finished and (result.hands or self._goal):
             return False
         if result.reports:
-            return True                              # results it hasn't read yet (search hits, a shortcut's output)
+            return True                              # results it hasn't read yet
         if reply_asks(result.spoken):
-            return False                             # it asked them something: wait for the answer, don't push on
+            return False                             # it asked them something: wait
         if result.look_after:
             return True
-        return bool(self._goal and result.acted)     # working toward a goal and just did something: look again
+        return bool(self._goal and result.acted)     # mid-goal and just acted: look again
 
     async def _drive(self, result: TurnResult, turns: int = 1) -> TurnResult:
-        """Hand results back, take fresh looks, and keep working toward an open goal until [DONE]."""
+        """Follow-up turns: results back, fresh looks, until the goal's [DONE]."""
         followups = 0
         goal = self._goal
-        route = result.route                   # Plip's own follow-ups aren't routed again: same depth, same screens
+        route = result.route                   # follow-ups reuse the route, not re-routed
         if self._goal:
             self._goal_route = route
         start = getattr(self, "_context", None)
-        if self._goal and start is not None and not start.empty:     # the screen the task started from counts too
+        if self._goal and start is not None and not start.empty:     # the start screen counts as a visit
             self._screens_seen.setdefault(start.content_signature(), 1)
         limit = self.max_agent_steps
         while followups < (limit if (result.hands or self._goal) else self.max_followups):
@@ -553,9 +549,9 @@ class Companion:
             pixels, unchanged = None, None
             if agent and changes and settled is not None and seen is not None:
                 unchanged = self._unchanged(settled, seen, result)
-                # Typed text always moves the pixels, so they only get a say when nothing was typed.
+                # typing always moves pixels: they only count when nothing was typed
                 if unchanged and not result.typed and (pixels := await self._pixels_moved()):
-                    # The map can't see what changed (a web page it isn't reading, a canvas): the pixels can.
+                    # map can't see it (unread web page, canvas); pixels can
                     lines.append("note: the screen changed, but not in the controls list, so here's a screenshot")
                     if self.actions is not None:
                         self.actions.ctx.state["force_image"] = True
@@ -572,12 +568,11 @@ class Companion:
                     now = await asyncio.to_thread(self._observe)
                     moved = bool(now is not None and not now.empty and now.signature() != seen.signature()) or \
                         bool(await self._pixels_moved())
-                # More steps only for a task that's plainly getting somewhere: the screen moved on, nothing
-                # failed or went nowhere (now or more than once before), no [DONE] was sent back, no circling.
+                # extra steps only when clearly progressing: moved, few stalls, no rejects, no circling
                 circling = max(self._screens_seen.values(), default=0) >= 3
                 if moved and limit < 2 * self.max_agent_steps and not self._rejected and not circling and \
                         self._hiccups <= 1 and not any(sign in line for line in lines for sign in _STUCK):
-                    limit += 5                        # still getting somewhere: a few more steps, not a pause
+                    limit += 5                        # progressing: a few more steps, not a pause
                 else:
                     lines.append("note: this is your last step before plip pauses for them. finish the goal if this "
                                  "step does it; otherwise say in a few words where you got to (plip tells them how to "
@@ -590,7 +585,7 @@ class Companion:
             prompt = template.format(reports=reports, step=followups + 1, toward=toward)
             if self._goal:
                 self.emit("goal", text=self._goal, done=False, step=followups + 1)
-            # Recorded short: the next step needs the gist, not every report again.
+            # recorded short: the next step needs only the gist
             brief = f"(step {followups + 1}{toward}; results, not from the user) " + \
                 "; ".join(_clip(line, 600) for line in lines)
             followup = await self._turn(prompt, guide=True, screen=agent or bool(result.look_after), route=route,
@@ -636,11 +631,11 @@ class Companion:
             self._goal = ""
             self.conversation.fold()                  # its step-by-step results needn't ride along any more
         elif self._goal and result.state == "done" and not self._continues(result) and not result.pending:
-            self._goal_waiting = True                 # it asked them something: their answer carries the task on
+            self._goal_waiting = True                 # asked them something: their answer resumes it
         elif self._goal and self._continues(result):
-            # Out of steps but not done: say so instead of going quiet, and keep the goal for "keep going".
+            # out of steps: say so, keep the goal for "keep going"
             pause = "I'm not finished yet. Want me to keep going?"
-            self._paused = True                       # a yes (said, or the island's button) picks it back up
+            self._paused = True                       # a yes (said or tapped) resumes it
             self.speaker.speak(pause)
             self.emit("answer", text=" " + pause)
             self.emit("goal", text=self._goal, done=False, paused=True)
@@ -651,36 +646,28 @@ class Companion:
         result.goal = result.goal or goal
         result.route = route
         result.turns = turns
-        await self._drain()                  # the steps ran while it talked; now let it finish
+        await self._drain()                  # steps ran while it talked; let it finish
         return result
 
     def _step_effort(self, result: TurnResult, lines: list[str], moved: bool | None = None) -> str | None:
-        """How hard a task step thinks. A routine one (the last step worked and the screen moved on) gets
-        ``step_effort``: thinking there cost ~1.5 s a step for the same next click. Reading results to judge
-        them, and anything that went wrong (a failure, a rejected [DONE], no change, going in circles), keeps
-        the user's depth. None means the user's depth."""
+        """``step_effort`` for routine steps; None (the user's depth) when judging results or after trouble."""
         if not self.step_effort or moved is False:
             return None
         if any(report.split(":", 1)[0] in _READING for report in result.reports):
-            return None                               # page text, search hits, a closer look: judge them properly
+            return None                               # results to judge: full depth
         if self._rejected or self._leaks or any(" failed: " in line or line.startswith("note:") for line in lines):
             return None
         if max(self._screens_seen.values(), default=0) >= 2:
-            return None                               # back on a screen it's seen: think it through
+            return None                               # a revisited screen: think it through
         return self.step_effort
 
     async def _check_done(self, result: TurnResult) -> str:
-        """[DONE] in the same reply as an action: did that action actually land?
-
-        Model-free and cheap: a step that failed, or a screen that didn't change after a step
-        that should have changed it, means the goal isn't met. Twice per task at most, so a
-        stubborn page can't loop forever. Returns why it isn't done, or "" to accept.
-        """
+        """[DONE] with an action: did it land? No model, twice a task max. Returns why not, or "" to accept."""
         if not result.acted:
-            return ""                                 # it looked at the results first, then said done: trust it
+            return ""                                 # read the results, then said done: trust it
         failed = [line for line in result.acted if " failed: " in line]
         if self._rejected >= 2:
-            result.verified = False                   # stop going round, but never quietly call it done
+            result.verified = False                   # stop looping, but don't call it done
             if failed:
                 said = failed[-1].split(" failed: ", 1)[-1].split(" (", 1)[0].strip()
                 self.speaker.speak(f"I couldn't finish that. {said}")
@@ -692,7 +679,7 @@ class Companion:
                        "(another way to aim, the keyboard, another control); only tell them what's in the way if it's "
                        "something only they can sort out.")
         elif result.opened and self._rejected == 0:
-            # Opening a playlist isn't playing it, and opening a product isn't adding it: one look first.
+            # opening something isn't finishing it: one more look
             if result.settle:
                 await self._settle(result.settle)
                 result.settle = None
@@ -719,9 +706,7 @@ class Companion:
         return problem
 
     def _unchanged(self, settled: str, seen: ScreenContext, result: TurnResult) -> bool:
-        """The screen after a step is the one the model saw. What this reply typed, sitting in the field it went
-        into, doesn't count: typing then a return or a click that did nothing would pass otherwise. Any other
-        field's value does (a search cleared, the city filled in from a zip code)."""
+        """Same screen the model saw? Text this reply typed into its field doesn't count as a change."""
         after = getattr(self, "_settled", None)
         if not result.typed or after is None:
             return settled == seen.signature()
@@ -729,7 +714,7 @@ class Companion:
         return after.signature(skip=typed) == seen.signature(skip=typed)
 
     async def _pixels_moved(self) -> bool | None:
-        """Did the screen itself change since the last look? For when the map can't tell. None: can't say."""
+        """Did the pixels change since the last look? None: can't say."""
         grab = getattr(self.capturer, "glance", None)
         shots = list(getattr(self, "_shots", None) or [])
         shot = next((item for item in shots if item.screen.is_cursor_screen), shots[0] if shots else None)
@@ -754,7 +739,7 @@ class Companion:
             return None
 
     def _circling(self, context: ScreenContext | None, guide: bool) -> str:
-        """Back on the same screen a third time in one task: say so before the budget burns down."""
+        """A note once a task lands on the same screen a third time."""
         if not (guide and self._goal and context is not None and not context.empty):
             return ""
         key = context.content_signature()
@@ -795,7 +780,7 @@ class Companion:
         self.emit("done", latency_ms=None, spoken=text)
         await self._drain()
         if outcome.status == "done" and self._goal:
-            # The yes was one step of a bigger task: look again and keep going.
+            # the yes was one step of a task: keep going
             done = outcome.result
             result.acted.append(f"{outcome.spec.name}: {done.report or 'done'}" if done else f"{outcome.spec.name}: done")
             if done is not None:
@@ -810,7 +795,7 @@ class Companion:
 
     # -- timers and other late announcements (called from worker threads) ------------------
     def _read(self) -> list[str]:
-        """The whole frontmost page's text (worker thread). No screenshot, no tokens until it's reported."""
+        """The frontmost page's text (worker thread). No screenshot."""
         reader = getattr(self.context, "read", None)
         if reader is None:
             return []
@@ -820,7 +805,7 @@ class Companion:
             return []
 
     def _fingerprint(self, x: float, y: float) -> bytes | None:
-        """The pixels around a point, tiny and gray (worker thread): did a scroll move anything there?"""
+        """Tiny gray pixels around a point (worker thread), to tell if a scroll moved."""
         grab = getattr(self.capturer, "fingerprint_at", None)
         if grab is None:
             return None
@@ -831,12 +816,7 @@ class Companion:
 
     def _images_for(self, shots: list[Screenshot], context: ScreenContext | None, *, guide: bool,
                     lean: bool) -> tuple[list[Screenshot], str]:
-        """Which screenshots to actually send, and a note for the model when Plip skips them.
-
-        The numbered map already tells the model where everything is, so on a task's steps a screenshot
-        only goes out when the map is thin, the model asked to look, or the screen changed in a way the
-        map can't show. A screenshot is ~1,400 tokens; most steps of a task don't need one.
-        """
+        """Screenshots to send, plus a note when skipped (task steps lean on the map; a shot is ~1,400 tokens)."""
         force = bool(self.actions is not None and self.actions.ctx.state.pop("force_image", False))
         if not (self.vision and shots):
             return [], ""
@@ -847,7 +827,7 @@ class Companion:
         if lean and guide and previous == digest:
             return [], "(screen unchanged since your last look, so no new screenshot.)"
         if lean and context is not None and context.rich:
-            self._last_image = previous           # nothing was sent; keep comparing with what the model saw
+            self._last_image = previous           # nothing sent: compare with what the model saw
             return [], ("(no screenshot this step to save tokens; the controls and text are current. "
                         "[DO:look {}] shows pixels.)")
         return shots, ""
@@ -862,13 +842,13 @@ class Companion:
             return None
 
     def _spent(self, what: str, since: float) -> None:
-        """Add the seconds since ``since`` (perf clock) to this request's ``what`` (model, act, settle)."""
+        """Add perf-clock seconds since ``since`` to the meter's ``what``."""
         meter = self._meter
         if meter is not None:
             setattr(meter, what, getattr(meter, what) + time.perf_counter() - since)
 
     async def _wait_for_screen(self, result: TurnResult) -> str | None:
-        """Let the last step land; returns the settled screen map's signature when Plip watched it settle."""
+        """Let the last step land; the settled map's signature, if watched."""
         if result.look_after:
             if result.look_after >= 1.0:
                 self.emit("step", id="wait", label="Waiting for it to load", status="active")
@@ -882,12 +862,7 @@ class Companion:
         return settled
 
     async def _settle(self, limit: float) -> str | None:
-        """Wait until the screen map stops changing (an app opened, a page loaded), at most ``limit`` seconds.
-
-        Re-reads the Accessibility map locally: no screenshot, no tokens. Returns the map's signature when it
-        stopped changing (or at the limit), ``None`` without a map to read. ``self._settled`` keeps the map
-        itself, so the next step can tell "nothing changed" from "only the title did".
-        """
+        """Wait up to ``limit`` s for the map to settle: its signature (map in ``_settled``), None if no map."""
         self._settled = None
         began = time.perf_counter()
         try:
@@ -906,8 +881,8 @@ class Companion:
             signature = seen.signature() if seen is not None and not seen.empty else None
             self._settled = seen if signature is not None else None
             if signature is None and self.clock() - started > 1.5:
-                return None                           # no Accessibility map here: a short wait is all we can do
-            # Still-ness ignores what changes on its own (a clock, a counter); the answer is the real signature.
+                return None                           # no map here: a short wait is all we can do
+            # stillness ignores self-changing bits (clocks, counters)
             calm = seen.settle_signature() if signature is not None else None
             quiet = quiet + 1 if calm is not None and calm == steady else 0
             steady = calm
@@ -932,7 +907,7 @@ class Companion:
         loop.call_soon_threadsafe(say)
 
     def _notes(self) -> str:
-        """Per-turn notes: the time (it changes every minute, so it stays out of the cached prompt)."""
+        """Per-turn notes: the time (kept out of the cached prompt)."""
         import datetime as _dt
 
         return "now: " + _dt.datetime.now().strftime("%A, %B %d %Y, %I:%M %p").replace(" 0", " ")
@@ -961,9 +936,9 @@ class Companion:
             shots, context, result.route = await self._look(transcript, result, screen, route)
             mark("looked")
             if screen is not False or not getattr(self, "_shots", None):
-                # A follow-up that didn't look keeps the last screen: actions still aim with it.
+                # a follow-up that didn't look keeps the last screen to aim with
                 self._shots, self._context = shots, context
-                if self.actions is not None:                    # a fresh look: the numbers are current again
+                if self.actions is not None:                    # fresh look: ids are current again
                     self.actions.ctx.state.pop("scrolled", None)
                     self.actions.ctx.state.pop("stale_map", None)
             history = self.conversation.history()
@@ -1024,7 +999,7 @@ class Companion:
             self.emit("done", latency_ms=result.timings.get("first_speech"), spoken=result.spoken)
             if not self._continues(result):
                 await self._drain()
-            # else: more steps follow, so keep working while it talks ("opening it now" plays on)
+            # else: more steps follow; keep working while it talks
             mark("spoken")
         except asyncio.CancelledError:
             # A new press owns the overlay now (it is already "listening");
@@ -1051,11 +1026,7 @@ class Companion:
 
     async def _look(self, transcript: str, result: TurnResult, screen: bool | None = None,
                     routed: Route | None = None) -> tuple[list[Screenshot], ScreenContext | None, Route]:
-        """Route, capture, and read screen context concurrently.
-
-        ``routed``: the request's route, for Plip's own follow-ups. They keep its effort and screens rather than
-        routing Plip's words as if the user said them (a router call each, and an effort that changed mid-task).
-        """
+        """Route, capture, and read screen context concurrently (``routed``: a follow-up reuses its route)."""
         if screen is False:                     # e.g. handing search results back: no need to look
             return [], None, replace(routed or Route(provider="followup"), needs_screen=False)
         started = self.clock()
@@ -1109,8 +1080,7 @@ class Companion:
         if isinstance(event, SpeechChunk):
             index, result.heard = result.heard, result.heard + 1
             if result.hushed:
-                # "Added it" after the click failed isn't said; after a step waiting for their yes, a question
-                # still is ("want me to check out too?"), the claim before it ("Bought!") isn't.
+                # mute claims after a failed or pending step; a pending step keeps its questions
                 asks = " ".join(re.findall(r"[^.!?]*\?+", event.text)).strip() if result.pending else ""
                 result.muted[index] = asks
                 if not asks:
@@ -1123,8 +1093,7 @@ class Companion:
                     self._meter.first = time.time() - self._meter.started
                 self.pointer.set_state("speaking")
                 self.emit("phase", phase="answering")
-            # About a minute of talking, more when they asked for depth. Past that it reads on screen:
-            # a reply that long is something to read, not to listen to.
+            # ~a minute aloud (double for depth); the rest is read on screen
             budget = SPEECH_BUDGET * (2 if result.route.detailed else 1)
             if result.held or (result.said and result.said + len(event.text) > budget):
                 result.held = True
@@ -1152,7 +1121,7 @@ class Companion:
                 return
             listed = _listed(target, getattr(self, "_context", None))
             if listed is not None:
-                # It aimed with the screen map's own numbers: already on the control, nothing to snap.
+                # aimed with the map's numbers: already on the control
                 target = replace(target, x=listed.x, y=listed.y, source="snapped")
             elif self.snapper is not None:
                 try:
@@ -1171,11 +1140,11 @@ class Companion:
 
 
     def _leaked(self, result: TurnResult) -> None:
-        """The model wrote a tool call out as text: it didn't run and wasn't read out. Tell it, once a request."""
+        """The model wrote a tool call as text (not run, not said): tell it, once a request."""
         self.emit("step", id="leak", label="Skipped a command I can't run", status="skipped")
         self._leaks += 1
         if self._leaks > 1:
-            return                                    # told once already: don't go round in circles
+            return                                    # told once already
         note = ("note: your reply wrote a tool call or shell command out as text. you have no shell, terminal or file "
                 "tools, so it didn't run, and nothing from there on was said. do it with [DO:…] actions instead.")
         result.acted.append(note)
@@ -1187,8 +1156,7 @@ class Companion:
         spec_now = self.actions.specs.get(tag.name)
         on_screen = spec_now is not None and (spec_now.skill == "control" or tag.name in _ON_SCREEN)
         if result.pending or (result.failed and on_screen):
-            # A step waiting for their yes, or a screen step after one that failed: it was written as if that went
-            # through (typing the reply after a Send card, return after a failed click). The next look re-plans.
+            # written as if the pending/failed step went through: skip it, the next look re-plans
             if result.failed and not any(line.startswith("note: the steps after") for line in result.acted):
                 result.acted.append("note: the on-screen steps after the one that failed weren't run")
             self.emit("step", id=f"skipped-{tag.name}-{len(result.did)}", label=tag.name.replace("_", " "),
@@ -1216,15 +1184,15 @@ class Companion:
                                 "isn't getting you closer, do something different: aim another way, use the keyboard "
                                 "or another control.")
         if tag.name == "wait" and result.settle:
-            pass                                      # the wait is the settle: one early-exit wait, not two
+            pass                                      # the settle is the wait
         elif result.settle and spec is not None and (spec.skill == "control" or tag.name in _ON_SCREEN):
-            # An earlier action in this reply is still loading; this one works on what it shows.
+            # an earlier action is still loading: wait for it
             settled = await self._settle(result.settle)
             result.settle = None
             seen, after = getattr(self, "_context", None), getattr(self, "_settled", None)
             if settled is not None and seen is not None and after is not None \
                     and after.signature(values=False, digits=False) != seen.signature(values=False, digits=False):
-                self.actions.ctx.state["stale_map"] = True    # the numbers the model saw are gone (typing moves none)
+                self.actions.ctx.state["stale_map"] = True    # the ids the model saw are gone
         label = spec.describe(tag.args) if spec else tag.name.replace("_", " ")
         self.emit("step", id=step_id, label=label, status="active")
         consent = None if self._authored else self._consent
@@ -1236,7 +1204,7 @@ class Companion:
         if outcome.status == "pending":
             preview = outcome.preview
             result.pending = preview.title
-            result.hushed = True                      # "Bought." after it: not until they say yes
+            result.hushed = True                      # no "Bought." until they say yes
             self.emit("step", id=step_id, label=label, status="done", detail="waiting for your OK")
             self.emit("confirm", title=preview.title, lines=preview.lines, confirm=preview.confirm, name=tag.name)
             return
@@ -1266,36 +1234,35 @@ class Companion:
                 self.speaker.speak(action_result.say)
                 self.emit("answer", text=" " + action_result.say)
             return
-        # failed, unknown, disabled: the model hears why (and what to try instead) on its next turn
+        # failed, unknown, disabled: the model hears why next turn
         result.failed.append(label)
         hint = f" ({outcome.hint})" if outcome.hint else ""
         result.acted.append(f"{tag.name} failed: {outcome.message}{hint}")
-        result.hushed = True                          # what it wrote after this assumed it worked
+        result.hushed = True                          # the rest assumed it worked
         self.emit("step", id=step_id, label=label, status="failed", detail=outcome.message)
         self.emit("action", name=tag.name, status="failed", label=label, detail=outcome.message)
         if self._goal or result.hands or result.route.multistep:
-            return                  # the next step hears about it and explains in its own words: no saying it twice
+            return                  # the next step explains it: don't say it twice
         self.speaker.speak(outcome.message)
         self.emit("answer", text=" " + outcome.message)
 
 
-# The whole utterance is "keep going" (give or take an ok or a please), not "go on linkedin and…".
+# the whole utterance is "keep going" (plus an ok or please)
 CONTINUE_RE = re.compile(r"^\W*((ok(ay)?|yes|yeah|sure|alright)\W+)?((you can|please)\s+)?(keep going|continue|go on|"
                          r"carry on|keep at it|resume|don't stop|finish (it|up|the job)|go ahead and finish)"
                          r"(\W+(please|then|now|plip))?\W*$", re.IGNORECASE)
-SPEECH_BUDGET = 900          # characters read aloud per reply (about a minute); the rest stays on screen
-# Actions that work on whatever is on screen right now, so they wait for an earlier one to finish loading.
+SPEECH_BUDGET = 900          # chars read aloud per reply (~a minute)
+# these act on the current screen, so they wait for loads first
 _ON_SCREEN = {"type_text", "replace_selection", "read_page"}
-_AUTHORING = {"type_text", "replace_selection"}         # Plip's words in a field: them showing isn't the page moving
-# Actions whose results the next step reads and judges, rather than just moving on from.
+_AUTHORING = {"type_text", "replace_selection"}         # Plip's text in a field isn't the page moving
+# results the next step must read and judge
 _READING = {"read_page", "search_files", "look", "find_flights", "list_shortcuts", "run_shortcut", "web_search"}
-# Lines in a step's results that mean it didn't get anywhere.
+# result lines meaning a step got nowhere
 _STUCK = (" failed: ", "nothing on screen changed", "only the address", "you ended with [DONE]")
 
 
 def _region(frame: Rect | None, shot: Screenshot, size: tuple[int, int]) -> tuple[float, float, float, float]:
-    """The focused window in an image of ``shot``'s screen (``size`` pixels); the screen minus its menu bar
-    when the window isn't known, so the clock ticking over isn't a change."""
+    """The focused window's box in the image; else the screen minus the menu bar (its clock ticks)."""
     width, height = size
     screen = shot.screen.frame
     if frame is None or screen.width <= 0 or screen.height <= 0:
@@ -1308,7 +1275,7 @@ def _region(frame: Rect | None, shot: Screenshot, size: tuple[int, int]) -> tupl
 
 
 def _takes_effort(brain: Any) -> bool:
-    """Does this brain take a per-call effort (the CLIs and the API do; fakes and old brains may not)?"""
+    """Does this brain's stream() take a per-call effort?"""
     import inspect
 
     try:
@@ -1323,7 +1290,7 @@ def reply_asks(spoken: str) -> bool:
 
 
 def _spoken(title: str) -> str:
-    """A confirm card's title as words to say: "Click “Buy now”" -> "click Buy now", "Press cmd+q" -> "press command Q"."""
+    """A confirm card's title as words to say ("Press cmd+q" -> "press command Q")."""
     words = title.replace("“", "").replace("”", "").strip()
     keys = {"cmd": "command", "alt": "option", "opt": "option", "ctrl": "control", "esc": "escape"}
     words = re.sub(r"\b(cmd|alt|opt|ctrl|esc)\b", lambda m: keys[m.group(1)], words)
@@ -1332,11 +1299,7 @@ def _spoken(title: str) -> str:
 
 
 def _question(spoken: str) -> str:
-    """The question a reply ends on, or "" when it doesn't ask.
-
-    "Want me to send it?" on its own; "I'm about to send it. Can you confirm?" with the sentence
-    before, which says what "it" is.
-    """
+    """The question a reply ends on, plus the sentence before (what "it" is); "" if it doesn't ask."""
     if not reply_asks(spoken):
         return ""
     sentences = [part.strip() for part in re.findall(r"[^.!?]+[.!?]*", spoken.strip()) if part.strip()]
@@ -1344,19 +1307,16 @@ def _question(spoken: str) -> str:
     if not asking:
         return ""                                     # "?" on its own: nothing it asked about
     last = asking[-1]
-
-    # with the sentence before it, which says what "it" is ("I drafted a reply to Sara. Want me to send it?")
     return " ".join(sentences[max(0, last - 1):last + 1])
 
 
-# A question that a yes or a no answers: "want me to…", "should I…", "do you want…", "is that…".
+# a question a yes or no answers ("want me to…", "should I…")
 _YES_NO_RE = re.compile(r"^(want|wanna|should|shall|do|does|did|can|could|would|will|is|are|was|were|have|has|may)\b",
                         re.IGNORECASE)
 
 
 def _offer(asked: str) -> str:
-    """The yes-or-no question a reply ends on ("Want me to add it to your cart?"), or "" for an open question
-    ("what's your email?") or a choice ("open it, or read it to you?"), which a Yes button can't answer."""
+    """The yes/no question a reply ends on; "" for an open question or a choice (a Yes button can't answer)."""
     questions = [part.strip() for part in re.findall(r"[^.!?]+[.!?]*", asked or "") if "?" in part]
     if not questions:
         return ""
@@ -1395,7 +1355,7 @@ def _outcome(result: TurnResult) -> str:
 
 
 def _listed(target: Target, context: ScreenContext | None, tolerance: float = 3.0):
-    """The screen map control whose center this point is (it was written as whole pixels), if any."""
+    """The map control centered on this point (within whole-pixel rounding), if any."""
     if context is None:
         return None
     return next((control for control in context.ids.values()

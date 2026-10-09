@@ -95,7 +95,7 @@ class FakeHost:
     def __init__(self, home="/Users/test", apps=None, shortcuts=None, osa_reply=""):
         self.home = home
         self.calls = []
-        self.pointed = []             # where the real pointer went: clicks, scrolls and hovers all move it
+        self.pointed = []             # where clicks, scrolls and hovers moved the pointer
         self.apps = apps if apps is not None else {
             "safari": "/Applications/Safari.app", "google chrome": "/Applications/Google Chrome.app",
             "visual studio code": "/Applications/Visual Studio Code.app", "messages": "/System/Applications/Messages.app",
@@ -149,13 +149,13 @@ class FakeHost:
         self.pointed.append((round(x), round(y)))
         self.calls.append(("scroll", round(x), round(y), dy, dx))
 
-    # what a scroll asks when the wheel moves nothing (tests set these)
-    mouse = None                      # the pointer, global points (where the user left it: it doesn't follow plip)
-    focused_area = None               # a Rect: the focused element's scroll area
-    focus_role = None                 # "AXTextField", "AXWebArea"…; None: can't tell
-    has_bar = False                   # the panel has a scroll bar Plip can move itself
-    revealed = None                   # what scroll_to_visible finds (a host.Reveal)
-    revealed_now = None               # what it says when asked again without asking the app (default: the same)
+    # scroll fallbacks when the wheel moves nothing (tests set)
+    mouse = None                      # user's pointer, global points
+    focused_area = None               # Rect of the focused scroll area
+    focus_role = None                 # e.g. "AXWebArea"; None: unknown
+    has_bar = False                   # has a scroll bar Plip can move
+    revealed = None                   # scroll_to_visible's Reveal
+    revealed_now = None               # its answer with ask=False (default: same)
 
     def hover(self, x, y):
         self.pointed.append((round(x), round(y)))

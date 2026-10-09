@@ -37,7 +37,7 @@ export function Waveform({ level, bars = 18, className, color = 'bg-white' }: {
   )
 }
 
-/** The hold-to-talk shortcut as keycaps (⌃ ⌥ unless they picked another in General). */
+/** Hold-to-talk shortcut as keycaps. */
 export function Chord({ className, words = false }: { className?: string; words?: boolean }) {
   const { keys, label } = useStore(shortcut)
   const names = label.split(' + ')
@@ -53,7 +53,7 @@ export function Chord({ className, words = false }: { className?: string; words?
   )
 }
 
-/** The shortcut in words, for running text: "Control + Option". */
+/** Shortcut in words: "Control + Option". */
 export function useShortcutLabel() {
   return useStore(shortcut).label
 }

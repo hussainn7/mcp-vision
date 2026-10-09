@@ -22,7 +22,7 @@ const PLANS: { id: string; plan: string }[] = [
   { id: 'cursor', plan: 'Cursor' },
 ]
 
-/** Pick an AI the plain way: the plan you pay for (one click installs and signs in), or a free one from Google. */
+/** Pick an AI: a paid plan (one-click connect) or free Google. */
 export function ConnectAI({ state, compact = false }: { state: SettingsState; compact?: boolean }) {
   const engine = state.engines.find((item) => item.selected)
   const ready = engine?.status === 'ready'
@@ -91,7 +91,7 @@ function PlanRow({ engine, plan }: { engine: Engine; plan: string }) {
   )
 }
 
-/** No AI plan: a free Gemini key from Google, in three steps a first-timer can follow. */
+/** No AI plan: a free Gemini key in three steps. */
 export function FreeGoogleKey({ state }: { state: SettingsState }) {
   const gemini = state.engines.find((item) => item.id === 'gemini-api')
   const check = state.keyCheck && (state.keyCheck.name === 'GEMINI_API_KEY' || !state.keyCheck.name) ? state.keyCheck : null
@@ -170,7 +170,7 @@ function Step({ n }: { n: number }) {
   return <span className="grid size-5 shrink-0 place-items-center rounded-full bg-white/[0.07] text-[10.5px] font-bold text-white/60">{n}</span>
 }
 
-/** Live progress while Plip installs a brain's app and waits for the browser sign-in. */
+/** Progress while a brain's app installs and signs in. */
 export function Connecting({ id, progress }: { id: string; progress: ConnectProgress }) {
   const [help, setHelp] = useState(false)
   const [code, setCode] = useState('')

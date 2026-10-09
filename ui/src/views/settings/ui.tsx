@@ -65,8 +65,7 @@ export function Button({ children, onClick, variant = 'primary', className, disa
   )
 }
 
-/** A settings list: rows in one card, split by hairlines. */
-/** A button for something that can't be undone: the first click asks, the second does it. */
+/** For irreversible actions: first click asks, second does it. */
 export function ConfirmButton({ children, onConfirm, confirm = 'Clear', size = 'sm', variant = 'quiet' }: {
   children: React.ReactNode
   onConfirm: () => void
@@ -85,6 +84,7 @@ export function ConfirmButton({ children, onConfirm, confirm = 'Clear', size = '
   )
 }
 
+/** A settings list: rows in one card, split by hairlines. */
 export function Rows({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cn('card relative divide-y divide-white/[0.05] overflow-hidden', className)}>{children}</div>
 }

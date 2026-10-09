@@ -222,7 +222,7 @@ GUIDE_FOLLOWUP = ("(walkthrough check-in) my screen changed after step {done} of
 
 
 def guide_followup(done: int, total: int, plan: tuple[str, ...] = ()) -> str:
-    """A walkthrough check-in, naming the step just done and the next one from the checklist the user sees."""
+    """Walkthrough check-in naming the step just done and the next one."""
     step = f' ("{plan[done - 1]}")' if 0 < done <= len(plan) else ""
     upcoming = f' ("{plan[done]}")' if done < len(plan) else ""
     return GUIDE_FOLLOWUP.format(done=done, total=total, step=step, next=upcoming)

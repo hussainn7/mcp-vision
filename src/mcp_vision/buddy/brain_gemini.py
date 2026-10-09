@@ -1,8 +1,6 @@
-"""Gemini through a free Google AI Studio key: streamed vision replies over Google's REST API.
+"""Gemini via a free Google AI Studio key: streamed vision replies over the REST API.
 
-The way in for people without a paid AI plan: a Google account and one key from
-aistudio.google.com, pasted into Plip. No SDK and nothing to install: one HTTPS request
-per turn (``streamGenerateContent``), read as it streams by a worker thread.
+No SDK, nothing to install: one ``streamGenerateContent`` request per turn, read by a worker thread.
 """
 from __future__ import annotations
 
@@ -21,7 +19,7 @@ from mcp_vision.buddy.usage import Usage, from_report
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 KEY_PAGE = "https://aistudio.google.com/apikey"
-DEFAULT_MODEL = "gemini-flash-latest"      # Google's alias for its current Flash: free tier, sees images
+DEFAULT_MODEL = "gemini-flash-latest"      # current Flash alias: free tier, sees images
 _LEVEL = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
 _STEP = {"low": "medium", "medium": "high", "high": "high", "xhigh": "high", "max": "high"}
 
@@ -55,7 +53,7 @@ class GeminiKeyBrain:
 
     def request(self, *, system: str, turns: list[Turn], detailed: bool = False,
                 effort: str | None = None) -> dict[str, Any]:
-        """The request body; handy for tests. ``detailed`` thinks one step harder for that turn."""
+        """Request body (for tests); ``detailed`` thinks one step harder."""
         effort = effort or (_STEP.get(self.effort, self.effort) if detailed else self.effort)
         return {
             "systemInstruction": {"parts": [{"text": system}]},
@@ -75,7 +73,7 @@ class GeminiKeyBrain:
         except GeminiError as exc:
             if said or "thinking" not in str(exc).lower():
                 raise
-            body["generationConfig"].pop("thinkingConfig", None)    # a model that won't take a thinking level
+            body["generationConfig"].pop("thinkingConfig", None)    # model rejects a thinking level
             async for text in self._stream(body):
                 yield text
 
@@ -102,7 +100,7 @@ class GeminiKeyBrain:
                             put("data", line[5:].strip())
             except urllib.error.HTTPError as exc:
                 put("error", _http_error(exc))
-            except Exception as exc:                      # no network, timeouts: said plainly by the companion
+            except Exception as exc:                      # no network, timeouts
                 put("error", GeminiError(f"connection failed: {exc}"))
             finally:
                 put("end", None)
@@ -154,7 +152,7 @@ class GeminiKeyBrain:
 
 
 def check_key(key: str, opener: Callable[..., Any] = urllib.request.urlopen) -> str:
-    """"" when Google takes this key, else what's wrong with it in plain words (for Settings)."""
+    """"" if Google takes the key, else the problem in plain words."""
     try:
         GeminiKeyBrain(api_key=key, opener=opener)._get(f"{API}/models?pageSize=1")
     except GeminiError as exc:
@@ -171,7 +169,7 @@ def _http_error(exc: urllib.error.HTTPError) -> GeminiError:
     try:
         detail = json.loads(exc.read().decode("utf-8", "replace")).get("error", {})
         message = str(detail.get("message") or detail.get("status") or "")
-        # which limit it was ("…PerMinute…FreeTier", "…PerDay…FreeTier"): a minute's wait, or tomorrow
+        # which quota: per minute (wait) or per day (tomorrow)
         quotas = [str(violation.get("quotaId") or "") for item in detail.get("details") or [] if isinstance(item, dict)
                   for violation in item.get("violations") or [] if isinstance(violation, dict)]
     except Exception:

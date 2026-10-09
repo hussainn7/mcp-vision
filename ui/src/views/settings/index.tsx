@@ -80,7 +80,7 @@ export function Settings() {
     }
     window.addEventListener('hashchange', onHash)
     send('settings-ready')
-    // Back from System Settings or a browser sign-in: check permissions and brains again (at most every 5 s).
+    // Back from System Settings or a sign-in: refresh (at most every 5 s).
     let checked = Date.now()
     const onFocus = () => {
       if (document.visibilityState === 'hidden' || Date.now() - checked < 5000) return

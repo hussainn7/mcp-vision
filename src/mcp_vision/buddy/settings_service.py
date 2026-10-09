@@ -23,13 +23,13 @@ DEPTHS = {"fast", "balanced", "deep"}
 TOUR_STEPS = ("welcome", "permissions", "brain", "try", "done")
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
-# What a pasted key looks like, by whose it is: a free Google AI Studio key, or an Anthropic one.
+# pasted key shapes: Google AI Studio, Anthropic
 KEY_SHAPES = (("GEMINI_API_KEY", re.compile(r"AIza[0-9A-Za-z_\-]{30,60}")),
               ("ANTHROPIC_API_KEY", re.compile(r"sk-ant-[0-9A-Za-z_\-]{20,200}")))
 
 
 def _check_key(name: str, value: str) -> str:
-    """"" when the provider takes the key, else what's wrong in plain words. Only Google's is checked."""
+    """"" if the provider takes the key, else the problem. Only Google's is checked."""
     if name != "GEMINI_API_KEY":
         return ""
     from mcp_vision.buddy.brain_gemini import check_key
@@ -48,7 +48,7 @@ class Platform:
     quit: Callable[[], None] = lambda: None
     open_settings: Callable[[str], None] = lambda tab: None
     restart: Callable[[], None] = lambda: None             # quit and open Plip again
-    clipboard: Callable[[], str] = lambda: ""                # what's copied (only read when they click Paste key)
+    clipboard: Callable[[], str] = lambda: ""                # read only on Paste key
 
 
 @dataclass
@@ -70,8 +70,8 @@ class SettingsService:
     account: Any = None                                    # buddy.account.Account (sign in before Plip works)
     updates: Any = None                                    # buddy.updates.Updates (a newer Plip is out)
     check_updates: Callable[[], None] = lambda: None       # ask GitHub now, in the background
-    connector: Any = None                                  # buddy.connect.Connector (one-click Connect, no Terminal)
-    live: Callable[[], dict | None] = lambda: None         # the last request as it goes (the tour's "try it" step)
+    connector: Any = None                                  # buddy.connect.Connector (one-click Connect)
+    live: Callable[[], dict | None] = lambda: None         # last request, live (tour's "try it" step)
     check_key: Callable[[str, str], str] = _check_key      # "" when the provider takes a pasted key
     key_check: dict = field(default_factory=dict)          # {name, state: checking | ok | bad, message}
     main: Callable[[Callable[[], None]], None] = lambda job: job()       # run on the UI thread
@@ -79,7 +79,7 @@ class SettingsService:
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
     report_note: str = ""                                  # "sent" | "failed" after a bug report or feature request
     hotkey_works: Callable[[], bool] = lambda: True        # macOS passes Plip the keys (see hotkey.can_listen)
-    apply_hotkey: Callable[[str], None] = lambda name: None   # listen for a new talk shortcut right away
+    apply_hotkey: Callable[[str], None] = lambda name: None   # switch the talk shortcut now
 
     @property
     def prefs(self) -> Prefs:
@@ -167,13 +167,13 @@ class SettingsService:
         name, value = str(command.get("name", "")), str(command.get("value", "")).strip()
         if name not in KEY_NAMES or not value or "\n" in value:
             return
-        if name == "GEMINI_API_KEY":                    # the beginner's way in: say right away if Google takes it
+        if name == "GEMINI_API_KEY":                    # check with Google before saving
             self._check_then_save(name, value)
             return
         self._save_key(name, value)
 
     def _cmd_paste_key(self, _command):
-        """"Paste key": take an AI key off the clipboard, whichever kind it is. Nothing else on it is kept."""
+        """"Paste key": take an AI key off the clipboard; nothing else is kept."""
         text = (self.platform.clipboard() or "").strip()
         for name, shape in KEY_SHAPES:
             if shape.fullmatch(text):
@@ -199,7 +199,7 @@ class SettingsService:
 
                 write_env(self.env_path or config_dir() / ".env", {name: value})
                 if not self._ready_engine():
-                    self._update_prefs(engine="gemini-api")     # their only working brain: key + choice, one rebuild
+                    self._update_prefs(engine="gemini-api")     # only working brain: select it (one rebuild)
                 else:
                     self.reload()
                     self.push()
@@ -242,7 +242,7 @@ class SettingsService:
         prefs = self.prefs
         prefs.hotkey = name
         prefs.save(self.prefs_path)
-        self.apply_hotkey(name)                    # no rebuild: the brain doesn't care which keys you hold
+        self.apply_hotkey(name)                    # no brain rebuild needed
         self.push()
 
     def _cmd_set_walkthroughs(self, command):
@@ -292,7 +292,7 @@ class SettingsService:
         self._save_onboarded(False, step="welcome")
 
     def _cmd_tour_go(self, command):
-        """The walkthrough moved on (or back): kept, so quitting for Screen Recording comes back to the same step."""
+        """Tour step changed: saved, so a restart resumes there."""
         step = str(command.get("step") or "")
         if step in TOUR_STEPS:
             prefs = self.prefs
@@ -344,8 +344,7 @@ class SettingsService:
         self.push()
 
     def _cmd_quick_connect(self, _command):
-        """One button: use an AI that's ready, else sign in to one that's installed. Never a Terminal window:
-        with nothing installed, the cards below say which to pick (Claude, ChatGPT, or a free Google key)."""
+        """One button: use a ready AI, else sign in to an installed one; with none, point to the cards."""
         engines = self.engines()
         ready = next((engine for engine in engines if engine.get("status") == "ready"), None)
         if ready:
@@ -362,7 +361,7 @@ class SettingsService:
         self.push()
 
     def _cmd_engine_connect(self, command):
-        """One click: install the brain's app if it's missing, sign in in the browser, switch to it."""
+        """One click: install if missing, sign in via the browser, switch to it."""
         if self.connector is not None:
             self.connector.start(str(command.get("id", "")))
             self.push()
@@ -403,7 +402,7 @@ class SettingsService:
         self.push()
 
     def _cmd_engine_login(self, command):
-        if self.connector is not None:               # the browser sign-in, not a Terminal window
+        if self.connector is not None:               # browser sign-in, not Terminal
             self._cmd_engine_connect(command)
             return
         engine = next((item for item in self.engines() if item["id"] == command.get("id")), None)

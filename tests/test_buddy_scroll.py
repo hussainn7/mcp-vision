@@ -1,9 +1,6 @@
-"""Scrolls hit the panel they mean, check they moved, try other ways before giving up, and say what happened.
+"""Scrolls aim at the right panel, check they moved, fall back before giving up, and say what happened.
 
-From plip: a plain scroll aims at the panel last clicked in (while still on that page), the focused one, the
-pointer they moved, then the biggest area; it watches the pixels there and the map; when nothing moves it tries the
-panel's own scroll bar, more spots and page keys (only where they scroll); a click by number after a scroll finds
-the control where it moved to.
+Aim order: last-clicked panel (same page), focused panel, pointer they moved, biggest area.
 """
 from __future__ import annotations
 
@@ -82,14 +79,14 @@ def test_scroll_to_finds_text_locally_without_the_model():
 def test_a_field_that_keeps_changing_isnt_the_page_scrolling():
     ticks = iter(range(1000))
 
-    def live():                                     # a terminal's output or a timer: its value changes every look
+    def live():                                     # value changes every look (terminal, timer)
         return ScreenContext(app="Terminal", controls=[Control("shell", "text area", 600, 400, 800, 600,
                                                                value=f"tick {next(ticks)}")],
                              scroll_areas=[Control("shell", "scroll area", 600, 400, 800, 600)])
     e, host = hands(live(), observe=live)
     assert run(e.handle("scroll", {})).result.detail == "Nothing moved"
     out = run(e.handle("scroll_to", {"text": "Pricing", "direction": "down"}))
-    assert "nothing moved" in out.result.report and "to the end" not in out.result.report   # not "reached the end"
+    assert "nothing moved" in out.result.report and "to the end" not in out.result.report
 
 
 def test_scroll_to_stops_at_the_end_of_the_page():
@@ -128,7 +125,7 @@ def test_click_by_number_after_a_scroll_finds_the_button_where_it_is_now():
     scrolled = lambda: cart_page(1 if any(call[0] == "scroll" for call in host.calls) else 0)    # noqa: E731
     engine, _ = hands(cart_page(), host=host, observe=scrolled)
     run(engine.handle("scroll", {"direction": "down"}))
-    run(engine.handle("click", {"id": 2}))                    # [2] was "Add to cart" at y=800 before the scroll
+    run(engine.handle("click", {"id": 2}))                    # [2] = "Add to cart", y=800 pre-scroll
     assert host.calls[-1] == ("click", 700, 500)
 
 
@@ -139,7 +136,7 @@ def test_without_scroll_areas_plip_scrolls_the_front_window_not_the_middle_of_th
 
 
 def deals(offset=0):
-    """Rows of deals, each with its own "Add to cart"; scrolling moves every row up by ``offset``."""
+    """Deal rows, each with an "Add to cart"; ``offset`` scrolls them up."""
     controls, texts = [], []
     for row, name in enumerate(["Echo Dot", "Kindle", "Soundcore Mini", "Fire TV Stick"]):
         y = 200 + row * 150 - offset
@@ -172,8 +169,7 @@ def test_scroll_all_the_way_keeps_going_until_the_page_stops():
 
 
 def mail(scrolled=0, url="", app="Chrome", window="Mail", frame=None):
-    """Web mail: the email list is a side panel inside the page (what they call "the Email panel"). Its rows
-    move up a slot per scroll."""
+    """Web mail with an 'Email' side panel; its rows move up a slot per scroll."""
     rows = [Control(f"Invoice {n}", "link", 1300, 200 + 80 * (n - scrolled), 300, 40)
             for n in range(scrolled, scrolled + 5)]
     return ScreenContext(
@@ -186,7 +182,7 @@ def mail(scrolled=0, url="", app="Chrome", window="Mail", frame=None):
 
 @pytest.fixture
 def quick(monkeypatch):
-    """No real waiting between a scroll and checking whether it moved."""
+    """No real sleep before the did-it-move check."""
     from mcp_vision.buddy.actions import control
 
     monkeypatch.setattr(control.time, "sleep", lambda seconds: None)
@@ -269,7 +265,7 @@ def test_when_nothing_moves_it_tries_the_scroll_bar_more_spots_and_page_keys_the
         "focused panel and pressing pageup: it's at the top, or that part doesn't scroll. give the panel's x,y from "
         "scrollable or the id of anything inside it, or read_page for the whole text")
     assert "scrolled" not in engine.ctx.state
-    # The map can't see that panel move, the pixels there can: the page key did it, and it says so.
+    # only the pixels see the page key move that panel
     engine.ctx.fingerprint = lambda x, y: bytes([40 * sum(call[0] == "press" for call in host.calls)]) * 2560
     out = run(engine.handle("scroll", {"direction": "up"}))
     assert out.result.report == ("scrolled up (the wheel at the 'Email' panel, its scroll bar and the wheel at the "
@@ -284,12 +280,12 @@ def test_a_toolbar_that_shows_on_hover_or_a_ticking_clock_isnt_a_scroll(quick):
     def hovered():
         context = mail()
         context.texts.append(Control(f"10:4{len(host.calls)}", "text", 1450, 40))     # ticks every step
-        x, y = host.pointed[-1]                                             # the row under the pointer shows its
+        x, y = host.pointed[-1]                                             # hovered row shows its buttons
         context.controls += [Control("Archive", "button", x + 100, y), Control("Delete", "button", x + 140, y)]
         return context
     engine, _ = hands(mail(), host=host, observe=hovered)
     lit = lambda x, y: bytes([90 if (round(x), round(y)) == host.pointed[-1] else 0]) * 2560     # noqa: E731
-    engine.ctx.fingerprint = lit                                             # own buttons, and lights up
+    engine.ctx.fingerprint = lit                                             # ...and lights up
     run(engine.handle("click", {"id": 2}))
     out = run(engine.handle("scroll", {"direction": "up"}))
     assert out.result.report.startswith("scrolled up, but nothing moved. tried the wheel at the 'Email' panel, the "
@@ -309,7 +305,7 @@ def test_the_fallbacks_stay_quick_when_nothing_moves(monkeypatch):
     run(engine.handle("click", {"id": 2}))
     run(engine.handle("scroll", {"direction": "up"}))
     assert [call[0] for call in host.calls[1:]] == ["scroll", "scroll_bar", "scroll", "press"]   # each got a go
-    # the click's 0.25 s glide (they see where it acts) + the scroll fallbacks' own ~1.1 s; was ~3.7 s, 17 reads
+    # click's 0.25 s glide + ~1.1 s of fallbacks
     assert sum(slept) <= 0.25 + 1.2 and len(looks) <= 5
 
 
@@ -368,7 +364,7 @@ def test_scroll_to_has_the_app_bring_it_into_view_and_checks_it_did(quick):
     out = run(engine.handle("scroll_to", {"text": "Q3 invoice"}))
     assert out.result.report == "found 'Re: Q3 invoice' and scrolled it into view; it's on screen now"
     assert host.calls == [("scroll_to_visible", "Q3 invoice")] and glides == ["Re: Q3 invoice"]
-    # Nothing came into view: the wheel at the panel holding it, the way it is now (a slow app went past it).
+    # nothing came into view: wheel its panel the way it is now
     host = FakeHost()
     host.revealed = Reveal(found=True, asked=True, scroller=(1300, 520), direction="down")
     host.revealed_now = Reveal(found=True, scroller=(1300, 520), direction="up")
@@ -381,7 +377,7 @@ def test_scroll_to_has_the_app_bring_it_into_view_and_checks_it_did(quick):
     engine, _ = hands(mail(), host=host, observe=wheeled)
     out = run(engine.handle("scroll_to", {"text": "Q3 invoice"}))
     assert wheel(host) == [("scroll", 1300, 520, -8, 0)] * 2 and "after 2 scrolls" in out.result.report
-    # In view but past what the map lists: it says so instead of wheeling away from it.
+    # in view but off the map: say so, don't wheel away
     host = FakeHost()
     host.revealed = Reveal(found=True, asked=True, scroller=(1300, 520), direction="down")
     host.revealed_now = Reveal(found=True, scroller=(1300, 520), at=(1300, 610))
