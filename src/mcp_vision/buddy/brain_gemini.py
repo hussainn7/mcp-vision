@@ -8,6 +8,7 @@ import asyncio
 import base64
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Callable
@@ -20,12 +21,20 @@ from mcp_vision.buddy.usage import Usage, from_report
 API = "https://generativelanguage.googleapis.com/v1beta"
 KEY_PAGE = "https://aistudio.google.com/apikey"
 DEFAULT_MODEL = "gemini-flash-latest"      # current Flash alias: free tier, sees images
+BUSY_MODEL = "gemini-flash-lite-latest"    # when Flash is overloaded (503s come and go)
+BUSY = {429, 500, 502, 503, 504}
+FIRST_WORD = 10.0                          # seconds to the first word before trying the lite model
+BUSY_FOR = 300.0                           # after Flash was busy, go straight to lite this long
 _LEVEL = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
 _STEP = {"low": "medium", "medium": "high", "high": "high", "xhigh": "high", "max": "high"}
 
 
 class GeminiError(RuntimeError):
     """Google answered with an error (a bad key, the free limit, a blocked prompt)."""
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
 
 
 class GeminiKeyBrain:
@@ -45,6 +54,7 @@ class GeminiKeyBrain:
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.opener = opener
+        self._busy_until = 0.0
 
     async def warm(self) -> str:
         """Check the key and reach Google once before the first question."""
@@ -65,28 +75,44 @@ class GeminiKeyBrain:
     async def stream(self, *, system: str, turns: list[Turn], detailed: bool = False,
                      effort: str | None = None) -> AsyncIterator[str]:
         body = self.request(system=system, turns=turns, detailed=detailed, effort=effort)
-        said = False
-        try:
-            async for text in self._stream(body):
-                said = True
-                yield text
-        except GeminiError as exc:
-            if said or "thinking" not in str(exc).lower():
-                raise
-            body["generationConfig"].pop("thinkingConfig", None)    # model rejects a thinking level
-            async for text in self._stream(body):
-                yield text
+        # busy, rate-limited or slow to start: the lite model (own quota) at once; never once words are out
+        tries = [(self.model, FIRST_WORD), (BUSY_MODEL, 2 * FIRST_WORD)]
+        if time.monotonic() < self._busy_until:
+            tries.pop(0)                                                 # Flash was just busy: skip the wait
+        while tries:
+            name, deadline = tries.pop(0)
+            said = False
+            try:
+                async for text in self._stream(body, name, deadline):
+                    said = True
+                    yield text
+                return
+            except GeminiError as exc:
+                if said:
+                    raise
+                if "thinking" in str(exc).lower() and "thinkingConfig" in body["generationConfig"]:
+                    body["generationConfig"].pop("thinkingConfig")       # model rejects a thinking level
+                    tries.insert(0, (name, deadline))
+                elif exc.status not in BUSY or not tries:
+                    raise
+                else:
+                    self._busy_until = time.monotonic() + BUSY_FOR
 
-    async def _stream(self, body: dict[str, Any]) -> AsyncIterator[str]:
+    async def _stream(self, body: dict[str, Any], name: str = "", deadline: float = 0.0) -> AsyncIterator[str]:
         self.last_usage = None
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         stop = threading.Event()
-        url = f"{API}/models/{self.model}:streamGenerateContent?alt=sse"
+        url = f"{API}/models/{name or self.model}:streamGenerateContent?alt=sse"
         data = json.dumps(body).encode("utf-8")
 
         def put(kind: str, value: Any) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, (kind, value))
+            if stop.is_set():
+                return                                    # abandoned (too slow, or cut off): nobody's listening
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, (kind, value))
+            except RuntimeError:
+                pass                                      # the loop is gone
 
         def worker() -> None:
             try:
@@ -108,8 +134,15 @@ class GeminiKeyBrain:
         threading.Thread(target=worker, daemon=True, name="plip-gemini").start()
         blocked, finish, usage, model = "", "", None, self.model
         try:
+            started = False
             while True:
-                kind, value = await queue.get()
+                try:
+                    kind, value = await (queue.get() if started or not deadline else
+                                         asyncio.wait_for(queue.get(), deadline))
+                except TimeoutError:
+                    raise GeminiError(f"Gemini 504: no answer from {name or self.model} in {deadline:.0f} s",
+                                      status=504) from None
+                started = True
                 if kind == "end":
                     break
                 if kind == "error":
@@ -175,7 +208,7 @@ def _http_error(exc: urllib.error.HTTPError) -> GeminiError:
     except Exception:
         message, quotas = "", []
     limit = f" [{' '.join(quota for quota in quotas if quota)}]" if any(quotas) else ""
-    return GeminiError(f"Gemini {exc.code}: {message or exc.reason}{limit}"[:500])
+    return GeminiError(f"Gemini {exc.code}: {message or exc.reason}{limit}"[:500], status=exc.code)
 
 
 def _contents(turns: list[Turn]) -> list[dict[str, Any]]:

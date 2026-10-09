@@ -102,13 +102,11 @@ def test_a_bad_key_and_the_free_limit_are_said_plainly():
     from mcp_vision.buddy.companion import _friendly_error
 
     quota = "Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests"
-    for error, said in ((http_error(400, "API key not valid. Please pass a valid API key."), "Check the API key"),
-                        (http_error(429, quota, "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"),
-                         "Give it a minute"),                              # per-minute limit, not daily
-                        (http_error(429, quota, "GenerateRequestsPerDayPerProjectPerModel-FreeTier"),
-                         "resets tomorrow")):
-        try:
-            run(GeminiKeyBrain(api_key="k", opener=Google(error)), [Turn("user", "hi")])
+    for args, said in (((400, "API key not valid. Please pass a valid API key."), "Check the API key"),
+                       ((429, quota, "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"), "Give it a minute"),
+                       ((429, quota, "GenerateRequestsPerDayPerProjectPerModel-FreeTier"), "resets tomorrow")):
+        try:                                               # (the lite model is tried too, and is out as well)
+            run(GeminiKeyBrain(api_key="k", opener=Google(http_error(*args), http_error(*args))), [Turn("user", "hi")])
         except GeminiError as exc:
             assert said in _friendly_error(exc)
         else:
@@ -192,3 +190,54 @@ def test_new_aq_keys_paste_and_the_retired_gemini_cli_says_what_to_do(tmp_path):
     said = _tail(stderr)
     assert said.startswith("Error authenticating: IneligibleTierError") and " at " not in said
     assert "free Gemini key" in _friendly_error(EngineError(f"Gemini failed: {said}"))
+
+
+def test_an_overloaded_gemini_is_tried_again_then_the_lite_model_answers(monkeypatch):
+    import mcp_vision.buddy.brain_gemini as gemini
+    from mcp_vision.buddy.companion import _friendly_error
+
+    busy = "This model is currently experiencing high demand. Please try again later."
+    google = Google(http_error(503, busy), Response([text("Hi there.")]))
+    assert run(GeminiKeyBrain(api_key="k", opener=google), [Turn("user", "hi")]) == "Hi there."
+    assert [url.split("/models/")[1].split(":")[0] for url, _, _ in google.sent] == \
+        ["gemini-flash-latest", "gemini-flash-lite-latest"]                   # straight to the lite model
+    google = Google(*[http_error(503, busy)] * 2)
+    try:
+        run(GeminiKeyBrain(api_key="k", opener=google), [Turn("user", "hi")])
+    except GeminiError as exc:
+        assert "overloaded right now" in _friendly_error(exc)                # not "something went wrong"
+    else:
+        raise AssertionError("no error")
+    google = Google(http_error(400, "API key not valid."), Response([text("never")]))
+    try:
+        run(GeminiKeyBrain(api_key="k", opener=google), [Turn("user", "hi")])
+    except GeminiError:
+        assert len(google.sent) == 1                                         # a bad key isn't retried
+
+
+def test_a_gemini_that_wont_start_talking_hands_over_to_the_lite_model(monkeypatch):
+    import threading
+
+    import mcp_vision.buddy.brain_gemini as gemini
+
+    monkeypatch.setattr(gemini, "FIRST_WORD", 0.2)
+    hung = threading.Event()
+
+    class Hangs(Response):
+        def __iter__(self):
+            hung.wait(2)                                   # no bytes, like a queued request
+            return iter(())
+    google = Google(Hangs(), Response([text("Hi.")]))
+    assert run(GeminiKeyBrain(api_key="k", opener=google), [Turn("user", "hi")]) == "Hi."
+    hung.set()
+    assert google.sent[1][0].split("/models/")[1].startswith("gemini-flash-lite-latest")
+
+
+def test_after_flash_was_busy_the_next_asks_go_straight_to_lite_for_a_while():
+    busy = "This model is currently experiencing high demand."
+    google = Google(http_error(503, busy), Response([text("One.")]), Response([text("Two.")]))
+    brain = GeminiKeyBrain(api_key="k", opener=google)
+    assert run(brain, [Turn("user", "hi")]) == "One."
+    assert run(brain, [Turn("user", "again")]) == "Two."
+    models = [url.split("/models/")[1].split(":")[0] for url, _, _ in google.sent]
+    assert models == ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-flash-lite-latest"]

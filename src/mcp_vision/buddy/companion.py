@@ -1028,6 +1028,7 @@ class Companion:
                 self._meter_turn(meter, Usage())        # the brain was asked and failed: a call, no tokens known
             result.state = "error"
             result.error = _friendly_error(exc)
+            log.warning("turn failed: %s: %s", type(exc).__name__, str(exc)[:300])
             self.emit("error", message=result.error)
             self.speaker.stop()
             self.speaker.speak(result.error)
@@ -1413,6 +1414,8 @@ def _history_text(reply: ReplyStream, targets: list[Target], did: list[str] | No
 def _friendly_error(exc: Exception) -> str:
     message = str(exc).strip() or type(exc).__name__
     lowered = message.lower()
+    if "high demand" in lowered or "overloaded" in lowered or "gemini 503" in lowered:
+        return "Google's Gemini is overloaded right now. Try again in a moment, or switch to another AI in my settings."
     if "no longer supported for gemini code assist" in lowered or "ineligibletier" in lowered:
         return ("Google stopped letting the Gemini CLI answer on free accounts. Use the free Gemini key in my settings "
                 "instead.")
