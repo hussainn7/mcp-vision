@@ -140,10 +140,10 @@ class Connector:
             self.on_connected(engine_id)
         except ConnectError as exc:
             if engine_id not in self._cancelled:
-                self._set(engine_id, "failed", str(exc))
+                self._set(engine_id, "failed", str(exc), url=self._url(engine_id))
         except Exception as exc:                        # never leave the card spinning
             if engine_id not in self._cancelled:
-                self._set(engine_id, "failed", f"Couldn't connect {spec.label}: {exc}")
+                self._set(engine_id, "failed", f"Couldn't connect {spec.label}: {exc}", url=self._url(engine_id))
         finally:
             self._stop(engine_id)
 
@@ -257,6 +257,11 @@ class Connector:
                 self._set(engine_id, "signing-in", current.message, url=url, needs_code=needs_code)
 
     # -- bookkeeping ------------------------------------------------------------------------
+    def _url(self, engine_id: str) -> str:
+        """The sign-in link seen so far, kept on a failure so they can copy it into any browser."""
+        current = self.progress.get(engine_id)
+        return current.url if current is not None else ""
+
     def _set(self, engine_id: str, state: str, message: str, *, url: str = "", needs_code: bool = False) -> None:
         with self._lock:
             self.progress[engine_id] = Progress(state, message, url, needs_code)

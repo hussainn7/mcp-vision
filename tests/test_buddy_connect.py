@@ -230,7 +230,17 @@ def test_a_sign_in_app_that_quits_without_signing_in_isnt_connected(tmp_path):
     made, _, connected = connector(Brain("logged-out"), tmp_path, spawn=lambda argv, **kw: FakeLogin(code=0))
     made.start("claude-code", wait=True)
     assert made.progress["claude-code"].state == "failed" and "didn't finish" in made.progress["claude-code"].message
-    assert connected == []
+    assert connected == [] and made.progress["claude-code"].url == ""
+
+
+def test_a_failed_sign_in_keeps_its_link_so_they_can_finish_in_any_browser(tmp_path):
+    login = FakeLogin(["Otherwise navigate to: https://claude.com/cai/oauth/authorize?x=2", ""], code=1)
+    made, _, connected = connector(Brain("logged-out"), tmp_path, spawn=lambda argv, **kw: login)
+    made.start("claude-code", wait=True)
+    failed = made.progress["claude-code"]
+    assert failed.state == "failed" and "didn't finish" in failed.message and connected == []
+    assert failed.url == "https://claude.com/cai/oauth/authorize?x=2"          # copy it, paste it anywhere
+    assert failed.card()["url"] == failed.url
 
 
 def test_a_browser_the_sign_in_app_couldnt_open_gets_opened_by_plip(tmp_path):

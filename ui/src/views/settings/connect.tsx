@@ -165,12 +165,36 @@ function Step({ n }: { n: number }) {
   return <span className="grid size-5 shrink-0 place-items-center rounded-full bg-white/[0.07] text-[10.5px] font-bold text-white/60">{n}</span>
 }
 
+/** The sign-in link, to open here or to copy into any browser they like (a failed sign-in keeps it). */
+function LinkActions({ url, className, muted = false }: { url: string; className?: string; muted?: boolean }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    send('copy', { text: url })
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1600)
+  }
+  const tone = muted ? 'text-rose-100/80 hover:text-white' : 'font-semibold text-plip-200 hover:text-plip-100'
+  return (
+    <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px]', className)}>
+      <button className={tone} onClick={() => send('open-url', { url })}>Open the sign-in page</button>
+      <span className={muted ? 'text-rose-100/30' : 'text-white/20'}>·</span>
+      <button className={tone} onClick={copy}>{copied ? 'Copied' : 'Copy link'}</button>
+      <span className={muted ? 'text-rose-100/50' : 'text-white/35'}>Paste it in any browser you like.</span>
+    </div>
+  )
+}
+
 /** Progress while a brain's app installs and signs in. */
 export function Connecting({ id, progress }: { id: string; progress: ConnectProgress }) {
   const [help, setHelp] = useState(false)
   const [code, setCode] = useState('')
   if (progress.state === 'failed')
-    return <div className="rounded-xl bg-coral/[0.08] px-3 py-2 text-[12px] leading-relaxed text-rose-200/90">{progress.message}</div>
+    return (
+      <div className="rounded-xl bg-coral/[0.08] px-3 py-2 text-[12px] leading-relaxed text-rose-200/90">
+        {progress.message}
+        {progress.url && <LinkActions url={progress.url} className="mt-1.5" muted />}
+      </div>
+    )
   return (
     <div className="rounded-xl bg-white/[0.04] px-3 py-2.5 hairline">
       <div className="flex items-center gap-2 text-[12.5px] text-white/80">
@@ -198,9 +222,7 @@ export function Connecting({ id, progress }: { id: string; progress: ConnectProg
               Browser didn’t open?
             </button>
           ) : (
-            <button className="font-semibold text-plip-200 hover:text-plip-100" onClick={() => send('open-url', { url: progress.url })}>
-              Open the sign-in page
-            </button>
+            <LinkActions url={progress.url} />
           )}
         </div>
       )}

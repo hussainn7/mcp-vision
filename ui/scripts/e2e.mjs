@@ -114,6 +114,9 @@ await test('settings: one click connects a brain (no Terminal, nothing to copy)'
   await page.getByText('Finish signing in to ChatGPT in your browser').waitFor()
   await page.getByText('Browser didn’t open?').click()
   await page.getByText('Open the sign-in page').waitFor()
+  await page.getByRole('button', { name: 'Copy link' }).click()                         // or any browser they like
+  assert.deepEqual(await take('copy'), { cmd: 'copy', text: 'https://claude.com/cai/oauth/authorize' })
+  await page.getByText('Copied').waitFor()
   await page.getByPlaceholder('If the page shows a code, paste it here').fill('abc#123')
   await page.getByRole('button', { name: 'Done' }).click()
   assert.deepEqual(await take('engine-connect-code'), { cmd: 'engine-connect-code', id: 'codex', code: 'abc#123' })
@@ -123,6 +126,16 @@ await test('settings: one click connects a brain (no Terminal, nothing to copy)'
   await page.getByText('Installing Cursor’s app').waitFor()
   await page.getByRole('button', { name: 'Cancel' }).click()
   assert.deepEqual(await take('engine-connect-cancel'), { cmd: 'engine-connect-cancel', id: 'cursor' })
+  // a sign-in that didn't finish keeps its link: open it, or copy it into any browser
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { engines: [
+    { id: 'claude-code', label: 'Claude', via: 'Claude Pro / Max via Claude Code', kind: 'subscription', status: 'logged-out',
+      connect: { state: 'failed', message: "Signing in to Claude didn't finish. Click Connect to try again.", url: 'https://claude.com/cai/oauth/authorize?x=9', needsCode: false } },
+  ] } }))
+  await page.getByText("Signing in to Claude didn't finish").first().waitFor()   // the quick card and Claude's card
+  await page.getByRole('button', { name: 'Copy link' }).first().click()
+  assert.deepEqual(await take('copy'), { cmd: 'copy', text: 'https://claude.com/cai/oauth/authorize?x=9' })
+  await page.getByRole('button', { name: 'Open the sign-in page' }).first().click()
+  assert.deepEqual(await take('open-url'), { cmd: 'open-url', url: 'https://claude.com/cai/oauth/authorize?x=9' })
   await page.close()
 })
 
