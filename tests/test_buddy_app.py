@@ -480,3 +480,12 @@ def test_the_island_lets_plips_own_clicks_through_and_ignores_the_cursor_it_park
     stop()
     clear([(30, 40)])
     assert heard == [([(10.0, 20.0)], True)]
+
+
+def test_the_shortcut_warnings_button_and_the_voice_test_use_what_the_app_handles(service):
+    svc, calls, tmp_path = service
+    svc.handle({"cmd": "grant", "permission": "accessibility"})      # what the "Open Accessibility" button sends
+    assert ("grant", "accessibility") in calls["platform"]
+    svc.handle({"cmd": "set-hotkey", "id": "option+command"})
+    svc.handle({"cmd": "test-voice"})
+    assert ("say", "Hey, I'm Plip. Hold option and command, and ask me anything.") in calls["platform"]

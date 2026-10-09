@@ -111,7 +111,7 @@ function ShortcutRow({ state }: { state: SettingsState }) {
             macOS isn’t passing your keys to {hotkey.owner}, so {hotkey.keys.join('')} does nothing yet.
             Turn {hotkey.owner} on in Accessibility{hotkey.owner === 'Plip' ? '' : ', then start Plip again'}.
           </div>
-          <Button size="sm" variant="ghost" onClick={() => send('request-permission', { name: 'accessibility' })}>Open Accessibility</Button>
+          <Button size="sm" variant="ghost" onClick={() => send('grant', { permission: 'accessibility' })}>Open Accessibility</Button>
         </div>
       )}
     </>

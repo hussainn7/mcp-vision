@@ -146,7 +146,7 @@ await test('general: the talk shortcut is picked here, and every "hold" hint fol
   const alert = page.getByRole('alert')
   assert.match(await alert.innerText(), /macOS isn’t passing your keys to Terminal, so ⌥⌘ does nothing yet/)
   await alert.getByRole('button', { name: 'Open Accessibility' }).click()
-  assert.deepEqual(await take('request-permission'), { cmd: 'request-permission', name: 'accessibility' })
+  assert.deepEqual(await take('grant'), { cmd: 'grant', permission: 'accessibility' })     // the command the app handles
   assert.deepEqual(await page.locator('aside kbd').allInnerTexts(), ['⌥', '⌘'])        // the sidebar's hint
   await page.close()
   const island = await open('island', { width: 760, height: 420 })

@@ -322,7 +322,8 @@ class SettingsService:
         self.platform.restart()
 
     def _cmd_test_voice(self, _command):
-        self.platform.say("Hey, I'm Plip. Hold control and option, and ask me anything.")
+        talk = chord(self.prefs.hotkey).label.lower().replace(" + ", " and ")
+        self.platform.say(f"Hey, I'm Plip. Hold {talk}, and ask me anything.")
 
     def _cmd_clear_usage(self, _command):
         if self.usage is not None:
