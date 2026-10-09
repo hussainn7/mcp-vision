@@ -135,7 +135,7 @@ export function FreeGoogleKey({ state }: { state: SettingsState }) {
                 setValue('')
               }}
             >
-              <Input type="password" value={value} onChange={setValue} placeholder="Your Google key (starts with AIza)" className="font-mono" />
+              <Input type="password" value={value} onChange={setValue} placeholder="Your Google key (starts with AQ. or AIza)" className="font-mono" />
               <Button disabled={!value.trim()}>Save</Button>
             </form>
           )}

@@ -1,11 +1,11 @@
 import { AnimatePresence, motion } from 'motion/react'
+import {
+  AudioLines, BookUser, Brain, ChartColumn, CircleUserRound, House, Settings as Gear, ShieldCheck,
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { send, settings, useStore } from '../../bridge'
 import { Mascot } from '../../components/Mascot'
 import { Chord, cn } from '../../components/bits'
-import {
-  AccountIcon, ActivityIcon, BrainIcon, GeneralIcon, HomeIcon, MemoryIcon, PermissionsIcon, VoiceIcon,
-} from '../../components/icons'
 import { AccountTab, Avatar, SignIn } from './account'
 import { HistoryPanel, PermissionsTab, VoiceTab } from './basics'
 import { BrainTab } from './brain'
@@ -18,30 +18,30 @@ import { UsagePanel } from './usage'
 
 export type Tab = 'home' | 'account' | 'general' | 'brain' | 'voice' | 'permissions' | 'memory' | 'activity'
 type Activity = 'usage' | 'history'
-type Icon = React.ComponentType<{ className?: string; active?: boolean }>
+type Icon = React.ComponentType<{ className?: string }>
 
 const GROUPS: { title: string; tabs: { id: Tab; label: string; icon: Icon }[] }[] = [
   {
     title: '',
     tabs: [
-      { id: 'home', label: 'Home', icon: HomeIcon },
-      { id: 'account', label: 'Account', icon: AccountIcon },
-      { id: 'general', label: 'General', icon: GeneralIcon },
+      { id: 'home', label: 'Home', icon: House },
+      { id: 'account', label: 'Account', icon: CircleUserRound },
+      { id: 'general', label: 'General', icon: Gear },
     ],
   },
   {
     title: 'Plip',
     tabs: [
-      { id: 'brain', label: 'Brain', icon: BrainIcon },
-      { id: 'voice', label: 'Voice', icon: VoiceIcon },
-      { id: 'permissions', label: 'Permissions', icon: PermissionsIcon },
+      { id: 'brain', label: 'Brain', icon: Brain },
+      { id: 'voice', label: 'Voice', icon: AudioLines },
+      { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
     ],
   },
   {
     title: 'You',
     tabs: [
-      { id: 'memory', label: 'Memory', icon: MemoryIcon },
-      { id: 'activity', label: 'Activity', icon: ActivityIcon },
+      { id: 'memory', label: 'Memory', icon: BookUser },
+      { id: 'activity', label: 'Activity', icon: ChartColumn },
     ],
   },
 ]
@@ -134,7 +134,7 @@ export function Settings() {
                         <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full brand-gradient" />
                       </motion.span>
                     )}
-                    {id === 'account' && user ? <Avatar user={user} size={18} className="relative" /> : <Icon className="relative size-[18px]" active={tab === id} />}
+                    {id === 'account' && user ? <Avatar user={user} size={18} className="relative" /> : <Icon className="relative size-[17px]" />}
                     <span className="relative">{label}</span>
                   </button>
                 ))}
