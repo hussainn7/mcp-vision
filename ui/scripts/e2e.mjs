@@ -17,7 +17,12 @@ async function open(hash, viewport = { width: 1000, height: 700 }) {
   page.on('pageerror', (error) => errors.push(`${hash}: ${error.message}`))
   page.on('console', async (message) => {
     if (message.type() === 'error') errors.push(`${hash}: ${message.text()}`)
-    if (message.text().startsWith('[plip] command')) sent.push(await message.args()[1].jsonValue())
+    if (!message.text().startsWith('[plip] command')) return
+    try {
+      sent.push(await message.args()[1].jsonValue())
+    } catch {
+      // the page closed while this message was in flight (a preview timer after page.close()): nothing to keep
+    }
   })
   await page.goto(`${bundle}#${hash}`)
   await page.waitForTimeout(250)
