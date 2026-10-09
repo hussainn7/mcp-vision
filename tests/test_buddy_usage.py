@@ -71,7 +71,10 @@ def test_a_question_is_one_row_with_an_estimate_when_the_brain_says_nothing(tmp_
     assert result.outcome == "answered" and result.usage.estimated
     (row,) = log.rows()
     assert set(row) == {"at", "engine", "label", "kind", "model", "input", "output", "cache_read", "cache_write",
-                        "cost", "estimated", "turns", "actions", "outcome", "goal", "ms"}
+                        "cost", "estimated", "turns", "actions", "outcome", "goal", "ms",
+                        "first_ms", "model_ms", "act_ms", "settle_ms"}
+    # where the time went, not just until it stopped talking: it spoke, the brain took some, nothing ran or settled
+    assert 0 < row["first_ms"] <= row["ms"] and row["act_ms"] == row["settle_ms"] == 0
     assert (row["engine"], row["label"], row["kind"], row["outcome"]) == ("scripted", "Scripted", "voice", "answered")
     assert row["turns"] == 1 and row["goal"] is False and row["estimated"] is True
     assert row["input"] > 1365 and row["output"] == len("It's top right.") // 4   # the screenshot counts

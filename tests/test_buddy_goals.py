@@ -222,3 +222,12 @@ def test_a_tool_call_written_out_is_never_read_aloud_and_the_model_hears_why_onc
     asyncio.run(companion.respond("play it"))
     assert "you have no shell, terminal or file tools" in brain.calls[1][-1].text
     assert not any("invoke" in line for line in speaker.said)
+
+
+def test_a_long_answer_reads_about_a_minute_aloud_and_leaves_the_rest_on_screen():
+    long = " ".join(f"Point number {n} is about something worth reading on screen." for n in range(40))
+    companion, _, speaker = buddy(Spotify(), long)
+    result = asyncio.run(companion.respond("tell me everything"))
+    spoken = "".join(line for line in speaker.said if line != "The rest is on screen.")
+    assert len(spoken) <= 900 and speaker.said[-1] == "The rest is on screen."
+    assert "Point number 39" in result.spoken                                   # still all in the answer text

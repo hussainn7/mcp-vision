@@ -172,7 +172,11 @@ class Request:
     actions: list[str] = field(default_factory=list)      # names only, never what they were about
     outcome: str = "answered"   # one of OUTCOMES
     goal: bool = False          # a multi-step task (more than one model call)
-    ms: int = 0
+    ms: int = 0                 # start until Plip stopped talking
+    first_ms: int = 0           # start to the first word it said (0: it never spoke)
+    model_ms: int = 0           # waiting on the brain, every turn (actions it ran mid-reply not included)
+    act_ms: int = 0             # carrying out actions
+    settle_ms: int = 0          # waiting for the screen to settle or load between steps
 
 
 class UsageLog:

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import logging
 import hashlib
 import json
 import re
@@ -36,6 +37,8 @@ from mcp_vision.buddy.prompt import (
 from mcp_vision.buddy.screen_context import ScreenContext
 from mcp_vision.buddy.usage import Request, Usage, estimate, image_tokens, text_tokens
 from mcp_vision.buddy.workers import PooledExecutor
+
+log = logging.getLogger("mcp_vision.buddy.companion")
 
 Observer = Callable[[str, dict[str, Any]], None]
 
@@ -138,6 +141,8 @@ class TurnResult:
     opened: str = ""                 # this turn's last action opened something (a link, a page): what it was
     verified: bool | None = None     # [DONE] after acting: True = the screen confirmed it, False = couldn't tell
     hushed: bool = False             # a step failed: the rest of the reply was written as if it worked
+    said: int = 0                    # characters spoken this model turn (the speech budget)
+    held: bool = False               # stopped reading aloud; the rest of the answer is on screen
     typed: list[str] = field(default_factory=list)        # text this reply put in fields: it showing isn't a change
     muted: dict[int, str] = field(default_factory=dict)  # ...so those chunks (by position) aren't said, or only this
     heard: int = 0                   # chunks the reply has streamed so far
@@ -151,6 +156,15 @@ class _Meter:
     usage: Usage = field(default_factory=Usage)
     turns: int = 0
     actions: list[str] = field(default_factory=list)
+    first: float | None = None       # seconds to the first spoken word
+    model: float = 0.0               # seconds waiting on the brain
+    act: float = 0.0                 # seconds carrying out actions
+    settle: float = 0.0              # seconds waiting for the screen between steps
+
+    def timings(self) -> dict[str, int]:
+        first = 0 if self.first is None else max(1, int(self.first * 1000))     # 0 only when it never spoke
+        return {"first_ms": first, "model_ms": int(self.model * 1000),
+                "act_ms": int(self.act * 1000), "settle_ms": int(self.settle * 1000)}
 
 
 class _NullPointer:
@@ -342,6 +356,7 @@ class Companion:
             result = TurnResult(transcript=transcript, state="cancelled")
         result.usage = meter.usage if meter.turns else None
         result.outcome = _outcome(result)
+        result.timings.update(meter.timings())
         self._asked = _question(result.spoken) if result.state == "done" and not result.pending else ""
         self._consent, self._authored = None, False   # a yes lasts one request
         self._record(meter, result)
@@ -366,7 +381,11 @@ class Companion:
                 output=used.output, cache_read=used.cache_read, cache_write=used.cache_write,
                 cost=round(used.price(engine), 6), estimated=used.estimated, turns=meter.turns,
                 actions=meter.actions[:40], outcome=result.outcome, goal=bool(result.goal) or meter.turns > 1,
-                ms=int((time.time() - meter.started) * 1000)))
+                ms=int((time.time() - meter.started) * 1000), **meter.timings()))
+            spent = meter.timings()
+            log.info("request %s: first word %.1fs, brain %.1fs over %d turn%s, actions %.1fs, settling %.1fs",
+                     result.outcome, spent["first_ms"] / 1000, spent["model_ms"] / 1000, meter.turns,
+                     "" if meter.turns == 1 else "s", spent["act_ms"] / 1000, spent["settle_ms"] / 1000)
         except Exception:
             pass                                      # bookkeeping must never break a turn
 
@@ -752,12 +771,20 @@ class Companion:
         except Exception:
             return None
 
+    def _spent(self, what: str, since: float) -> None:
+        """Add the seconds since ``since`` (perf clock) to this request's ``what`` (model, act, settle)."""
+        meter = self._meter
+        if meter is not None:
+            setattr(meter, what, getattr(meter, what) + time.perf_counter() - since)
+
     async def _wait_for_screen(self, result: TurnResult) -> str | None:
         """Let the last step land; returns the settled screen map's signature when Plip watched it settle."""
         if result.look_after:
             if result.look_after >= 1.0:
                 self.emit("step", id="wait", label="Waiting for it to load", status="active")
+            slept = time.perf_counter()
             await asyncio.sleep(result.look_after)
+            self._spent("settle", slept)
         settled = None
         if result.settle:
             settled = await self._settle(result.settle)
@@ -772,6 +799,13 @@ class Companion:
         itself, so the next step can tell "nothing changed" from "only the title did".
         """
         self._settled = None
+        began = time.perf_counter()
+        try:
+            return await self._settle_for(limit)
+        finally:
+            self._spent("settle", began)
+
+    async def _settle_for(self, limit: float) -> str | None:
         if self.context is None:
             await asyncio.sleep(min(limit, 1.5))
             return None
@@ -856,6 +890,7 @@ class Companion:
             self.emit("step", id="think", label=f"{badge['label']} is thinking", status="active")
             first = True
             called = True
+            streaming, busy = time.perf_counter(), (meter.act + meter.settle if meter is not None else 0.0)
             per_call = {"effort": effort} if effort and _takes_effort(self.brain) else {}
             async for delta in self.brain.stream(system=system, turns=[*history, turn],
                                                  detailed=result.route.detailed, **per_call):
@@ -870,6 +905,10 @@ class Companion:
                 await self._handle(event, shots, result, mark)
             mark("model_done")
             called = False
+            if meter is not None:                     # the brain's time, not the steps it ran mid-reply
+                meter.model += time.perf_counter() - streaming - (meter.act + meter.settle - busy)
+            if result.held:
+                self.speaker.speak("The rest is on screen.")
             if reply.leaked:
                 self._leaked(result)
             reported = getattr(self.brain, "last_usage", None)
@@ -988,9 +1027,18 @@ class Companion:
             first = "first_speech" not in result.timings
             if first:
                 mark("first_speech")
+                if self._meter is not None and self._meter.first is None:
+                    self._meter.first = time.time() - self._meter.started
                 self.pointer.set_state("speaking")
                 self.emit("phase", phase="answering")
-            self.speaker.speak(event.text)
+            # About a minute of talking, more when they asked for depth. Past that it reads on screen:
+            # a reply that long is something to read, not to listen to.
+            budget = SPEECH_BUDGET * (2 if result.route.detailed else 1)
+            if result.said and result.said + len(event.text) > budget:
+                result.held = True
+            else:
+                result.said += len(event.text)
+                self.speaker.speak(event.text)
             self.emit("answer", text=event.text if first else " " + event.text)
         elif isinstance(event, StepsTag):
             result.steps_total = event.total
@@ -1078,7 +1126,9 @@ class Companion:
         label = spec.describe(tag.args) if spec else tag.name.replace("_", " ")
         self.emit("step", id=step_id, label=label, status="active")
         consent = None if self._authored else self._consent
+        acting = time.perf_counter()
         outcome = await self.actions.handle(tag.name, tag.args, consent=consent)
+        self._spent("act", acting)
         if tag.name in _AUTHORING and outcome.status == "done":
             self._authored = True
         if outcome.status == "pending":
@@ -1131,6 +1181,7 @@ class Companion:
 CONTINUE_RE = re.compile(r"^\W*((ok(ay)?|yes|yeah|sure|alright)\W+)?((you can|please)\s+)?(keep going|continue|go on|"
                          r"carry on|keep at it|resume|don't stop|finish (it|up|the job)|go ahead and finish)"
                          r"(\W+(please|then|now|plip))?\W*$", re.IGNORECASE)
+SPEECH_BUDGET = 900          # characters read aloud per reply (about a minute); the rest stays on screen
 # Actions that work on whatever is on screen right now, so they wait for an earlier one to finish loading.
 _ON_SCREEN = {"type_text", "replace_selection", "read_page"}
 _AUTHORING = {"type_text", "replace_selection"}         # Plip's words in a field: them showing isn't the page moving
