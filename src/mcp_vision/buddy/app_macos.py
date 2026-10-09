@@ -704,6 +704,9 @@ def run_buddy_app() -> None:
             path = os.path.realpath(os.path.expanduser(str(command.get("path") or "")))
             if path.startswith(os.path.realpath(os.path.expanduser("~")) + os.sep) and os.path.exists(path):
                 default_host_cached().open(path)
+        elif name == "sound":
+            if command.get("name") in {"open", "close"}:
+                sounds.play(str(command["name"]))      # the island opening / tucking back under the pointer
         elif name == "stop":
             stop()
         elif name == "offer-answer":                          # Yes / No thanks under a suggestion

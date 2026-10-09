@@ -145,6 +145,31 @@ await test('settings: no AI plan? a free Google key in three steps, checked befo
   await page.close()
 })
 
+await test('island: hovering the notch plips open and tucks back, once per hover, never for a question', async () => {
+  const { page, sent } = await open('island', { width: 760, height: 420 })
+  const sounds = () => sent.filter((item) => item.cmd === 'sound').map((item) => item.name)
+  await page.mouse.move(5, 400)
+  await setIsland(page, { phase: 'idle', hovered: true })
+  await page.waitForTimeout(900)                                   // the 0.4 s hover delay, then open a while
+  await setIsland(page, { hovered: false })
+  await page.waitForTimeout(450)
+  assert.deepEqual(sounds(), ['open', 'close'])
+  for (const hovered of [true, false, true, false, true]) {     // a jittery pointer on the notch's edge
+    await setIsland(page, { hovered })
+    await page.waitForTimeout(60)
+  }
+  await page.waitForTimeout(900)
+  assert.deepEqual(sounds(), ['open', 'close', 'open'])
+  await setIsland(page, { hovered: false })
+  await page.waitForTimeout(450)
+  await setIsland(page, { phase: 'listening' })                   // ⌃⌥ opens it too, but the mic is on: quiet
+  await page.waitForTimeout(450)
+  await setIsland(page, { phase: 'idle' })
+  await page.waitForTimeout(450)
+  assert.deepEqual(sounds(), ['open', 'close', 'open', 'close'])
+  await page.close()
+})
+
 await test('island: only a setup error offers Fix setup', async () => {
   const { page, take } = await open('island', { width: 760, height: 420 })
   await setIsland(page, { phase: 'error', error: 'I didn’t catch that. Hold ⌃⌥ and try again.', fixable: false })

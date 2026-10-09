@@ -99,6 +99,22 @@ export function Island() {
   const height = expanded ? notchH + Math.min(bodyHeight, MAX_BODY) : notchH
   const radius = expanded ? 26 : Math.round(notchH * 0.42)
 
+  // Hover sounds: resting <-> peek only (never listening, the mic's on); edge jitter = one plip, fly-by = silent.
+  const lastMode = useRef(mode)
+  const openedAt = useRef(-Infinity)
+  useEffect(() => {
+    const was = lastMode.current
+    lastMode.current = mode
+    const resting = (m: Mode) => m === 'compact' || m === 'hidden'
+    const now = performance.now()
+    if (resting(was) && mode === 'peek') {
+      if (now - openedAt.current > 400) send('sound', { name: 'open' })
+      openedAt.current = now
+    } else if (was === 'peek' && resting(mode) && now - openedAt.current > 300) {
+      send('sound', { name: 'close' })
+    }
+  }, [mode])
+
   // Tell the native window which pixels are interactive (the rest clicks through).
   useEffect(() => {
     send('island-rect', { width: Math.round(wide), height: Math.round(height), mode })
