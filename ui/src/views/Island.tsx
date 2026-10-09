@@ -20,6 +20,7 @@ const MOOD: Record<Mode, Mood> = {
 
 const SPRING = { type: 'spring', stiffness: 420, damping: 34, mass: 0.9 } as const
 const LINGER_MS = 7000
+const HOVER_DWELL_MS = 400       // the mouse rests on the notch this long before it opens: passing by isn't asking
 const MAX_BODY = 360
 
 /** Concave "shoulder" that makes the island read as part of the notch. */
@@ -42,7 +43,7 @@ export function Island() {
   const state = useStore(island)
   const [pointerHover, setHover] = useState(false)
   // The native host tracks hover itself (WebKit tracking areas are flaky in a never-key panel).
-  const hover = pointerHover || state.hovered
+  const hover = useDwell(pointerHover || state.hovered, HOVER_DWELL_MS)
   const [lingerOver, setLingerOver] = useState(false)
   const [minimizedLocal, setMinimized] = useState(false)
   const minimized = minimizedLocal || Boolean(state.minimized)
@@ -57,13 +58,14 @@ export function Island() {
     if (state.confirm) setMinimized(false)
   }, [state.confirm])
 
-  // Finished answers linger, then tuck back into the notch unless hovered or waiting on a confirm.
+  // Finished answers linger once Plip stops talking, then tuck back into the notch unless hovered or waiting on
+  // a confirm. Counting from the end of the text closed it mid-sentence on a long answer.
   useEffect(() => {
     setLingerOver(false)
-    if (state.phase !== 'answering' || !state.done || state.confirm) return
+    if (state.phase !== 'answering' || !state.done || state.speaking || state.confirm) return
     const timer = window.setTimeout(() => setLingerOver(true), LINGER_MS + state.plan.length * 2500)
     return () => window.clearTimeout(timer)
-  }, [state.phase, state.done, state.answer, state.confirm, state.plan.length])
+  }, [state.phase, state.done, state.speaking, state.answer, state.confirm, state.plan.length])
 
   let mode: Mode
   if (state.phase === 'idle' || (state.phase === 'answering' && lingerOver && !hover)) {
@@ -141,7 +143,7 @@ export function Island() {
           </div>
           <div style={{ width: notchW }} />
           <div className="flex h-full items-center justify-end gap-1.5 pr-3" style={{ width: earWidth }}>
-            <RightEar mode={mode} level={state.level} done={state.done} />
+            <RightEar mode={mode} level={state.level} done={state.done && !state.speaking} />
             {expanded && (mode === 'answering' || mode === 'error') && (
               <button
                 aria-label="Minimize"
@@ -246,7 +248,10 @@ function Body({ mode }: { mode: Mode }) {
   if (mode === 'thinking') {
     return (
       <div className="space-y-2.5">
-        {state.transcript && <p className="truncate text-[13px] text-white/45">“{state.transcript}”</p>}
+        <div className="flex items-center justify-between gap-3">
+          {state.transcript ? <p className="min-w-0 truncate text-[13px] text-white/45">“{state.transcript}”</p> : <span />}
+          <StopButton />
+        </div>
         <StepChips steps={state.steps} />
         {state.steps.length === 0 && <p className="shimmer-text text-[15px] font-medium">Looking at your screen…</p>}
       </div>
@@ -283,20 +288,39 @@ function Body({ mode }: { mode: Mode }) {
         <div className="flex items-center justify-between gap-3">
           <StepChips steps={state.steps.filter((step) => step.status !== 'active').slice(-2)} max={2} />
           <div className="flex items-center gap-2">
-            {!state.done && (
-              <button
-                onClick={() => send('stop')}
-                className="flex items-center gap-1 rounded-full bg-white/[0.06] px-2 py-1 text-[10.5px] font-medium text-white/55 hover:bg-white/10 hover:text-white"
-              >
-                <Square className="size-2.5 fill-current" /> Stop
-              </button>
-            )}
+            {(!state.done || state.speaking) && <StopButton />}
             <EngineBadge engine={state.engine} latencyMs={state.latencyMs} />
           </div>
         </div>
       )}
     </div>
   )
+}
+
+/** Stops whatever Plip is doing: thinking, acting, or talking. */
+function StopButton() {
+  return (
+    <button
+      onClick={() => send('stop')}
+      className="flex shrink-0 items-center gap-1 rounded-full bg-white/[0.06] px-2 py-1 text-[10.5px] font-medium text-white/55 hover:bg-white/10 hover:text-white"
+    >
+      <Square className="size-2.5 fill-current" /> Stop
+    </button>
+  )
+}
+
+/** ``on``, once it has stayed true for ``ms``; false again right away. */
+function useDwell(on: boolean, ms: number) {
+  const [settled, setSettled] = useState(false)
+  useEffect(() => {
+    if (!on) {
+      setSettled(false)
+      return
+    }
+    const timer = window.setTimeout(() => setSettled(true), ms)
+    return () => window.clearTimeout(timer)
+  }, [on, ms])
+  return settled
 }
 
 function WalkthroughBar({ state }: { state: IslandState }) {

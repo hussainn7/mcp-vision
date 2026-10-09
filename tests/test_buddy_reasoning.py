@@ -110,7 +110,8 @@ def test_observer_sees_the_whole_turn():
     assert "engine" in kinds and events.kinds("engine")[0] == {"label": "Claude", "kind": "subscription", "model": None}
     assert {s["id"] for s in events.kinds("step")} >= {"look", "think"}
     assert "".join(d["text"] for d in events.kinds("answer")) == "Sure. Open settings."
-    assert kinds.index("answer") < kinds.index("done")
+    assert kinds.index("answer") < kinds.index("done") < kinds.index("quiet")    # the island waits for the voice
+    assert kinds[-1] == "quiet"
 
 
 def test_screen_map_uses_screenshot_pixels_and_text_only_brains_get_no_images():

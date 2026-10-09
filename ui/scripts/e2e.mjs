@@ -65,6 +65,33 @@ await test('island: confirm card sends yes and no', async () => {
   await page.close()
 })
 
+await test('island: stays open while Plip is still talking, opens on hover only after a beat', async () => {
+  const { page, last, take } = await open('island', { width: 760, height: 420 })
+  await page.mouse.move(5, 400)
+  await setIsland(page, { phase: 'thinking', transcript: 'what is this' })
+  await page.waitForTimeout(400)
+  await page.getByRole('button', { name: 'Stop' }).click()                    // stop while it's still thinking
+  assert.deepEqual(await take('stop'), { cmd: 'stop' })
+  await page.mouse.move(5, 400)                                               // off the island, or it stays for the hover
+  await setIsland(page, { phase: 'answering', answer: 'A long answer.', done: true, speaking: true })
+  await page.waitForTimeout(500)                                              // the thinking view finishes leaving
+  await page.clock.install()
+  await page.clock.runFor(12000)                                              // past the linger: still talking
+  assert.equal(last('island-rect').mode, 'answering')
+  assert.equal(await page.getByRole('button', { name: 'Stop' }).count(), 1)   // the voice can still be stopped
+  await setIsland(page, { speaking: false })
+  await page.clock.runFor(7500)
+  await page.waitForTimeout(50)
+  assert.notEqual(last('island-rect').mode, 'answering')                      // done talking: tucked away
+  await setIsland(page, { phase: 'idle', hovered: true })
+  await page.clock.runFor(150)
+  assert.notEqual(last('island-rect').mode, 'peek')                           // passing by doesn't open it
+  await page.clock.runFor(400)
+  await page.waitForTimeout(50)
+  assert.equal(last('island-rect').mode, 'peek')
+  await page.close()
+})
+
 await test('island: only a setup error offers Fix setup', async () => {
   const { page, take } = await open('island', { width: 760, height: 420 })
   await setIsland(page, { phase: 'error', error: 'I didn’t catch that. Hold ⌃⌥ and try again.', fixable: false })

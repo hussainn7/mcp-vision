@@ -49,6 +49,7 @@ export interface IslandState {
   transcript: string
   answer: string
   done: boolean
+  speaking: boolean          // the voice is still going (the text can finish well before it does)
   steps: Step[]
   walkthrough: Walkthrough | null
   engine: EngineBadge | null
@@ -252,6 +253,7 @@ export const defaultIsland: IslandState = {
   transcript: '',
   answer: '',
   done: false,
+  speaking: false,
   steps: [],
   walkthrough: null,
   engine: null,

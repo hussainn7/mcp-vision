@@ -60,7 +60,7 @@ class Presenter:
 
     def idle(self) -> None:
         self.phase = "idle"
-        self._island(phase="idle", level=0)
+        self._island(phase="idle", level=0, speaking=False)
         self.set_mood("idle", 0.0)
 
     def failed(self, message: str, setup: bool | None = None) -> None:
@@ -95,7 +95,7 @@ class Presenter:
             self.set_mood("thinking", 0.0)
         elif phase == "answering":
             self.phase = "answering"
-            self._island(phase="answering", done=False)
+            self._island(phase="answering", done=False, speaking=True)
             self.set_mood("speaking", 0.5)
 
     def _on_step(self, data: dict[str, Any]) -> None:
@@ -129,6 +129,10 @@ class Presenter:
         self._island(done=True, latencyMs=round(latency) if isinstance(latency, (int, float)) else None)
         working = self.walkthrough or (self.goal is not None and self.goal["status"] == "active")
         self.set_mood("happy" if not working else "idle", 0.0)
+
+    def _on_quiet(self, _data: dict[str, Any]) -> None:
+        """Plip stopped talking: only now may a finished answer tuck back into the notch."""
+        self._island(speaking=False)
 
     def _on_goal(self, data: dict[str, Any]) -> None:
         """A multi-step task: one chip that says what it's working toward and which step it's on."""

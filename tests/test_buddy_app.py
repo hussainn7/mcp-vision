@@ -79,6 +79,10 @@ def test_presenter_turns_companion_events_into_island_messages():
     assert posted[-1]["state"]["walkthrough"]["index"] == 1 and posted[-1]["state"]["answer"] == ""
     view("walkthrough", {"index": 3, "total": 3, "finished": True})
     assert moods[-1] == ("happy", 0.0)
+    view("phase", {"phase": "answering"})
+    assert posted[-1]["state"] == {"phase": "answering", "done": False, "speaking": True}
+    view("quiet", {})                                         # the voice finished: now it may tuck away
+    assert posted[-1]["state"] == {"speaking": False}
     view("error", {"message": "That took too long. Try asking again."})
     assert posted[-1]["state"] == {"phase": "error", "error": "That took too long. Try asking again.", "fixable": False}
 

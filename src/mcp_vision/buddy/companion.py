@@ -356,6 +356,11 @@ class Companion:
             return None
         return await self._own(self._answer(accept, "yes" if accept else "no"), "")
 
+    async def _drain(self) -> None:
+        """Let it finish talking, then say so: the island stays open until the voice is done, not the text."""
+        await self.speaker.drain()
+        self.emit("quiet")
+
     async def _own(self, coroutine, transcript: str) -> TurnResult:
         self._loop = asyncio.get_running_loop()
         self._stop_current()
@@ -365,6 +370,8 @@ class Companion:
             result = await self._task
         except asyncio.CancelledError:
             result = TurnResult(transcript=transcript, state="cancelled")
+        finally:
+            self.emit("quiet")                        # however it ended, nothing more is coming out loud
         result.usage = meter.usage if meter.turns else None
         result.outcome = _outcome(result)
         result.timings.update(meter.timings())
@@ -597,7 +604,7 @@ class Companion:
         result.goal = result.goal or goal
         result.route = route
         result.turns = turns
-        await self.speaker.drain()                  # the steps ran while it talked; now let it finish
+        await self._drain()                  # the steps ran while it talked; now let it finish
         return result
 
     def _step_effort(self, result: TurnResult, lines: list[str], moved: bool | None = None) -> str | None:
@@ -739,7 +746,7 @@ class Companion:
         self.conversation.record(transcript or ("yes" if accept else "no"),
                                  text + (f" (did: {'; '.join(result.did)})" if result.did else ""))
         self.emit("done", latency_ms=None, spoken=text)
-        await self.speaker.drain()
+        await self._drain()
         if outcome.status == "done" and self._goal:
             # The yes was one step of a bigger task: look again and keep going.
             done = outcome.result
@@ -969,7 +976,7 @@ class Companion:
                                      step=guide)
             self.emit("done", latency_ms=result.timings.get("first_speech"), spoken=result.spoken)
             if not self._continues(result):
-                await self.speaker.drain()
+                await self._drain()
             # else: more steps follow, so keep working while it talks ("opening it now" plays on)
             mark("spoken")
         except asyncio.CancelledError:
@@ -989,7 +996,7 @@ class Companion:
             self.emit("error", message=result.error)
             self.speaker.stop()
             self.speaker.speak(result.error)
-            await self.speaker.drain()
+            await self._drain()
         finally:
             if not cancelled:
                 self.pointer.set_state("idle")
