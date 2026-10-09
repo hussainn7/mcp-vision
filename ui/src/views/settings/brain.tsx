@@ -8,7 +8,7 @@ import { Button, Card, Header, KeyField, Pill, Section, Segmented } from './ui'
 
 const STATUS: Record<Engine['status'], [string, 'good' | 'warn' | 'muted']> = {
   ready: ['Ready', 'good'], unknown: ['Checking', 'muted'], 'not-installed': ['Not installed', 'warn'],
-  'logged-out': ['Sign in needed', 'warn'], 'missing-key': ['Add key', 'warn'],
+  'logged-out': ['Sign in needed', 'warn'], 'missing-key': ['Add key', 'warn'], unavailable: ['Unavailable for now', 'muted'],
 }
 
 function EngineCard({ engine, check }: { engine: Engine; check?: KeyCheck | null }) {
@@ -16,7 +16,8 @@ function EngineCard({ engine, check }: { engine: Engine; check?: KeyCheck | null
   const busy = connect?.state === 'installing' || connect?.state === 'signing-in'
   const [label, tone] = busy ? (['Connecting', 'muted'] as const) : STATUS[engine.status]
   const usable = !busy && (engine.status === 'ready' || engine.status === 'unknown')
-  const canConnect = engine.kind === 'subscription' && !busy && (engine.status === 'not-installed' || engine.status === 'logged-out')
+  const manual = engine.id === 'antigravity'          // its own app installs and signs in
+  const canConnect = engine.kind === 'subscription' && !manual && !busy && (engine.status === 'not-installed' || engine.status === 'logged-out')
 
   return (
     <Card active={engine.selected} className="flex flex-col gap-3">
@@ -42,6 +43,9 @@ function EngineCard({ engine, check }: { engine: Engine; check?: KeyCheck | null
           <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-emerald-300">
             <Check className="size-4" strokeWidth={3} /> In use
           </span>
+        )}
+        {manual && engine.status === 'not-installed' && (
+          <Button variant="ghost" onClick={() => send('open-url', { url: 'https://antigravity.google' })}>Get Antigravity</Button>
         )}
         {canConnect && (
           <Button variant="brand" onClick={() => send('engine-connect', { id: engine.id })}>

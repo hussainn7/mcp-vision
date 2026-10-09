@@ -11,6 +11,7 @@ export const GOOGLE_KEY_PAGE = 'https://aistudio.google.com/apikey'
 const PLANS: { id: string; plan: string }[] = [
   { id: 'claude-code', plan: 'Claude Pro or Max' },
   { id: 'codex', plan: 'ChatGPT Plus or Pro' },
+  { id: 'antigravity', plan: 'Google AI Pro or Ultra' },
   { id: 'cursor', plan: 'Cursor' },
 ]
 
@@ -57,19 +58,22 @@ function PlanRow({ engine, plan }: { engine: Engine; plan: string }) {
   const connect = engine.connect
   const busy = connect?.state === 'installing' || connect?.state === 'signing-in'
   const usable = !busy && (engine.status === 'ready' || engine.status === 'unknown')
-  const canConnect = !busy && (engine.status === 'not-installed' || engine.status === 'logged-out')
+  const manual = engine.id === 'antigravity'          // its own app installs and signs in
+  const canConnect = !manual && !busy && (engine.status === 'not-installed' || engine.status === 'logged-out')
   return (
     <div className="px-5 py-3">
       <div className="flex items-center gap-4">
         <EngineMark id={engine.id} size={36} />
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold tracking-tight">{engine.label}</div>
-          <div className="truncate text-[12px] text-white/45">{plan}</div>
+          <div className="truncate text-[12px] text-white/45">{manual && engine.status === 'logged-out' ? engine.detail : plan}</div>
         </div>
         {engine.selected && usable ? (
           <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-emerald-300"><Check className="size-4" strokeWidth={3} /> In use</span>
         ) : usable ? (
           <Button variant="ghost" onClick={() => send('select-engine', { id: engine.id })}>Use {engine.label}</Button>
+        ) : manual && engine.status === 'not-installed' ? (
+          <Button variant="ghost" onClick={() => send('open-url', { url: 'https://antigravity.google' })}>Get Antigravity</Button>
         ) : canConnect ? (
           <Button variant="brand" onClick={() => send('engine-connect', { id: engine.id })}>
             {connect?.state === 'failed' ? <RotateCcw className="size-3.5" /> : <Plug className="size-3.5" />}

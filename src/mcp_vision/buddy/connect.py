@@ -25,6 +25,7 @@ from typing import Any
 from mcp_vision.buddy.engines import BY_ID, EngineStatus, child_env
 
 URL_RE = re.compile(r"https://\S+")
+MANUAL = {"antigravity"}                # installed and signed in from its own app, not by us
 CODE_PROMPT = re.compile(r"paste (the )?code", re.IGNORECASE)
 CONSENT = re.compile(r"do you want to continue\? \[y/n\]", re.IGNORECASE)     # gemini, headless: blocks on stdin
 NO_BROWSER = re.compile(r"failed to open (the )?browser|couldn'?t open (the |a )?browser", re.IGNORECASE)
@@ -77,7 +78,7 @@ class Connector:
 
     # -- what Settings calls ------------------------------------------------------------
     def start(self, engine_id: str, *, wait: bool = False) -> None:
-        if engine_id not in BY_ID or BY_ID[engine_id].kind != "subscription":
+        if engine_id not in BY_ID or BY_ID[engine_id].kind != "subscription" or engine_id in MANUAL:
             return
         with self._lock:
             running = self._workers.get(engine_id)

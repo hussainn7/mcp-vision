@@ -352,7 +352,7 @@ class SettingsService:
             self._update_prefs(engine=ready["id"])
             return
         signed_out = next((engine for engine in engines if engine.get("kind") == "subscription"
-                           and engine.get("status") in {"logged-out", "unknown"}), None)
+                           and engine.get("status") in {"logged-out", "unknown"} and engine.get("id") != "antigravity"), None)
         if signed_out and self.connector is not None:
             self.connect_note = ""
             self.connector.start(signed_out["id"])

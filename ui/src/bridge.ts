@@ -78,7 +78,7 @@ export interface MascotState {
   label: string
 }
 
-export type EngineStatus = 'ready' | 'not-installed' | 'logged-out' | 'missing-key' | 'unknown'
+export type EngineStatus = 'ready' | 'not-installed' | 'logged-out' | 'missing-key' | 'unknown' | 'unavailable'
 
 export interface Engine {
   id: string

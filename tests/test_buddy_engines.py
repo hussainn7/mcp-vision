@@ -54,9 +54,11 @@ TURNS = [Turn("user", "where is wifi"), Turn("assistant", "Top right. [POINT:120
 # -- discovery and probes ------------------------------------------------------------
 
 def test_specs_cover_the_subscriptions_people_have():
-    assert [spec.id for spec in SPECS] == ["claude-code", "codex", "cursor", "gemini", "anthropic", "gemini-api"]
+    assert [spec.id for spec in SPECS] == ["claude-code", "codex", "cursor", "gemini", "antigravity", "anthropic",
+                                           "gemini-api"]
     assert BY_ID["gemini-api"].kind == "api" and BY_ID["gemini-api"].key_name == "GEMINI_API_KEY"   # free, no plan
-    assert {spec.label for spec in SPECS if spec.kind == "subscription"} == {"Claude", "ChatGPT", "Cursor", "Gemini CLI"}
+    assert {spec.label for spec in SPECS if spec.kind == "subscription"} == {"Claude", "ChatGPT", "Cursor", "Gemini CLI",
+                                                                            "Gemini"}
     assert BY_ID["cursor"].vision is False and BY_ID["claude-code"].vision is True
 
 
@@ -135,10 +137,10 @@ def test_probe_codex_cursor_gemini(tmp_path):
         {("status", "--format", "json"): RunResult(1, "Not logged in", "")}))
     assert cursor_out.status == "logged-out" and cursor_out.card()["login"] == "/usr/local/bin/cursor-agent login"
     gemini = probe(BY_ID["gemini"], settings, which=which, home=tmp_path, runner=runner_for({}))
-    assert gemini.status == "logged-out"
+    assert gemini.status == "unavailable"                                 # google retired its sign-in route
     (tmp_path / ".gemini").mkdir()
     (tmp_path / ".gemini" / "oauth_creds.json").write_text("{}")
-    assert probe(BY_ID["gemini"], settings, which=which, home=tmp_path, runner=runner_for({})).status == "ready"
+    assert probe(BY_ID["gemini"], settings, which=which, home=tmp_path, runner=runner_for({})).status == "unavailable"
 
 
 def test_probe_missing_cli_and_api_keys(monkeypatch):
@@ -724,3 +726,30 @@ def test_a_brain_that_starts_running_a_command_is_stopped_before_anything_it_rea
         assert "tried to run a command" in str(stopped.value)
         assert _friendly_error(stopped.value).startswith("My brain tried to run a command on your Mac")
     assert said == []                                                  # nothing it read was spoken or acted on
+
+
+def test_gemini_on_a_google_plan_goes_through_antigravity_and_the_retired_cli_is_unavailable(tmp_path, monkeypatch):
+    from mcp_vision.buddy.engines import AntigravityParser, choose_engine
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    settings = BuddySettings(_env_file=None)
+    (tmp_path / ".gemini").mkdir()
+    cli = probe(BY_ID["gemini"], settings, which=lambda names: "/x/gemini", home=tmp_path)
+    assert cli.status == "unavailable" and "Antigravity" in cli.detail
+    assert probe(BY_ID["antigravity"], settings, which=lambda names: "/x/agy", home=tmp_path).status == "logged-out"
+    (tmp_path / ".gemini" / "jetski-standalone-oauth-token").write_text("t")
+    agy = probe(BY_ID["antigravity"], settings, which=lambda names: "/x/agy", home=tmp_path)
+    assert agy.status == "ready" and choose_engine(settings, [cli, agy], preferred="gemini").spec.id == "antigravity"
+    parser = AntigravityParser()
+    parser.model = "gemini-3.8-flash-medium"
+    lines = ['{"event":"init","init":{"tools":["run_command"]}}',
+             '{"event":"step_update","step_update":{"step_type":"agent_response","state":"ACTIVE","text_delta":"hello"}}',
+             '{"event":"result","result":{"status":"SUCCESS","response":"hello\\n","usage":{"input_tokens":100,'
+             '"output_tokens":5,"cache_read_tokens":40}}}']
+    assert [text for line in lines for text in parser.feed(line)] == ["hello"] and parser.ended
+    assert (parser.usage.input, parser.usage.cache_read, parser.usage.output) == (60, 40, 5)
+    tool = AntigravityParser()
+    tool.model = ""
+    tool.feed('{"event":"step_update","step_update":{"step_type":"tool","state":"ACTIVE","tool_name":"view_file"}}')
+    assert tool.error and tool.ended                                      # stopped before it reads anything back

@@ -31,7 +31,7 @@ from mcp_vision.buddy.usage import Usage, from_report
 
 # GUI apps launched from Finder get a bare PATH; look where installers put CLIs.
 SEARCH_DIRS = ("~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin", "~/.npm-global/bin",
-               "~/.bun/bin", "~/.volta/bin", "~/.cursor/bin", "~/.codex/bin", "~/bin", "/usr/bin")
+               "~/.bun/bin", "~/.volta/bin", "~/.cursor/bin", "~/.codex/bin", "~/.gemini/bin", "~/bin", "/usr/bin")
 NVM_GLOB = "~/.nvm/versions/node/*/bin"
 
 
@@ -71,15 +71,18 @@ SPECS: tuple[EngineSpec, ...] = (
     EngineSpec("gemini", "Gemini CLI", "Google account via Gemini CLI", "subscription", True,
                binaries=("gemini",), login="gemini", install="npm i -g @google/gemini-cli",
                blurb="Needs Node.js. No Node? The free Gemini key below needs nothing installed."),
+    EngineSpec("antigravity", "Gemini", "Google AI Pro / Ultra via Antigravity", "subscription", False,
+               binaries=("agy",), login="agy", install="https://antigravity.google",
+               blurb="Your Google AI plan through Antigravity's CLI, its tools off. Text only: Plip reads it the screen."),
     EngineSpec("anthropic", "Claude API", "Anthropic API key", "api", True, key_name="ANTHROPIC_API_KEY",
                install="https://console.anthropic.com/settings/keys",
                blurb="Fastest first word: streamed with prompt caching and adaptive effort."),
-    EngineSpec("gemini-api", "Gemini", "Free key from Google AI Studio", "api", True, key_name="GEMINI_API_KEY",
+    EngineSpec("gemini-api", "Gemini API", "Free key from Google AI Studio", "api", True, key_name="GEMINI_API_KEY",
                install="https://aistudio.google.com/apikey",
                blurb="Free with a Google account, no AI plan needed. Sees your screenshots."),
 )
 BY_ID = {spec.id: spec for spec in SPECS}
-PREFERENCE = ("claude-code", "anthropic", "codex", "gemini", "cursor", "gemini-api")
+PREFERENCE = ("claude-code", "anthropic", "codex", "antigravity", "gemini", "cursor", "gemini-api")
 
 
 # -- finding and probing ---------------------------------------------------------
@@ -141,7 +144,7 @@ def run_quick(argv: list[str], timeout: float = 6.0) -> RunResult:
 @dataclass
 class EngineStatus:
     spec: EngineSpec
-    status: str = "unknown"          # ready | not-installed | logged-out | missing-key | unknown
+    status: str = "unknown"          # ready | not-installed | logged-out | missing-key | unavailable | unknown
     path: str | None = None
     detail: str = ""
     version: str = ""
@@ -273,18 +276,22 @@ def _check_cursor(status: EngineStatus, runner: Runner, home: Path) -> None:
 
 
 def _check_gemini(status: EngineStatus, runner: Runner, home: Path) -> None:
-    creds = home / ".gemini" / "oauth_creds.json"
-    if creds.exists() or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        status.status = "ready"
-        status.detail = ("Signed in with Google. Free accounts no longer work here: use the free Gemini key"
-                         if creds.exists() else "Using your Gemini API key")
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        status.status, status.detail = "ready", "Using your Gemini API key"
+    else:                                         # google switched off its google sign-in (june 2026, even pro)
+        status.status = "unavailable"
+        status.detail = "Unavailable for now: Google moved Gemini CLI sign-in to Antigravity. Use Gemini via Antigravity."
+
+
+def _check_antigravity(status: EngineStatus, runner: Runner, home: Path) -> None:
+    if (home / ".gemini" / "jetski-standalone-oauth-token").exists():
+        status.status, status.detail = "ready", "Signed in to Antigravity"
     else:
-        status.status = "logged-out"
-        status.detail = "Connect opens your browser to sign in with your Google account."
+        status.status, status.detail = "logged-out", "Open Antigravity once and sign in with Google."
 
 
 _LOGIN_CHECKS = {"claude-code": _check_claude, "codex": _check_codex, "cursor": _check_cursor,
-                 "gemini": _check_gemini}
+                 "gemini": _check_gemini, "antigravity": _check_antigravity}
 
 
 class EngineRegistry:
@@ -332,7 +339,7 @@ def choose_engine(settings: Any, statuses: list[EngineStatus] | None = None,
     wanted = preferred or getattr(settings, "engine", "")
     if wanted:
         pick = by_id.get(wanted)
-        if pick is not None and pick.status not in {"not-installed", "missing-key"}:
+        if pick is not None and pick.status not in {"not-installed", "missing-key", "unavailable"}:
             return pick
     for engine_id in PREFERENCE:
         status = by_id.get(engine_id)
@@ -361,6 +368,7 @@ def make_engine_brain(status: EngineStatus, settings: Any):
                               model=getattr(settings, "gemini_model", "") or "",
                               effort=getattr(settings, "effort", "low"))
     brain_class = {"claude-code": ClaudeCodeBrain, "codex": CodexBrain, "cursor": CursorBrain,
+                   "antigravity": AntigravityBrain,
                    "gemini": GeminiBrain}[spec.id]
     return brain_class(status.path or spec.binaries[0], model=getattr(settings, "cli_model", "") or "",
                        effort=getattr(settings, "effort", "low"))
@@ -920,6 +928,58 @@ class GeminiBrain(CLIBrain):
         return GeminiParser()
 
 
-__all__ = ["BY_ID", "SPECS", "ClaudeCodeBrain", "CodexBrain", "CursorBrain", "EngineError", "EngineRegistry",
+# Antigravity -----------------------------------------------------------------------------
+
+class AntigravityParser(StreamParser):
+    """agy's stream-json: step_update events with text deltas, a "tool" step for any tool, then a result."""
+
+    def handle(self, event):
+        kind = event.get("event")
+        if kind == "step_update":
+            step = event.get("step_update") or {}
+            if step.get("step_type") == "tool":
+                self.refuse_tools()                       # headless denies most; we stop on any
+                return []
+            if step.get("step_type") == "agent_response":
+                return [str(step.get("text_delta") or "")]
+        if kind == "result":
+            result = event.get("result") or {}
+            if result.get("status") != "SUCCESS":
+                self.error = str(result.get("error") or result.get("status") or "failed")
+            elif not self.final:
+                self.final = str(result.get("response") or "").strip()
+            usage = result.get("usage") or {}
+            self.usage = from_report({"input_tokens": usage.get("input_tokens", 0) - usage.get("cache_read_tokens", 0),
+                                      "output_tokens": usage.get("output_tokens", 0),
+                                      "cache_read_input_tokens": usage.get("cache_read_tokens", 0)},
+                                     model=self.model)
+            self.ended = True
+        if kind == "error":
+            self.error = str(event.get("message") or event.get("error") or "error")
+        return []
+
+
+class AntigravityBrain(CLIBrain):
+    """Gemini on a Google AI plan via Antigravity's CLI (agy -p). Sandbox on, tools refused, text only."""
+
+    name = "antigravity"
+    label = "Gemini"
+    vision = False
+    levels = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
+
+    def invocation(self, *, system, turns, workdir, detailed, effort=None):
+        model = self.model or f"gemini-3.8-flash-{self.levels.get(self._effort(detailed, effort), 'medium')}"
+        self._model = model
+        argv = [self.binary, "-p", transcript_prompt(turns, system=system), "--output-format", "stream-json",
+                "--sandbox", "--model", model]
+        return Invocation(argv)
+
+    def parser(self):
+        parser = AntigravityParser()
+        parser.model = getattr(self, "_model", "") or self.model
+        return parser
+
+
+__all__ = ["BY_ID", "SPECS", "AntigravityBrain", "ClaudeCodeBrain", "CodexBrain", "CursorBrain", "EngineError", "EngineRegistry",
            "EngineSpec", "EngineStatus", "GeminiBrain", "choose_engine", "find_binary", "make_engine_brain", "probe",
            "transcript_prompt"]

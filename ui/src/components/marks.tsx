@@ -8,6 +8,7 @@ const TILES: Record<string, string> = {
   codex: 'bg-black shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]',
   cursor: 'bg-white',
   gemini: 'bg-white',
+  antigravity: 'bg-white',
   'gemini-api': 'bg-white',
 }
 
@@ -59,8 +60,33 @@ function Mark({ id, size }: { id: string; size: number }) {
           <path d="M22.35 6l-10.425 6L1.5 6h20.85z" fill="#000" />
         </>,
       )
+    case 'gemini-api':                                // Google AI Studio's mark
+      return svg(
+        <>
+          <defs>
+            <linearGradient id={`${uid}g`} x1="3" y1="7" x2="13.5" y2="7" gradientUnits="userSpaceOnUse">
+              <stop offset=".45" stopColor="#55B666" /><stop offset="1" stopColor="#55B666" stopOpacity="0" />
+            </linearGradient>
+            <radialGradient id={`${uid}l`} cx="9.4" cy="12.2" r="3" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#C9E264" stopOpacity=".85" /><stop offset="1" stopColor="#C9E264" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id={`${uid}y`} cx="17.8" cy="12.2" r="7" gradientUnits="userSpaceOnUse">
+              <stop offset=".3" stopColor="#F1BC3B" /><stop offset="1" stopColor="#F1BC3B" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id={`${uid}r`} cx="23" cy="20.5" r="7.5" gradientUnits="userSpaceOnUse">
+              <stop offset=".35" stopColor="#E8503F" /><stop offset="1" stopColor="#E8503F" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <path d="M6.9 1.3H20.6A2.5 2.5 0 0 1 21.8 5.99L9.77 12.56A6 6 0 1 1 6.9 1.3Z" fill="#4A86F5" />
+          <path d="M6.9 1.3H20.6A2.5 2.5 0 0 1 21.8 5.99L9.77 12.56A6 6 0 1 1 6.9 1.3Z" fill={`url(#${uid}g)`} />
+          <path d="M6.9 1.3H20.6A2.5 2.5 0 0 1 21.8 5.99L9.77 12.56A6 6 0 1 1 6.9 1.3Z" fill={`url(#${uid}l)`} />
+          <path d="M17.1 22.7H3.4A2.5 2.5 0 0 1 2.2 18.01L14.23 11.44A6 6 0 1 1 17.1 22.7Z" fill="#4A86F5" />
+          <path d="M17.1 22.7H3.4A2.5 2.5 0 0 1 2.2 18.01L14.23 11.44A6 6 0 1 1 17.1 22.7Z" fill={`url(#${uid}y)`} />
+          <path d="M17.1 22.7H3.4A2.5 2.5 0 0 1 2.2 18.01L14.23 11.44A6 6 0 1 1 17.1 22.7Z" fill={`url(#${uid}r)`} />
+        </>,
+      )
     case 'gemini':
-    case 'gemini-api':
+    case 'antigravity':
       return svg(
         <>
           <defs>
