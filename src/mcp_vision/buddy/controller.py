@@ -178,6 +178,14 @@ class BuddyController:
             self.loop.call_soon_threadsafe(self.companion.interrupt, self.generation)
         self._idle(f"Ready - hold {self.shortcut}")
         self.presenter.idle()
+        generation = self.generation
+        self.call_later(0.3, lambda: self._settle(generation))
+
+    def _settle(self, generation: int) -> None:
+        # again, once the stopped turn's last updates are in (they could reopen it or leave Plip "speaking")
+        if generation == self.generation and self.state == "idle" and not self._pressing:
+            self.overlay.set_state("idle")
+            self.presenter.idle()
 
     def on_cancel(self) -> None:
         if self._pressing:                   # another app's shortcut: leave Plip alone

@@ -200,25 +200,36 @@ def test_another_apps_control_option_shortcut_never_cuts_plip_off_and_a_tap_stil
     controller = BuddyController(companion=Companion(), overlay=Overlay(), loop=Loop(), listener=listener,
                                  call_later=lambda delay, fn: later.append((delay, fn)), on_main=lambda f, *a: f(*a),
                                  presenter=view, press_delay=BuddyController.PRESS_DELAY)
+    def fire(delay):                                   # run the newest timer with that delay
+        index = max(i for i, (d, _) in enumerate(later) if d == delay)
+        later.pop(index)[1]()
+
     controller.on_press()                              # another app's ⌃⌥ + arrow shortcut
     assert listener.started == 1 and hushed == [1]     # mic on at once (keeps first word), voice off
     controller.on_cancel()
     controller.on_release()
-    later.pop()[1]()
+    fire(0.15)
     assert interrupts == [] and listener.cancelled == 1 and view.calls == []        # the task goes on
     controller.on_press()                              # a quick tap: just stop talking
     controller.on_release()
-    later.pop()[1]()
+    fire(0.15)
     assert len(interrupts) == 1 and listener.cancelled == 2 and [c[0] for c in view.calls] == ["idle"]
     assert controller.state == "idle"                  # not stuck "responding"
     controller.on_press()                              # held: a request
-    delay, fn = later.pop()
-    fn()
-    assert delay == 0.15 and listener.started == 3 and view.calls[-1][0] == "listening"   # not started twice
+    fire(0.15)
+    assert listener.started == 3 and view.calls[-1][0] == "listening"   # not started twice
     controller.on_release()                            # then Stop before the words arrive
     controller.stop()
     controller.on_final("play some music")
     assert controller.state == "idle" and view.calls[-1][0] == "idle"          # no answer to it after Stop
+    view.calls.clear()
+    fire(0.3)
+    assert view.calls == [("idle",)]                   # settled again once the stopped turn's last updates land
+    controller.stop()
+    controller.on_press()                              # a new press since: the late settle leaves it alone
+    view.calls.clear()
+    fire(0.3)
+    assert view.calls == []
 
 
 def test_a_yes_or_no_suggestion_gets_buttons_and_a_choice_or_open_question_doesnt():

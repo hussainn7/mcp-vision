@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { AlertTriangle, Check, ChevronUp, Clock3, FileText, Settings2, Sparkles, Square, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { island, send, shortcut, useStore, type IslandState, type Mood, type Phase } from '../bridge'
+import { island, isNative, send, shortcut, useStore, type IslandState, type Mood, type Phase } from '../bridge'
 import { Mascot } from '../components/Mascot'
 import { Chord, EngineBadge, StepChips, StreamingText, Waveform, cn } from '../components/bits'
 
@@ -20,6 +20,7 @@ const MOOD: Record<Mode, Mood> = {
 
 const SPRING = { type: 'spring', stiffness: 420, damping: 34, mass: 0.9 } as const
 const LINGER_MS = 7000
+const ERROR_LINGER_MS = 8000
 const HOVER_DWELL_MS = 400       // rest before opening: passing by isn't asking
 const MAX_BODY = 360
 
@@ -42,8 +43,9 @@ function Shoulder({ side, size }: { side: 'left' | 'right'; size: number }) {
 export function Island() {
   const state = useStore(island)
   const [pointerHover, setHover] = useState(false)
-  // The native host tracks hover itself (WebKit tracking areas are flaky in a never-key panel).
-  const hover = useDwell(pointerHover || state.hovered, HOVER_DWELL_MS)
+  // In the app, only the native hover counts: WebKit misses mouseleave once the panel stops taking the mouse,
+  // which left the island stuck open (after Stop, say). The pointer is for the browser preview.
+  const hover = useDwell(isNative() ? state.hovered : pointerHover || state.hovered, HOVER_DWELL_MS)
   const [lingerOver, setLingerOver] = useState(false)
   const [minimizedLocal, setMinimized] = useState(false)
   const minimized = minimizedLocal || Boolean(state.minimized)
@@ -61,16 +63,17 @@ export function Island() {
   // Answers linger after the voice stops, then tuck away unless hovered or confirming.
   useEffect(() => {
     setLingerOver(false)
-    if (state.phase !== 'answering' || !state.done || state.speaking || state.confirm) return
-    // an open suggestion stays longer, to leave time to click
-    const linger = state.finished === 'bye' ? 600 : state.finished === 'done' ? 3500    // wrapped up: tuck sooner
-      : LINGER_MS + state.plan.length * 2500 + (state.offer ? 8000 : 0)
+    const answered = state.phase === 'answering' && state.done && !state.speaking && !state.confirm
+    if (!answered && state.phase !== 'error') return
+    // an open suggestion stays longer, to leave time to click; an error card goes back to idle too
+    const linger = state.phase === 'error' ? ERROR_LINGER_MS : state.finished === 'bye' ? 600
+      : state.finished === 'done' ? 3500 : LINGER_MS + state.plan.length * 2500 + (state.offer ? 8000 : 0)
     const timer = window.setTimeout(() => setLingerOver(true), linger)
     return () => window.clearTimeout(timer)
-  }, [state.phase, state.done, state.speaking, state.answer, state.confirm, state.plan.length, state.offer, state.finished])
+  }, [state.phase, state.done, state.speaking, state.answer, state.confirm, state.plan.length, state.offer, state.finished, state.error])
 
   let mode: Mode
-  if (state.phase === 'idle' || (state.phase === 'answering' && lingerOver && !hover)) {
+  if (state.phase === 'idle' || ((state.phase === 'answering' || state.phase === 'error') && lingerOver && !hover)) {
     mode = hover ? 'peek' : state.idleVisible ? 'compact' : 'hidden'
   } else if (minimized && (state.phase === 'answering' || state.phase === 'error')) {
     mode = hover ? state.phase : 'mini'

@@ -200,6 +200,32 @@ await test('island: every open and close has its sound; a done task says Done an
   await page.close()
 })
 
+await test('island (as in the app): a stale pointer hover never keeps it open; an error card goes back to idle', async () => {
+  const page = await browser.newPage({ viewport: { width: 760, height: 420 } })
+  const sent = []
+  await page.exposeFunction('__sent', (body) => sent.push(JSON.parse(body)))
+  await page.addInitScript(() => { window.webkit = { messageHandlers: { plip: { postMessage: (body) => window.__sent(body) } } } })
+  await page.goto(`${bundle}#island`)
+  await page.waitForTimeout(300)
+  const mode = () => [...sent].reverse().find((item) => item.cmd === 'island-rect')?.mode
+  await setIsland(page, { phase: 'idle', hovered: false })
+  await page.mouse.move(380, 18)                                    // the pointer sits on the notch...
+  await page.waitForTimeout(600)
+  assert.equal(mode(), 'compact')                                   // ...but only the native hover counts
+  await setIsland(page, { hovered: true })
+  await page.waitForTimeout(600)
+  assert.equal(mode(), 'peek')
+  await setIsland(page, { hovered: false })                         // left; WebKit never sent mouseleave
+  await page.waitForTimeout(200)
+  assert.equal(mode(), 'compact')                                   // was stuck open here
+  await setIsland(page, { phase: 'error', error: 'I didn’t catch that.' })
+  await page.waitForTimeout(300)
+  assert.equal(mode(), 'error')
+  await page.waitForTimeout(8200)
+  assert.equal(mode(), 'compact')                                   // back to idle after a quiet spell
+  await page.close()
+})
+
 await test('island: only a setup error offers Fix setup', async () => {
   const { page, take } = await open('island', { width: 760, height: 420 })
   await setIsland(page, { phase: 'error', error: 'I didn’t catch that. Hold ⌃⌥ and try again.', fixable: false })
