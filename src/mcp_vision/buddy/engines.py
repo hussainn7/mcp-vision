@@ -276,7 +276,8 @@ def _check_gemini(status: EngineStatus, runner: Runner, home: Path) -> None:
     creds = home / ".gemini" / "oauth_creds.json"
     if creds.exists() or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
         status.status = "ready"
-        status.detail = "Signed in with Google" if creds.exists() else "Using your Gemini API key"
+        status.detail = ("Signed in with Google. Free accounts no longer work here: use the free Gemini key"
+                         if creds.exists() else "Using your Gemini API key")
     else:
         status.status = "logged-out"
         status.detail = "Connect opens your browser to sign in with your Google account."
@@ -608,8 +609,10 @@ def _discard(process: Any, folder: str) -> None:
 
 
 def _tail(text: str, limit: int = 240) -> str:
-    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
-    return " ".join(lines[-3:])[-limit:]
+    """The CLI's error line if it printed one, else its last lines (never stack frames)."""
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip() and not line.strip().startswith("at ")]
+    errors = [line for line in lines if "error" in line.lower() and not line.lower().startswith("warning")]
+    return " ".join(errors[:1] or lines[-3:])[-limit:]
 
 
 # Claude Code ----------------------------------------------------------------------------

@@ -168,3 +168,27 @@ def test_the_free_engine_is_ready_with_a_key_and_builds_a_gemini_brain():
     assert isinstance(brain, GeminiKeyBrain) and brain.api_key == "AIza-k" and brain.model == "gemini-flash-latest"
     assert probe(BY_ID["gemini-api"], BuddySettings(_env_file=None)).status == "missing-key"
     assert choose_engine(settings, [status]).spec.id == "gemini-api"
+
+
+def test_new_aq_keys_paste_and_the_retired_gemini_cli_says_what_to_do(tmp_path):
+    from mcp_vision.buddy.companion import _friendly_error
+    from mcp_vision.buddy.engines import EngineError, _tail
+    from mcp_vision.buddy.settings import BuddySettings
+    from mcp_vision.buddy.settings_service import KEY_SHAPES, Platform, SettingsService
+    from mcp_vision.buddy.store import History
+
+    key = "AQ.Ab8RN6" + "x" * 60                                  # AI Studio's keys since May 2026
+    assert KEY_SHAPES[0][1].fullmatch(key)
+    checked = []
+    service = SettingsService(engines=lambda: [], settings=lambda: BuddySettings(_env_file=None), reload=lambda: None,
+                              post=lambda m: None, prefs_path=tmp_path / "p.json", env_path=tmp_path / ".env",
+                              history=History(path=tmp_path / "h.jsonl"), platform=Platform(clipboard=lambda: key),
+                              check_key=lambda name, value: checked.append(name) or "", background=lambda job: job())
+    service.handle({"cmd": "paste-key"})
+    assert checked == ["GEMINI_API_KEY"] and key in (tmp_path / ".env").read_text()
+    stderr = ("Warning: 256-color support not detected.\nError authenticating: IneligibleTierError: This client is no longer "
+              "supported for Gemini Code Assist for individuals.\n    at throwIneligibleOrProjectIdError (chunk.js:1:1)\n"
+              "    at process.processTicksAndRejections (node:internal)")
+    said = _tail(stderr)
+    assert said.startswith("Error authenticating: IneligibleTierError") and " at " not in said
+    assert "free Gemini key" in _friendly_error(EngineError(f"Gemini failed: {said}"))

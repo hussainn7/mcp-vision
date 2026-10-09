@@ -24,7 +24,7 @@ TOUR_STEPS = ("welcome", "permissions", "brain", "try", "done")
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
 # pasted key shapes: Google AI Studio, Anthropic
-KEY_SHAPES = (("GEMINI_API_KEY", re.compile(r"AIza[0-9A-Za-z_\-]{30,60}")),
+KEY_SHAPES = (("GEMINI_API_KEY", re.compile(r"AQ\.[0-9A-Za-z_\-.]{20,400}|AIza[0-9A-Za-z_\-]{30,60}")),   # AQ. = new
               ("ANTHROPIC_API_KEY", re.compile(r"sk-ant-[0-9A-Za-z_\-]{20,200}")))
 
 
