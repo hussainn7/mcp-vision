@@ -698,3 +698,28 @@ def test_a_process_starts_while_the_keys_are_held_and_an_unused_one_goes_away(tm
     answer, spare_pid, efforts, left = asyncio.run(press_then_ask())
     pids = [int(line) for line in marker.read_text().split()]
     assert answer == "ok" and pids[0] == spare_pid and efforts == ["low", "medium"] and left == {}
+
+
+def test_a_brain_that_starts_running_a_command_is_stopped_before_anything_it_read_comes_back(tmp_path):
+    from mcp_vision.buddy.companion import _friendly_error
+
+    codex = fake_cli(tmp_path, "codex", """
+        out({"type": "item.started", "item": {"id": "c1", "type": "command_execution", "command": "cat ~/.ssh/id_rsa"}})
+        out({"type": "item.completed", "item": {"id": "m1", "type": "agent_message",
+                                                "text": "here it is: -----BEGIN KEY----- [DO:open_url {\\"url\\": \\"x\\"}]"}})
+    """)
+    gemini = fake_cli(tmp_path, "gemini", """
+        out({"type": "tool_use", "tool_name": "read_file", "parameters": {"path": "/etc/hosts"}})
+        out({"type": "message", "role": "assistant", "content": "the file says ..."})
+    """)
+    said = []
+
+    async def run(brain):
+        async for text in brain.stream(system="SYSTEM", turns=TURNS):
+            said.append(text)
+    for brain in (CodexBrain(codex), GeminiBrain(gemini)):
+        with pytest.raises(EngineError) as stopped:
+            asyncio.run(run(brain))
+        assert "tried to run a command" in str(stopped.value)
+        assert _friendly_error(stopped.value).startswith("My brain tried to run a command on your Mac")
+    assert said == []                                                  # nothing it read was spoken or acted on

@@ -39,6 +39,9 @@ class EngineError(RuntimeError):
     """The engine ran but couldn't answer (signed out, rate limited, crashed)."""
 
 
+RAN_TOOLS = "tried to run a command on your Mac, which Plip doesn't allow"
+
+
 @dataclass(frozen=True)
 class EngineSpec:
     id: str
@@ -427,6 +430,11 @@ class StreamParser:
             self.produced = True
         return texts
 
+    def refuse_tools(self) -> None:
+        """The CLI started running a command or a tool of its own (Plip only wants words and tags back). Stop
+        reading right there: nothing it read reaches a reply or an action, and the turn ends saying why."""
+        self.error, self.ended, self.produced, self.final = RAN_TOOLS, True, False, ""
+
     def handle(self, event: dict[str, Any]) -> list[str]:
         raise NotImplementedError
 
@@ -547,6 +555,8 @@ class CLIBrain:
                 self.last_usage.model = self.model or ""
             for text in parser.finish():
                 yield text
+            if parser.error == RAN_TOOLS:
+                raise EngineError(f"{self.label} {RAN_TOOLS}.")
             if parser.error and not parser.produced:
                 raise EngineError(f"{self.label}: {parser.error}")
             if code != 0 and not parser.produced:
@@ -758,8 +768,11 @@ class CodexParser(StreamParser):
 
     def handle(self, event):
         kind = event.get("type", "")
+        item = event.get("item") or {}
+        if kind in {"item.started", "item.updated", "item.completed"} and item.get("type") in _CODEX_TOOLS:
+            self.refuse_tools()                      # its sandbox still runs shell commands that read your files
+            return []
         if kind in {"item.updated", "item.completed"}:
-            item = event.get("item") or {}
             if item.get("type") in {"agent_message", "assistant_message"}:
                 text = item.get("text") or ""
                 key = str(item.get("id", ""))
@@ -778,6 +791,9 @@ class CodexParser(StreamParser):
             self.error = str(error.get("message") if isinstance(error, dict) else error or event.get("message")
                              or "failed")
         return []
+
+
+_CODEX_TOOLS = {"command_execution", "file_change", "mcp_tool_call", "web_search", "patch_apply"}
 
 
 class CodexBrain(CLIBrain):
@@ -811,6 +827,9 @@ class CursorParser(StreamParser):
 
     def handle(self, event):
         kind = event.get("type")
+        if kind == "tool_call":
+            self.refuse_tools()
+            return []
         if kind == "assistant":
             if "timestamp_ms" not in event or "model_call_id" in event:
                 return []
@@ -849,6 +868,9 @@ class CursorBrain(CLIBrain):
 class GeminiParser(StreamParser):
     def handle(self, event):
         kind = event.get("type")
+        if kind in {"tool_use", "tool_call"}:
+            self.refuse_tools()
+            return []
         if kind == "message" and event.get("role") == "assistant":
             return [str(event.get("content") or "")]
         if kind == "error" and event.get("severity", "error") == "error":

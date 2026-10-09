@@ -1308,6 +1308,8 @@ def _history_text(reply: ReplyStream, targets: list[Target], did: list[str] | No
 def _friendly_error(exc: Exception) -> str:
     message = str(exc).strip() or type(exc).__name__
     lowered = message.lower()
+    if "tried to run a command" in lowered:
+        return "My brain tried to run a command on your Mac, and I don't let it do that. Try asking again."
     if "not logged in" in lowered or "login" in lowered or "sign in" in lowered:
         return "I need you to sign in to my brain first. Open my settings and pick a brain."
     if "not installed" in lowered or "no such file" in lowered:
