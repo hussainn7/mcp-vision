@@ -523,3 +523,20 @@ def test_a_rewrite_sees_the_whole_email_and_never_replaces_more_than_it_saw():
     assert outcome.status == "failed" and "smaller part" in outcome.message
     e.ctx.screen = ([shot], ScreenContext(selection=email, selection_chars=len(email)))
     assert asyncio.run(e.handle("replace_selection", {"text": "Hey Sam!"})).status == "done"
+
+
+def test_a_search_left_running_cant_swap_the_list_and_open_stays_inside_home(tmp_path):
+    from mcp_vision.buddy.actions.core import keep_files, search_number
+
+    e = engine(FakeHost(home=str(tmp_path / "sam")))
+    old = search_number(e.ctx)                          # an interrupted turn's search, still running
+    new = search_number(e.ctx)                          # this turn's
+    assert keep_files(e.ctx, new, ["/Users/sam/Documents/lease.pdf"])
+    assert not keep_files(e.ctx, old, ["/Users/sam/Downloads/other.pdf"])      # finishes later: ignored
+    assert e.ctx.state["files"] == ["/Users/sam/Documents/lease.pdf"]
+    (tmp_path / "sam").mkdir()
+    (tmp_path / "samantha").mkdir()
+    theirs = tmp_path / "samantha" / "diary.txt"
+    theirs.write_text("not sam's")
+    out = asyncio.run(e.handle("open_file", {"path": str(theirs)}))   # same first letters as sam's home, not in it
+    assert out.status == "failed" and "home folder" in out.message

@@ -109,11 +109,26 @@ def read_page(ctx: ActionContext, args: dict) -> ActionResult:
 
 # -- files -----------------------------------------------------------------------------------
 
+def search_number(ctx: ActionContext) -> int:
+    """A file search takes the next number as it starts, and only the newest one's results become the last
+    search: one still running for an interrupted turn can't swap the list {"index": n} counts in."""
+    ctx.state["search"] = number = ctx.state.get("search", 0) + 1
+    return number
+
+
+def keep_files(ctx: ActionContext, number: int, paths: list[str]) -> bool:
+    if ctx.state.get("search") != number:
+        return False                                   # a newer search (or turn) came since
+    ctx.state["files"] = paths
+    return True
+
+
 def search_files(ctx: ActionContext, args: dict) -> ActionResult:
     query = _need(args, "query", "what to look for")
     kind = str(args.get("kind") or "").lower()
+    number = search_number(ctx)
     hits = ctx.host.find_files(query, kind, limit=8)
-    ctx.state["files"] = [hit.path for hit in hits]
+    keep_files(ctx, number, [hit.path for hit in hits])
     items = [hit.as_item(ctx.host.home) for hit in hits]
     if not hits:
         return ActionResult(report=f'no files matched "{query}"', detail="nothing found")
@@ -136,7 +151,9 @@ def _file_from(ctx: ActionContext, args: dict) -> str:
     real = os.path.realpath(path)
     if not os.path.exists(real):
         raise ActionError("That file isn't there anymore.")
-    if real not in {os.path.realpath(item) for item in files} and not real.startswith(os.path.realpath(ctx.host.home)):
+    home = os.path.realpath(ctx.host.home)
+    # inside it, not just starting with the same letters (/Users/sam is not /Users/samantha)
+    if real not in {os.path.realpath(item) for item in files} and real != home and not real.startswith(home + os.sep):
         raise ActionError("I only open files in your home folder.")
     return real
 

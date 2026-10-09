@@ -82,7 +82,7 @@ class FileHit:
     modified: float
 
     def as_item(self, home: str) -> dict:
-        shown = self.path.replace(home, "~", 1) if self.path.startswith(home) else self.path
+        shown = self.path.replace(home, "~", 1) if self.path.startswith(home + os.sep) else self.path
         return {"title": os.path.basename(self.path), "detail": os.path.dirname(shown),
                 "path": self.path, "modified": int(self.modified)}
 
