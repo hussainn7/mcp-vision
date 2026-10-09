@@ -1,12 +1,12 @@
-import { ArrowRight, Check, Copy, Gauge, Lock, Zap } from 'lucide-react'
+import { ArrowRight, Check, Gauge, LoaderCircle, Plug, RotateCcw, Zap } from 'lucide-react'
 import { useState } from 'react'
-import { send, type Engine, type SettingsState } from '../../bridge'
+import { send, type ConnectProgress, type Engine, type SettingsState } from '../../bridge'
 import { cn } from '../../components/bits'
 import { ConnectAI } from './connect'
 import { money } from './usage'
-import { Button, Card, Header, KeyField, Pill, Section, Segmented } from './ui'
+import { Button, Card, Header, Input, KeyField, Pill, Section, Segmented } from './ui'
 
-const ENGINE_GLYPH: Record<string, { bg: string; text: string; glyph: string }> = {
+export const ENGINE_GLYPH: Record<string, { bg: string; text: string; glyph: string }> = {
   'claude-code': { bg: 'bg-[#d97757]', text: 'text-white', glyph: '✳' },
   codex: { bg: 'bg-white', text: 'text-black', glyph: '◎' },
   cursor: { bg: 'bg-[#111114] hairline', text: 'text-white', glyph: '▲' },
@@ -20,9 +20,11 @@ const STATUS: Record<Engine['status'], [string, 'good' | 'warn' | 'muted']> = {
 
 function EngineCard({ engine }: { engine: Engine }) {
   const glyph = ENGINE_GLYPH[engine.id] ?? { bg: 'bg-white/10', text: 'text-white', glyph: '•' }
-  const [label, tone] = STATUS[engine.status]
-  const [copied, setCopied] = useState(false)
-  const usable = engine.status === 'ready' || engine.status === 'unknown'
+  const connect = engine.connect
+  const busy = connect?.state === 'installing' || connect?.state === 'signing-in'
+  const [label, tone] = busy ? (['Connecting', 'muted'] as const) : STATUS[engine.status]
+  const usable = !busy && (engine.status === 'ready' || engine.status === 'unknown')
+  const canConnect = engine.kind === 'subscription' && !busy && (engine.status === 'not-installed' || engine.status === 'logged-out')
 
   return (
     <Card active={engine.selected} className="flex flex-col gap-3">
@@ -49,26 +51,61 @@ function EngineCard({ engine }: { engine: Engine }) {
             <Check className="size-4" strokeWidth={3} /> In use
           </span>
         )}
-        {engine.status === 'not-installed' && engine.install && (
-          <Button
-            variant="ghost"
-            onClick={() => {
-              send('copy', { text: engine.install })
-              setCopied(true)
-              window.setTimeout(() => setCopied(false), 1600)
-            }}
-          >
-            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} {copied ? 'Copied' : 'Copy install command'}
-          </Button>
-        )}
-        {engine.status === 'logged-out' && (
-          <Button variant="ghost" onClick={() => send('engine-login', { id: engine.id })}>
-            <Lock className="size-3.5" /> Sign in
+        {canConnect && (
+          <Button variant="brand" onClick={() => send('engine-connect', { id: engine.id })}>
+            {connect?.state === 'failed' ? <RotateCcw className="size-3.5" /> : <Plug className="size-3.5" />}
+            {connect?.state === 'failed' ? 'Try again' : `Connect ${engine.label}`}
           </Button>
         )}
       </div>
+      {connect && (busy || connect.state === 'failed') && <Connecting id={engine.id} progress={connect} />}
       {engine.status === 'missing-key' && engine.keyName && <KeyField name={engine.keyName} placeholder={`Paste ${engine.keyName}`} saved={false} />}
     </Card>
+  )
+}
+
+/** Live progress while Plip installs a brain's app and waits for the browser sign-in. */
+export function Connecting({ id, progress }: { id: string; progress: ConnectProgress }) {
+  const [help, setHelp] = useState(false)
+  const [code, setCode] = useState('')
+  if (progress.state === 'failed')
+    return <div className="rounded-xl bg-coral/[0.08] px-3 py-2 text-[12px] leading-relaxed text-rose-200/90">{progress.message}</div>
+  return (
+    <div className="rounded-xl bg-white/[0.04] px-3 py-2.5 hairline">
+      <div className="flex items-center gap-2 text-[12.5px] text-white/80">
+        <LoaderCircle className="size-3.5 shrink-0 animate-spin text-plip-300" />
+        <span className="flex-1">{progress.message}</span>
+        <Button variant="quiet" size="sm" onClick={() => send('engine-connect-cancel', { id })}>Cancel</Button>
+      </div>
+      {progress.state === 'signing-in' && progress.url && (
+        <div className="mt-1.5 pl-5.5 text-[11.5px] text-white/40">
+          {!help ? (
+            <button className="underline decoration-white/20 underline-offset-2 hover:text-white/70" onClick={() => setHelp(true)}>
+              Browser didn’t open?
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <button className="font-semibold text-plip-200 hover:text-plip-100" onClick={() => send('open-url', { url: progress.url })}>
+                Open the sign-in page
+              </button>
+              {progress.needsCode && (
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    if (code.trim()) send('engine-connect-code', { id, code: code.trim() })
+                    setCode('')
+                  }}
+                >
+                  <Input value={code} onChange={setCode} placeholder="If the page shows a code, paste it here" className="font-mono text-[11.5px]" />
+                  <Button size="sm" disabled={!code.trim()}>Done</Button>
+                </form>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -90,7 +127,7 @@ export function BrainTab({ state }: { state: SettingsState }) {
           <span className="ml-auto inline-flex items-center gap-1 font-semibold text-white/80">See usage <ArrowRight className="size-3.5" /></span>
         </a>
       )}
-      <Section title="Or pick one yourself">
+      <Section title="Your subscriptions">
         <div className="grid grid-cols-2 gap-3">{plans.map((engine) => <EngineCard key={engine.id} engine={engine} />)}</div>
       </Section>
       <Section title="API keys">

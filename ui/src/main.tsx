@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { isNative, onMockCommand, send, settings, type SettingsState } from './bridge'
+import { isNative, onMockCommand, send, settings, type Engine, type SettingsState } from './bridge'
 import { DEMO_USER, loadDemoSettings } from './demo'
 import './styles.css'
 import { Guide } from './views/Guide'
@@ -29,7 +29,22 @@ if (!isNative()) {
     }
     if (command.cmd === 'finish-onboarding') settings.set({ onboarded: true })
     if (command.cmd === 'tour-start') settings.set({ onboarded: false })
-    if (command.cmd === 'quick-connect') settings.set({ connect: 'A Terminal window opened to sign in. Finish there, then come back.' })
+    if (command.cmd === 'quick-connect') settings.set({ connect: 'Pick the AI you use below, or get a free one from Google.' })
+    if (command.cmd === 'engine-connect') {
+      // Browser preview: walk through what the app does (install, browser sign-in, connected).
+      const id = String(command.id)
+      const step = (connect: Engine['connect'], patch: Partial<Engine> = {}) =>
+        settings.set((current) => ({ engines: current.engines.map((engine) => (engine.id === id ? { ...engine, ...patch, connect } : engine)) }))
+      const label = settings.get().engines.find((engine) => engine.id === id)?.label ?? 'it'
+      const installed = settings.get().engines.find((engine) => engine.id === id)?.status !== 'not-installed'
+      step({ state: installed ? 'signing-in' : 'installing', message: installed ? `Finish signing in to ${label} in your browser…` : `Installing ${label}’s app… (about a minute)` })
+      window.setTimeout(() => step({ state: 'signing-in', message: `Finish signing in to ${label} in your browser…`, url: 'https://claude.com/cai/oauth/authorize', needsCode: true }), installed ? 0 : 1600)
+      window.setTimeout(() => settings.set((current) => ({
+        engines: current.engines.map((engine) => (engine.id === id ? { ...engine, status: 'ready', selected: true, connect: undefined, detail: 'Signed in as you' } : { ...engine, selected: false })),
+      })), installed ? 2600 : 4200)
+    }
+    if (command.cmd === 'engine-connect-cancel')
+      settings.set((current) => ({ engines: current.engines.map((engine) => (engine.id === command.id ? { ...engine, connect: undefined } : engine)) }))
     if (command.cmd === 'report-issue' || command.cmd === 'request-feature') settings.set({ report: 'sent' })
     if (command.cmd === 'report-reset') settings.set({ report: '' })
     // Browser preview: the browser "comes back" from Google after a moment.

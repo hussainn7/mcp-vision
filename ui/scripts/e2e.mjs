@@ -106,6 +106,26 @@ await test('island: a yes-or-no suggestion gets Yes and No thanks', async () => 
   await page.close()
 })
 
+await test('settings: one click connects a brain (no Terminal, nothing to copy)', async () => {
+  const { page, take } = await open('settings?tab=brain')
+  assert.equal(await page.getByText('Copy install command').count(), 0)
+  await page.getByRole('button', { name: 'Connect ChatGPT' }).click()
+  assert.equal((await take('engine-connect')).id, 'codex')
+  await page.getByText('Finish signing in to ChatGPT in your browser').waitFor()
+  await page.getByText('Browser didn’t open?').click()
+  await page.getByText('Open the sign-in page').waitFor()
+  await page.getByPlaceholder('If the page shows a code, paste it here').fill('abc#123')
+  await page.getByRole('button', { name: 'Done' }).click()
+  assert.deepEqual(await take('engine-connect-code'), { cmd: 'engine-connect-code', id: 'codex', code: 'abc#123' })
+  await page.getByText('Finish signing in to ChatGPT in your browser').waitFor({ state: 'detached', timeout: 6000 })
+  assert.equal(await page.getByRole('button', { name: 'Connect ChatGPT' }).count(), 0)
+  await page.getByRole('button', { name: 'Connect Cursor' }).click()                // not installed: installs first
+  await page.getByText('Installing Cursor’s app').waitFor()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  assert.deepEqual(await take('engine-connect-cancel'), { cmd: 'engine-connect-cancel', id: 'cursor' })
+  await page.close()
+})
+
 await test('island: only a setup error offers Fix setup', async () => {
   const { page, take } = await open('island', { width: 760, height: 420 })
   await setIsland(page, { phase: 'error', error: 'I didn’t catch that. Hold ⌃⌥ and try again.', fixable: false })

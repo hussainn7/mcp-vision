@@ -184,7 +184,7 @@ def probe(spec: EngineSpec, settings: Any, *, runner: Runner = run_quick,
                             detail="" if key else "Paste a key to use it.")
     path = which(spec.binaries)
     if not path:
-        return EngineStatus(spec, "not-installed", detail=f"Install it, then sign in. {spec.blurb}")
+        return EngineStatus(spec, "not-installed", detail=f"Not on this Mac yet: Connect installs it and signs you in. {spec.blurb}")
     status = EngineStatus(spec, "unknown", path=path)
     checker = _LOGIN_CHECKS.get(spec.id)
     if checker is not None:
@@ -213,11 +213,11 @@ def _check_claude(status: EngineStatus, runner: Runner, home: Path) -> None:
             return
         if data.get("loggedIn") is False:
             status.status = "logged-out"
-            status.detail = "Run claude auth login once to sign in with your Claude plan."
+            status.detail = "Connect opens your browser to sign in with your Claude plan."
             return
     if result.code != 0 and "unknown" not in (result.err + result.out).lower() and result.code != 127:
         status.status = "logged-out"
-        status.detail = "Run claude auth login once to sign in with your Claude plan."
+        status.detail = "Connect opens your browser to sign in with your Claude plan."
         return
     # Older Claude Code without `auth status`: credentials live in the keychain or this file.
     if (home / ".claude" / ".credentials.json").exists() or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
@@ -235,7 +235,7 @@ def _check_codex(status: EngineStatus, runner: Runner, home: Path) -> None:
             status.status = "ready"
     else:
         status.status = "logged-out"
-        status.detail = "Run codex login once and choose Sign in with ChatGPT."
+        status.detail = "Connect opens your browser to sign in with your ChatGPT plan."
 
 
 def _check_cursor(status: EngineStatus, runner: Runner, home: Path) -> None:
@@ -255,12 +255,12 @@ def _check_cursor(status: EngineStatus, runner: Runner, home: Path) -> None:
             return
         if signed is False:
             status.status = "logged-out"
-            status.detail = "Run agent login once to sign in with your Cursor account."
+            status.detail = "Connect opens your browser to sign in with your Cursor account."
             return
     lowered = text.lower()
     if "not logged in" in lowered or "not authenticated" in lowered or "login" in lowered and result.code != 0:
         status.status = "logged-out"
-        status.detail = "Run agent login once to sign in with your Cursor account."
+        status.detail = "Connect opens your browser to sign in with your Cursor account."
     elif result.code == 0 and ("logged in" in lowered or "@" in text):
         status.status = "ready"
         line = next((ln.strip(" ✓") for ln in text.splitlines() if "logged in" in ln.lower()), "")
@@ -276,7 +276,7 @@ def _check_gemini(status: EngineStatus, runner: Runner, home: Path) -> None:
         status.detail = "Signed in with Google" if creds.exists() else "Using your Gemini API key"
     else:
         status.status = "logged-out"
-        status.detail = "Run gemini once in Terminal and pick Login with Google."
+        status.detail = "Connect opens your browser to sign in with your Google account."
 
 
 _LOGIN_CHECKS = {"claude-code": _check_claude, "codex": _check_codex, "cursor": _check_cursor,

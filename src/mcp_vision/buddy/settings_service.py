@@ -20,8 +20,6 @@ KEY_NAMES = {"ANTHROPIC_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASS
 DEPTHS = {"fast", "balanced", "deep"}
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
-CLAUDE_INSTALL_AND_LOGIN = ("curl -fsSL https://claude.ai/install.sh | bash && "
-                            "\"$HOME/.local/bin/claude\" auth login")
 
 
 @dataclass
@@ -56,6 +54,7 @@ class SettingsService:
     account: Any = None                                    # buddy.account.Account (sign in before Plip works)
     updates: Any = None                                    # buddy.updates.Updates (a newer Plip is out)
     check_updates: Callable[[], None] = lambda: None       # ask GitHub now, in the background
+    connector: Any = None                                  # buddy.connect.Connector (one-click Connect, no Terminal)
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
     report_note: str = ""                                  # "sent" | "failed" after a bug report or feature request
     hotkey_works: Callable[[], bool] = lambda: True        # macOS passes Plip the keys (see hotkey.can_listen)
@@ -69,6 +68,10 @@ class SettingsService:
         prefs = self.prefs
         settings = self.settings()
         engines = self.engines()
+        if self.connector is not None:                 # live install / sign-in progress on its card
+            progress = self.connector.snapshot()
+            engines = [{**engine, "connect": progress[engine["id"]]} if engine["id"] in progress else engine
+                       for engine in engines]
         perms = self.platform.permissions() or {}
         keys = {name: bool(_key(settings, name)) for name in KEY_NAMES}
         tts = prefs.tts or ("elevenlabs" if settings.tts in {"auto", "elevenlabs"} and keys["ELEVENLABS_API_KEY"]
@@ -254,25 +257,39 @@ class SettingsService:
         self.push()
 
     def _cmd_quick_connect(self, _command):
-        """One button: use a ready AI, else sign in to an installed one, else install Claude and sign in."""
+        """One button: use an AI that's ready, else sign in to one that's installed. Never a Terminal window:
+        with nothing installed, the cards below say which to pick (Claude, ChatGPT, or a free Google key)."""
         engines = self.engines()
-        subs = [engine for engine in engines if engine.get("kind") == "subscription"]
         ready = next((engine for engine in engines if engine.get("status") == "ready"), None)
-        logged_out = next((engine for engine in subs if engine.get("login")), None)
         if ready:
             self.connect_note = f"Connected to {ready['label']}."
             self._update_prefs(engine=ready["id"])
             return
-        if logged_out:
-            self.connect_note = (f"A Terminal window opened to sign in to {logged_out['label']}. "
-                                 "Finish there, then come back.")
-            self.platform.run_in_terminal(logged_out["login"])
+        signed_out = next((engine for engine in engines if engine.get("kind") == "subscription"
+                           and engine.get("status") in {"logged-out", "unknown"}), None)
+        if signed_out and self.connector is not None:
+            self.connect_note = ""
+            self.connector.start(signed_out["id"])
         else:
-            self.connect_note = ("A Terminal window opened to install Claude and sign in with your Claude plan. "
-                                 "Finish there, then come back.")
-            self.platform.run_in_terminal(CLAUDE_INSTALL_AND_LOGIN)
+            self.connect_note = "Pick the AI you use below, or get a free one from Google."
         self.push()
-        self.on_refresh()
+
+    def _cmd_engine_connect(self, command):
+        """One click: install the brain's app if it's missing, sign in in the browser, switch to it."""
+        if self.connector is not None:
+            self.connector.start(str(command.get("id", "")))
+            self.push()
+            return
+        self._cmd_engine_login(command)
+
+    def _cmd_engine_connect_cancel(self, command):
+        if self.connector is not None:
+            self.connector.cancel(str(command.get("id", "")))
+            self.push()
+
+    def _cmd_engine_connect_code(self, command):
+        if self.connector is not None and isinstance(command.get("code"), str):
+            self.connector.send_code(str(command.get("id", "")), command["code"][:500])
 
     # -- General → Support: a bug report or a feature request, only what they typed ------------------
     def _cmd_report_issue(self, command):
@@ -299,6 +316,9 @@ class SettingsService:
         self.push()
 
     def _cmd_engine_login(self, command):
+        if self.connector is not None:               # the browser sign-in, not a Terminal window
+            self._cmd_engine_connect(command)
+            return
         engine = next((item for item in self.engines() if item["id"] == command.get("id")), None)
         if engine and engine.get("login"):
             self.platform.run_in_terminal(engine["login"])

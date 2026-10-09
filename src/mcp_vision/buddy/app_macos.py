@@ -614,6 +614,17 @@ def run_buddy_app() -> None:
         update_setup_error()
         service.push()
 
+    def connected(engine_id: str) -> None:
+        """A brain finished connecting (installed, signed in): probe again and make it the brain."""
+        registry.statuses(refresh=True)
+        AppHelper.callAfter(lambda: service.handle({"cmd": "select-engine", "id": engine_id}))
+
+    from mcp_vision.buddy.connect import Connector
+    from mcp_vision.buddy.engines import BY_ID, probe as probe_engine
+
+    connector = Connector(probe=lambda engine_id: probe_engine(BY_ID[engine_id], state["settings"]),
+                          on_change=lambda: AppHelper.callAfter(service.push), on_connected=connected)
+
     from mcp_vision.buddy.parakeet import ParakeetModel
 
     parakeet = ParakeetModel(on_change=lambda: AppHelper.callAfter(service.push),
@@ -635,6 +646,7 @@ def run_buddy_app() -> None:
         action_log=ActionLog(),
         usage=usage_log,
         parakeet=parakeet,
+        connector=connector,
         account=account,
         updates=updates,
         check_updates=lambda: check_updates(force=True),

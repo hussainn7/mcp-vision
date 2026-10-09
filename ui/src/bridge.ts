@@ -91,6 +91,14 @@ export interface Engine {
   keyName?: string
   selected?: boolean
   vision?: boolean
+  connect?: ConnectProgress  // while Plip installs its app and waits for the browser sign-in
+}
+
+export interface ConnectProgress {
+  state: 'installing' | 'signing-in' | 'ready' | 'failed'
+  message: string
+  url?: string               // the sign-in page, for when the browser didn't open
+  needsCode?: boolean        // the page shows a code to paste back
 }
 
 export interface HistoryItem {
