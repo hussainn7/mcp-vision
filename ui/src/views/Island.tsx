@@ -257,12 +257,14 @@ function Body({ mode }: { mode: Mode }) {
     return (
       <div className="flex items-start justify-between gap-4">
         <p className="text-[14px] leading-snug text-rose-100/90">{state.error || 'Something went sideways.'}</p>
-        <button
-          className="shrink-0 rounded-full bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-white/15"
-          onClick={() => send('open-settings', { tab: 'brain' })}
-        >
-          Fix setup
-        </button>
+        {state.fixable && (
+          <button
+            className="shrink-0 rounded-full bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-white/15"
+            onClick={() => send('open-settings', { tab: 'brain' })}
+          >
+            Fix setup
+          </button>
+        )}
       </div>
     )
   }

@@ -63,9 +63,11 @@ class Presenter:
         self._island(phase="idle", level=0)
         self.set_mood("idle", 0.0)
 
-    def failed(self, message: str) -> None:
+    def failed(self, message: str, setup: bool | None = None) -> None:
+        """``setup``: the fix is in settings (no brain, no permission); by default when the message says so."""
         self.phase = "error"
-        self._island(phase="error", error=message)
+        fixable = "settings" in message.lower() if setup is None else setup
+        self._island(phase="error", error=message, fixable=fixable)
         self.set_mood("error", 0.0)
 
     # -- companion observer ------------------------------------------------------------

@@ -66,7 +66,7 @@ class BuddyController:
         if self.setup_error or self.companion is None or self.listener is None:
             message = self.setup_error or "Speech input is unavailable."
             self.status("Needs setup: " + message)
-            self.presenter.failed(message)
+            self.presenter.failed(message, True)
             self.say("I need a little setup first. I opened my settings for you.")
             self.on_setup_needed(message)
             return

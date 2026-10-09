@@ -49,7 +49,9 @@ def test_presenter_push_to_talk_flow():
                            {"type": "island", "state": {"phase": "thinking", "level": 0}}]
     assert moods[-1] == ("thinking", 0.0)
     view.failed("I didn't catch that.")
-    assert posted[-1]["state"] == {"phase": "error", "error": "I didn't catch that."}
+    assert posted[-1]["state"] == {"phase": "error", "error": "I didn't catch that.", "fixable": False}
+    view.failed("I can't reach my model. Check the API key in your settings.")
+    assert posted[-1]["state"]["fixable"] is True                   # the card offers "Fix setup" only then
 
 
 def test_presenter_turns_companion_events_into_island_messages():
@@ -77,8 +79,8 @@ def test_presenter_turns_companion_events_into_island_messages():
     assert posted[-1]["state"]["walkthrough"]["index"] == 1 and posted[-1]["state"]["answer"] == ""
     view("walkthrough", {"index": 3, "total": 3, "finished": True})
     assert moods[-1] == ("happy", 0.0)
-    view("error", {"message": "Sign in first."})
-    assert posted[-1]["state"] == {"phase": "error", "error": "Sign in first."}
+    view("error", {"message": "That took too long. Try asking again."})
+    assert posted[-1]["state"] == {"phase": "error", "error": "That took too long. Try asking again.", "fixable": False}
 
 
 # -- controller drives the presenter ---------------------------------------------------------
@@ -103,7 +105,7 @@ def test_controller_mirrors_push_to_talk_in_the_presenter():
                                  on_main=lambda f, *a: f(*a), presenter=view, setup_error="No brain yet.",
                                  on_setup_needed=needed.append, say=lambda text: None)
     controller.on_press()
-    assert view.calls == [("failed", "No brain yet.")] and needed == ["No brain yet."]
+    assert view.calls == [("failed", "No brain yet.", True)] and needed == ["No brain yet."]
 
 
 def test_controller_hooks_and_result_callback():

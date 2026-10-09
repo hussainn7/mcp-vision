@@ -65,6 +65,18 @@ await test('island: confirm card sends yes and no', async () => {
   await page.close()
 })
 
+await test('island: only a setup error offers Fix setup', async () => {
+  const { page, take } = await open('island', { width: 760, height: 420 })
+  await setIsland(page, { phase: 'error', error: 'I didn’t catch that. Hold ⌃⌥ and try again.', fixable: false })
+  await page.waitForTimeout(400)
+  assert.equal(await page.getByRole('button', { name: 'Fix setup' }).count(), 0)
+  await setIsland(page, { phase: 'error', error: 'I need you to sign in to my brain first. Open my settings and pick a brain.', fixable: true })
+  await page.waitForTimeout(400)
+  await page.getByRole('button', { name: 'Fix setup' }).click()
+  assert.deepEqual(await take('open-settings'), { cmd: 'open-settings', tab: 'brain' })
+  await page.close()
+})
+
 await test('island: minimize tucks the answer back into the notch, click reopens', async () => {
   const { page, last } = await open('island', { width: 760, height: 420 })
   await setIsland(page, { phase: 'answering', answer: 'Opening Spotify for you now.', engine: { label: 'Claude', kind: 'subscription' } })

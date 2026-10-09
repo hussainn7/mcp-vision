@@ -53,6 +53,7 @@ export interface IslandState {
   walkthrough: Walkthrough | null
   engine: EngineBadge | null
   error: string
+  fixable: boolean           // the error is fixed in settings: the card shows "Fix setup"
   latencyMs: number | null
   notch: { width: number; height: number; hasNotch: boolean }
   idleVisible: boolean
@@ -255,6 +256,7 @@ export const defaultIsland: IslandState = {
   walkthrough: null,
   engine: null,
   error: '',
+  fixable: false,
   latencyMs: null,
   notch: { width: 200, height: 32, hasNotch: true },
   idleVisible: true,
