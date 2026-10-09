@@ -36,13 +36,19 @@ from mcp_vision.buddy.actions.host import Reveal, parse_keys
 from mcp_vision.buddy.screen_context import Control
 from mcp_vision.buddy.watch import difference
 
-RISKY = re.compile(r"\b(buy|purchase|pay|place (your )?order|checkout|check out|delete|remove|erase|send|submit|"
-                   r"transfer|confirm|sign out|log ?out|unsubscribe|book|reserve|publish|post|merge|deploy|"
+RISKY = re.compile(r"\b(buy|purchase|pay|place (your |an? )?(order|bid)|order now|complete (your )?(order|purchase)|"
+                   r"(continue|proceed) to (payment|checkout|pay)|make (a )?payment|checkout|check out|delete|remove|"
+                   r"erase|send|submit|transfer|withdraw|donate|subscribe|authori[sz]e|grant access|allow access|"
+                   r"confirm|sign out|log ?out|unsubscribe|book|reserve|publish|post|merge|deploy|"
                    r"trash|discard|wipe|format|"
                    # applying sends your details to someone; "apply filters" or "apply changes" doesn't
                    r"apply(?!\s+(filters?|changes|settings|coupon|code|promo|discount|theme|style|formatting)\b))\b",
                    re.IGNORECASE)
-RISKY_KEYS = {"cmd+q", "cmd+alt+esc", "cmd+delete", "cmd+backspace", "cmd+shift+delete", "cmd+shift+backspace"}
+# Keys that quit, delete, log out or send (cmd+return sends in mail, chat and comment boxes), by what they press,
+# so "command+q", "⌘+q" or "shift+cmd+delete" are caught as well as "cmd+q".
+RISKY_KEYS = {parse_keys(keys) for keys in ("cmd+q", "cmd+alt+esc", "cmd+delete", "cmd+shift+delete", "cmd+return",
+                                            "cmd+shift+return", "cmd+shift+d", "cmd+shift+q", "cmd+alt+q",
+                                            "cmd+shift+alt+q")}
 PAGE_LINES = 8                 # wheel steps (x3 lines each) per "page"
 MAX_SCROLL_TO = 15
 
@@ -172,7 +178,9 @@ def _nearest(context, text: str, near: str):
 
 
 def _under(ctx: ActionContext, context, x: float, y: float, reach: float = 40.0) -> str:
-    """The label of the control a point lands on (the nearest center within ``reach`` points), or ""."""
+    """The label of the control a point lands on: the smallest one whose frame holds it (a wide "Place your order"
+    button clicked near its edge too), else the nearest center within ``reach`` points for controls without a size,
+    else ""."""
     for candidate in (context, None):
         if candidate is None:
             try:
@@ -180,7 +188,11 @@ def _under(ctx: ActionContext, context, x: float, y: float, reach: float = 40.0)
             except Exception:
                 candidate = None
         controls = list(getattr(candidate, "controls", None) or [])
-        near = min(controls, key=lambda c: abs(c.x - x) + abs(c.y - y), default=None)
+        holding = [c for c in controls if c.w > 0 and c.h > 0 and abs(c.x - x) <= c.w / 2 and abs(c.y - y) <= c.h / 2]
+        if holding:
+            return min(holding, key=lambda c: c.w * c.h).label
+        sizeless = [c for c in controls if c.w <= 0 or c.h <= 0]
+        near = min(sizeless, key=lambda c: abs(c.x - x) + abs(c.y - y), default=None)
         if near is not None and abs(near.x - x) <= reach and abs(near.y - y) <= reach:
             return near.label
     return ""
@@ -197,7 +209,8 @@ def _glide(ctx: ActionContext, x: float, y: float, label: str) -> None:
 # -- click ------------------------------------------------------------------------------------
 def preview_click(ctx: ActionContext, args: dict) -> Preview | None:
     x, y, label = resolve(ctx, args)
-    if not RISKY.search(label):
+    # what it lands on, and what the model says it is (a page the map can't see names nothing under the point)
+    if not (RISKY.search(label) or RISKY.search(str(args.get("label") or ""))):
         return None
     return Preview(title=f"Click “{label[:40]}”", lines=["This one can't be undone, so I'm checking first."],
                    confirm="Click it", state=(x, y, label))
@@ -791,9 +804,10 @@ def _found(ctx: ActionContext, found, how: str, detail: str) -> ActionResult:
 # -- keys, drag, waiting ----------------------------------------------------------------------
 def preview_press(ctx: ActionContext, args: dict) -> Preview | None:
     keys = _keys(args)
-    if keys.replace(" ", "").lower() not in RISKY_KEYS:
+    if parse_keys(keys) not in RISKY_KEYS:
         return None
-    return Preview(title=f"Press {keys}", lines=["That can close or delete things."], confirm="Press it", state=keys)
+    return Preview(title=f"Press {keys}", lines=["That can close, delete, log out or send things."], confirm="Press it",
+                   state=keys)
 
 
 def _keys(args: dict) -> str:
@@ -815,9 +829,22 @@ def press(ctx: ActionContext, args: dict, state: str | None = None) -> ActionRes
                         settle=3.0, detail=f"Pressed {keys}")
 
 
-def drag(ctx: ActionContext, args: dict) -> ActionResult:
+_BINS = re.compile(r"\b(trash|bin|recycle|delete)\b", re.IGNORECASE)
+
+
+def preview_drag(ctx: ActionContext, args: dict) -> Preview | None:
+    """Dragging onto the Trash (or a delete zone) throws things away: ask first."""
     x1, y1, label1 = resolve(ctx, args, key="from")
     x2, y2, label2 = resolve(ctx, args, key="to")
+    if not (_BINS.search(label2) or RISKY.search(label2)):
+        return None
+    return Preview(title=f"Drag “{label1[:30]}” to {label2[:30]}", lines=["That throws it away."],
+                   confirm="Drag it", state=(x1, y1, label1, x2, y2, label2))
+
+
+def drag(ctx: ActionContext, args: dict, state: tuple | None = None) -> ActionResult:
+    x1, y1, label1, x2, y2, label2 = state if state is not None else \
+        (*resolve(ctx, args, key="from"), *resolve(ctx, args, key="to"))
     _glide(ctx, x1, y1, label1)
     ctx.host.drag(x1, y1, x2, y2)
     ctx.state["pointer"] = (x2, y2)
@@ -848,7 +875,7 @@ SPECS = (
     ActionSpec("scroll_to", "control", "Looking for {text}", scroll_to, args='{"text", "direction"?}'),
     ActionSpec("press", "control", "Pressing {keys}", press, preview=preview_press,
                args='{"keys": "cmd+t" | "return" | "pagedown", "times"?}'),
-    ActionSpec("drag", "control", "Dragging", drag, args='{"from_id", "to_id"}'),
+    ActionSpec("drag", "control", "Dragging", drag, preview=preview_drag, args='{"from_id", "to_id"}'),
     ActionSpec("wait", "control", "Waiting a moment", wait, args='{"seconds"}'),
     ActionSpec("look", "control", "Taking a closer look", look, args="{}"),
 )

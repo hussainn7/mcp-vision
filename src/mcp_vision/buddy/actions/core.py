@@ -158,6 +158,19 @@ def _file_from(ctx: ActionContext, args: dict) -> str:
     return real
 
 
+_RUNS = (".app", ".command", ".sh", ".zsh", ".bash", ".tool", ".pkg", ".mpkg", ".workflow", ".scpt", ".applescript",
+         ".terminal", ".jar", ".py", ".dmg")
+
+
+def preview_open(ctx: ActionContext, args: dict) -> Preview | None:
+    """Opening an app, a script or an installer runs it: that asks first. Documents open right away."""
+    path = _file_from(ctx, args)
+    if not path.lower().rstrip("/").endswith(_RUNS):
+        return None
+    return Preview(title=f"Open “{os.path.basename(path.rstrip('/'))}”",
+                   lines=["It's an app, script or installer, so it can run things on your Mac."], confirm="Open it")
+
+
 def open_file(ctx: ActionContext, args: dict) -> ActionResult:
     path = _file_from(ctx, args)
     ctx.host.open(path)
@@ -501,6 +514,42 @@ def _again(ctx: ActionContext, before: str | None, text: str) -> bool:
         and _plain(before).endswith(_plain(text))
 
 
+# A box where return runs a search or goes to a page, not one where it sends something to someone.
+_SEARCHY = re.compile(r"search|find|filter|address|url|location|where|zip|postal|city|query|look ?up|go to|jump to",
+                      re.IGNORECASE)
+
+
+def preview_type(ctx: ActionContext, args: dict) -> Preview | None:
+    """Typing never gets around a card: the field it clicks into can't be a buy/send/delete button, and pressing
+    return after (submit) in anything but a search or address box sends it, so that asks first."""
+    from mcp_vision.buddy.actions import control
+
+    into = ""
+    if any(key in args for key in ("id", "x", "field")):
+        target = dict(args)
+        if "field" in target:
+            target["text"] = target.pop("field")
+        else:
+            target.pop("text", None)
+        _, _, into = control.resolve(ctx, target)
+        if control.RISKY.search(into) and not _SEARCHY.search(into):
+            raise ActionError(f"{into[:40]} looks like a button, not a box to type in.",
+                              hint="type into a text field's id; buttons that buy, send or delete go through click, "
+                                   "which asks first")
+    if not args.get("submit"):
+        return None
+    role = control._role(ctx, {key: value for key, value in args.items() if key == "id"}) if "id" in args else ""
+    if role == "search field" or _SEARCHY.search(into or str(getattr(_screen_context(ctx), "focused", "") or "")):
+        return None
+    text = _short(str(args.get("text") or ""), 60)
+    return Preview(title=f"Send “{text}”" + (f" in {into[:30]}" if into else ""),
+                   lines=["Typing it in and pressing return sends it."], confirm="Send it")
+
+
+def _screen_context(ctx: ActionContext):
+    return ctx.screen[1] if isinstance(ctx.screen, tuple) and len(ctx.screen) > 1 else None
+
+
 def type_text(ctx: ActionContext, args: dict) -> ActionResult:
     _need(args, "text", "what to type")
     text = str(args["text"])                        # exactly as given: a leading space matters when appending
@@ -652,7 +701,7 @@ SPECS = (
     ActionSpec("read_page", "apps", "Reading the page", read_page, args='{"find"?, "from"?}'),
     ActionSpec("search_files", "files", "Searching files for {query}", search_files,
                args='{"query", "kind"?: pdf|image|document|video|audio|archive}'),
-    ActionSpec("open_file", "files", "Opening the file", open_file, args='{"index"} or {"path"}'),
+    ActionSpec("open_file", "files", "Opening the file", open_file, preview=preview_open, args='{"index"} or {"path"}'),
     ActionSpec("reveal_file", "files", "Showing it in Finder", reveal_file, args='{"index"} or {"path"}'),
     ActionSpec("organize_desktop", "files", "Tidying your desktop", organize_desktop,
                preview=preview_organize, args='{"older_than_days"?}'),
@@ -661,7 +710,8 @@ SPECS = (
                args='{"setting": dark_mode|volume|mute|sleep_display, "value"}'),
     ActionSpec("run_shortcut", "system", "Running {name}", run_shortcut, args='{"name"}'),
     ActionSpec("list_shortcuts", "system", "Checking your shortcuts", list_shortcuts, args="{}"),
-    ActionSpec("type_text", "writing", "Typing it out", type_text, args='{"text", "id"?, "submit"?, "append"?}'),
+    ActionSpec("type_text", "writing", "Typing it out", type_text, preview=preview_type,
+               args='{"text", "id"?, "submit"?, "append"?}'),
     ActionSpec("replace_selection", "writing", "Rewriting your selection", replace_selection, args='{"text"}'),
     ActionSpec("create_reminder", "planning", "Reminder: {title}", create_reminder, args='{"title", "due"?}'),
     ActionSpec("create_note", "planning", "Note: {title}", create_note, args='{"title", "body"}'),

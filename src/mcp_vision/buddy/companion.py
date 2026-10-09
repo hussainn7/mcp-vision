@@ -1092,6 +1092,16 @@ class Companion:
     async def _act(self, tag: ActionTag, result: TurnResult) -> None:
         if self.actions is None:
             return
+        spec_now = self.actions.specs.get(tag.name)
+        on_screen = spec_now is not None and (spec_now.skill == "control" or tag.name in _ON_SCREEN)
+        if result.pending or (result.failed and on_screen):
+            # A step waiting for their yes, or a screen step after one that failed: it was written as if that went
+            # through (typing the reply after a Send card, return after a failed click). The next look re-plans.
+            if result.failed and not any(line.startswith("note: the steps after") for line in result.acted):
+                result.acted.append("note: the on-screen steps after the one that failed weren't run")
+            self.emit("step", id=f"skipped-{tag.name}-{len(result.did)}", label=tag.name.replace("_", " "),
+                      status="skipped", detail="after one that didn't go through")
+            return
         self.actions.ctx.schedule = self._schedule
         self.actions.ctx.announce = self.announce
         self.actions.ctx.screen = (getattr(self, "_shots", []), getattr(self, "_context", None))
