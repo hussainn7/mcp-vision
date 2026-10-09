@@ -19,19 +19,25 @@ from mcp_vision.buddy.actions.base import (
     ActionContext, ActionError, ActionResult, ActionSpec, Preview, maybe_await,
 )
 
-YES_RE = re.compile(r"^\W*(yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|go for it|send( it)?|confirm(ed)?|"
-                    r"please( do)?|correct|that's right|sounds good|tidy( it)?( up)?|fill( it)?|run it|absolutely|y)\b",
-                    re.IGNORECASE)
 NO_RE = re.compile(r"^\W*(no|nope|nah|cancel|stop|don't|do not|never ?mind|wait|hold on|not now|n)\b", re.IGNORECASE)
+# a yes runs the held action with no model call, so only a plain one counts: every word a yes word.
+# "okay wait, don't send that", "yeah, send it to Sarah", "sure, what's in it?" drop it and go to the model
+YES_PHRASES_RE = re.compile(r"\b(go ahead|go for it|go on|do it|please do|why not|that's right|that's fine|sounds good|"
+                            r"of course|all right|i'm sure|thank you|no problem|no worries|uh huh|mm hmm)\b")
+YES_WORDS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "alright", "absolutely", "definitely", "correct",
+             "exactly", "perfect", "great", "cool", "fine", "confirm", "confirmed", "please", "y", "go",
+             "send", "buy", "delete", "quit", "tidy", "fill", "run", "click", "press"}
+FILLER_WORDS = {"it", "them", "that", "up", "and", "now", "just", "thing", "thanks", "um", "uh", "oh", "so", "well",
+                "hmm", "like"}                         # fine inside a yes, never one on their own
 
 
 def answer_kind(text: str) -> str:
-    """'yes', 'no', or '' for anything else (a new question)."""
+    """'yes', 'no', or '' for anything else (a new question, or a yes with more to it)."""
     if NO_RE.match(text):
         return "no"
-    if YES_RE.match(text):
-        return "yes"
-    return ""
+    words = re.findall(r"[\w']+", YES_PHRASES_RE.sub(" yes ", text.lower()))
+    plain = "?" not in text and all(word in YES_WORDS or word in FILLER_WORDS for word in words)
+    return "yes" if plain and any(word in YES_WORDS for word in words) else ""
 
 
 # consequential doings; a yes covers a step only if both name the same one
