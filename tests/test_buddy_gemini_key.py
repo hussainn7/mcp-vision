@@ -168,9 +168,8 @@ def test_the_free_engine_is_ready_with_a_key_and_builds_a_gemini_brain():
     assert choose_engine(settings, [status]).spec.id == "gemini-api"
 
 
-def test_new_aq_keys_paste_and_the_retired_gemini_cli_says_what_to_do(tmp_path):
-    from mcp_vision.buddy.companion import _friendly_error
-    from mcp_vision.buddy.engines import EngineError, _tail
+def test_new_aq_keys_paste_and_cli_errors_keep_the_error_line(tmp_path):
+    from mcp_vision.buddy.engines import _tail
     from mcp_vision.buddy.settings import BuddySettings
     from mcp_vision.buddy.settings_service import KEY_SHAPES, Platform, SettingsService
     from mcp_vision.buddy.store import History
@@ -189,7 +188,6 @@ def test_new_aq_keys_paste_and_the_retired_gemini_cli_says_what_to_do(tmp_path):
               "    at process.processTicksAndRejections (node:internal)")
     said = _tail(stderr)
     assert said.startswith("Error authenticating: IneligibleTierError") and " at " not in said
-    assert "free Gemini key" in _friendly_error(EngineError(f"Gemini failed: {said}"))
 
 
 def test_an_overloaded_gemini_is_tried_again_then_the_lite_model_answers(monkeypatch):

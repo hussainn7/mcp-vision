@@ -73,6 +73,7 @@ export function BrainTab({ state }: { state: SettingsState }) {
         title="The AI Plip thinks with"
         subtitle="Use the plan you already pay for (Claude, ChatGPT or Cursor): one click connects it, with no extra bill. No plan? Google’s Gemini is free."
       />
+      <p className="-mt-4 mb-5 text-[11.5px] text-white/35">How fast answers come depends on the provider.</p>
       <div className="mb-6"><ConnectAI state={state} /></div>
       {state.usage && state.usage.periods['30'].requests > 0 && (
         <a href="#settings?tab=activity" className="card card-hover mb-6 flex items-center gap-3 px-4 py-3 text-[12.5px] text-white/60">

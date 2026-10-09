@@ -150,16 +150,6 @@ def test_a_codex_download_that_doesnt_match_its_checksum_is_never_installed(tmp_
     assert made.progress["codex"].state == "failed" and not (tmp_path / ".local" / "bin" / "codex").exists()
 
 
-def test_gemini_without_node_says_what_to_do_instead(tmp_path, monkeypatch):
-    import mcp_vision.buddy.connect as connect
-
-    monkeypatch.setattr(connect.shutil, "which", lambda name, path=None: None)
-    made, _, connected = connector(Brain("not-installed"), tmp_path)
-    made.start("gemini", wait=True)
-    assert made.progress["gemini"].state == "failed" and "Node.js" in made.progress["gemini"].message
-    assert connected == []
-
-
 def test_a_failed_install_is_explained(tmp_path):
     made, _, _ = connector(Brain("not-installed"), tmp_path,
                            run=lambda argv, **kw: SimpleNamespace(returncode=1, stdout="", stderr="curl: (6) no host"))
@@ -243,17 +233,14 @@ def test_a_sign_in_app_that_quits_without_signing_in_isnt_connected(tmp_path):
     assert connected == []
 
 
-def test_geminis_consent_question_is_answered_and_a_browser_it_couldnt_open_gets_opened(tmp_path):
-    login = FakeLogin(["Opening authentication page in your browser. Do you want to continue? [Y/n]: ",
-                       "Attempting to open authentication page in your browser.",
-                       "Otherwise navigate to: https://accounts.google.com/o/oauth2/v2/auth?x=1",
+def test_a_browser_the_sign_in_app_couldnt_open_gets_opened_by_plip(tmp_path):
+    login = FakeLogin(["Otherwise navigate to: https://claude.com/cai/oauth/authorize?x=1",
                        "Failed to open browser with error: spawn open ENOENT", ""])
     opened = []
     made, _, connected = connector(Brain("logged-out", "logged-out", "logged-out", "ready"), tmp_path,
                                    spawn=lambda argv, **kw: login, open_url=opened.append)
-    made.start("gemini", wait=True)
-    assert login.stdin.getvalue() == b"y\n"                     # it waited on "[Y/n]" with nobody to answer
-    assert opened == ["https://accounts.google.com/o/oauth2/v2/auth?x=1"] and connected == ["gemini"]
+    made.start("claude-code", wait=True)
+    assert opened == ["https://claude.com/cai/oauth/authorize?x=1"] and connected == ["claude-code"]
 
 
 def test_cancel_stops_the_whole_sign_in_app_not_just_its_launcher(tmp_path):

@@ -34,7 +34,7 @@ class BuddySettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BUDDY_", extra="ignore", populate_by_name=True)
 
     # brain: "" picks the best ready engine (subscription CLIs first, then API keys)
-    engine: str = ""                    # claude-code | codex | cursor | gemini | anthropic | gemini-api
+    engine: str = ""                    # claude-code | codex | cursor | antigravity | anthropic | gemini-api
     cli_model: str = ""                 # optional --model for the subscription CLI (e.g. sonnet, gpt-5-codex)
     anthropic_api_key: str | None = Field(default=None, validation_alias=AliasChoices(
         "ANTHROPIC_API_KEY", "BUDDY_ANTHROPIC_API_KEY"))

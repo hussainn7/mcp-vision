@@ -2,7 +2,7 @@
 
 Subscription engines drive a CLI the user is already signed in to (Claude
 Code with a Claude Pro/Max plan, Codex with ChatGPT Plus/Pro, Cursor's
-agent, Gemini CLI with a Google account), so their plan pays for the
+agent, Gemini on a Google AI plan via Antigravity), so their plan pays for the
 reasoning and no API key is needed. API engines use a key instead.
 
 Each CLI runs once per turn in an empty temporary directory with its tools
@@ -68,9 +68,6 @@ SPECS: tuple[EngineSpec, ...] = (
                binaries=("cursor-agent", "agent"), login="agent login",
                install="curl https://cursor.com/install -fsS | bash",
                blurb="Text only: Plip reads the screen's controls out to it."),
-    EngineSpec("gemini", "Gemini CLI", "Google account via Gemini CLI", "subscription", True,
-               binaries=("gemini",), login="gemini", install="npm i -g @google/gemini-cli",
-               blurb="Needs Node.js. No Node? The free Gemini key below needs nothing installed."),
     EngineSpec("antigravity", "Gemini", "Google AI Pro / Ultra via Antigravity", "subscription", False,
                binaries=("agy",), login="agy", install="https://antigravity.google",
                blurb="Your Google AI plan through Antigravity's CLI, its tools off. Text only: Plip reads it the screen."),
@@ -82,7 +79,7 @@ SPECS: tuple[EngineSpec, ...] = (
                blurb="Free with a Google account, no AI plan needed. Sees your screenshots."),
 )
 BY_ID = {spec.id: spec for spec in SPECS}
-PREFERENCE = ("claude-code", "anthropic", "codex", "antigravity", "gemini", "cursor", "gemini-api")
+PREFERENCE = ("claude-code", "anthropic", "codex", "antigravity", "cursor", "gemini-api")
 
 
 # -- finding and probing ---------------------------------------------------------
@@ -275,14 +272,6 @@ def _check_cursor(status: EngineStatus, runner: Runner, home: Path) -> None:
         status.status = "ready"
 
 
-def _check_gemini(status: EngineStatus, runner: Runner, home: Path) -> None:
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        status.status, status.detail = "ready", "Using your Gemini API key"
-    else:                                         # google switched off its google sign-in (june 2026, even pro)
-        status.status = "unavailable"
-        status.detail = "Unavailable for now: Google moved Gemini CLI sign-in to Antigravity. Use Gemini via Antigravity."
-
-
 def _check_antigravity(status: EngineStatus, runner: Runner, home: Path) -> None:
     if (home / ".gemini" / "jetski-standalone-oauth-token").exists():
         status.status, status.detail = "ready", "Signed in to Antigravity"
@@ -291,7 +280,7 @@ def _check_antigravity(status: EngineStatus, runner: Runner, home: Path) -> None
 
 
 _LOGIN_CHECKS = {"claude-code": _check_claude, "codex": _check_codex, "cursor": _check_cursor,
-                 "gemini": _check_gemini, "antigravity": _check_antigravity}
+                 "antigravity": _check_antigravity}
 
 
 class EngineRegistry:
@@ -368,8 +357,7 @@ def make_engine_brain(status: EngineStatus, settings: Any):
                               model=getattr(settings, "gemini_model", "") or "",
                               effort=getattr(settings, "effort", "low"))
     brain_class = {"claude-code": ClaudeCodeBrain, "codex": CodexBrain, "cursor": CursorBrain,
-                   "antigravity": AntigravityBrain,
-                   "gemini": GeminiBrain}[spec.id]
+                   "antigravity": AntigravityBrain}[spec.id]
     return brain_class(status.path or spec.binaries[0], model=getattr(settings, "cli_model", "") or "",
                        effort=getattr(settings, "effort", "low"))
 
@@ -884,50 +872,6 @@ class CursorBrain(CLIBrain):
         return CursorParser()
 
 
-# Gemini ----------------------------------------------------------------------------------
-
-class GeminiParser(StreamParser):
-    def handle(self, event):
-        kind = event.get("type")
-        if kind in {"tool_use", "tool_call"}:
-            self.refuse_tools()
-            return []
-        if kind == "message" and event.get("role") == "assistant":
-            return [str(event.get("content") or "")]
-        if kind == "error" and event.get("severity", "error") == "error":
-            self.error = str(event.get("message") or event.get("error") or "error")
-        if kind == "result" and event.get("status") not in {None, "success"}:
-            error = event.get("error") or {}
-            self.error = str(error.get("message") if isinstance(error, dict) else error or "failed")
-        if kind == "result" and isinstance(event.get("stats"), dict):
-            stats = event["stats"]
-            models = stats.get("models") if isinstance(stats.get("models"), dict) else {}
-            self.usage = from_report(stats, model=next(iter(models), ""), cached_in_input=True)
-        return []
-
-
-class GeminiBrain(CLIBrain):
-    name = "gemini"
-    label = "Gemini"
-    vision = True
-
-    def invocation(self, *, system, turns, workdir, detailed, effort=None):
-        images = write_images(turns[-1], workdir)
-        system_file = os.path.join(workdir, "plip-system.md")
-        with open(system_file, "w", encoding="utf-8") as handle:
-            handle.write(system)
-        prompt = transcript_prompt(turns)
-        refs = " ".join(f"@{os.path.basename(path)}" for path in images)
-        argv = [self.binary, "--output-format", "stream-json", "--skip-trust", "--approval-mode", "default"]
-        if self.model:
-            argv += ["--model", self.model]
-        argv += ["--prompt", (refs + "\n\n" + prompt) if refs else prompt]
-        return Invocation(argv, env={"GEMINI_SYSTEM_MD": system_file})
-
-    def parser(self):
-        return GeminiParser()
-
-
 # Antigravity -----------------------------------------------------------------------------
 
 class AntigravityParser(StreamParser):
@@ -981,5 +925,5 @@ class AntigravityBrain(CLIBrain):
 
 
 __all__ = ["BY_ID", "SPECS", "AntigravityBrain", "ClaudeCodeBrain", "CodexBrain", "CursorBrain", "EngineError", "EngineRegistry",
-           "EngineSpec", "EngineStatus", "GeminiBrain", "choose_engine", "find_binary", "make_engine_brain", "probe",
+           "EngineSpec", "EngineStatus", "choose_engine", "find_binary", "make_engine_brain", "probe",
            "transcript_prompt"]

@@ -66,11 +66,11 @@ to type into a terminal:
 | Claude Pro / Max | **Connect** next to Claude: Plip installs [Claude Code](https://claude.com/claude-code) and opens the browser to sign in | yes |
 | ChatGPT Plus / Pro | **Connect** next to ChatGPT: Plip downloads the [Codex CLI](https://github.com/openai/codex) from GitHub (checked against its SHA-256) and opens the browser to sign in | yes |
 | Cursor | **Connect** next to Cursor ([Cursor CLI](https://cursor.com/cli)) | text only (Plip reads it the screen map) |
+| Google AI Pro / Ultra | **Use Gemini**, once you're signed in to [Antigravity](https://antigravity.google) (Plip uses its CLI, tools off) | text only |
 | no AI plan | **Get my free key** (Google AI Studio, any Google account), then **Paste key**. Plip checks it with Google | yes |
 | an API key | paste an `ANTHROPIC_API_KEY` under **Brain** | yes, fastest first word |
 
-Already signed in to one of these? Plip finds it and uses it. The [Gemini CLI](https://github.com/google-gemini/gemini-cli)
-works too if it's installed. The free Google key has limits (a few requests a minute, more per day). On Google's
+Already signed in to one of these? Plip finds it and uses it. The free Google key has limits (a few requests a minute, more per day). On Google's
 free tier, Google may use what Plip sends it (screenshots included) to improve its products, and human reviewers
 may read it (outside the EEA, Switzerland and the UK; see the [Gemini API terms](https://ai.google.dev/gemini-api/terms)),
 so use a paid plan for private work.

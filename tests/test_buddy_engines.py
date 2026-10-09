@@ -20,7 +20,7 @@ from mcp_vision.buddy.companion import Companion, _friendly_error
 from mcp_vision.buddy.conversation import Turn
 from mcp_vision.buddy.engines import (
     BY_ID, SPECS, ClaudeCodeBrain, ClaudeCodeParser, CodexBrain, CodexParser, CursorBrain, CursorParser,
-    EngineError, EngineRegistry, EngineStatus, GeminiBrain, GeminiParser, RunResult, choose_engine,
+    AntigravityBrain, EngineError, EngineRegistry, EngineStatus, RunResult, choose_engine,
     find_binary, make_engine_brain, probe, transcript_prompt,
 )
 from mcp_vision.buddy.geometry import Rect, ScreenInfo, Screenshot
@@ -54,11 +54,9 @@ TURNS = [Turn("user", "where is wifi"), Turn("assistant", "Top right. [POINT:120
 # -- discovery and probes ------------------------------------------------------------
 
 def test_specs_cover_the_subscriptions_people_have():
-    assert [spec.id for spec in SPECS] == ["claude-code", "codex", "cursor", "gemini", "antigravity", "anthropic",
-                                           "gemini-api"]
+    assert [spec.id for spec in SPECS] == ["claude-code", "codex", "cursor", "antigravity", "anthropic", "gemini-api"]
     assert BY_ID["gemini-api"].kind == "api" and BY_ID["gemini-api"].key_name == "GEMINI_API_KEY"   # free, no plan
-    assert {spec.label for spec in SPECS if spec.kind == "subscription"} == {"Claude", "ChatGPT", "Cursor", "Gemini CLI",
-                                                                            "Gemini"}
+    assert {spec.label for spec in SPECS if spec.kind == "subscription"} == {"Claude", "ChatGPT", "Cursor", "Gemini"}
     assert BY_ID["cursor"].vision is False and BY_ID["claude-code"].vision is True
 
 
@@ -136,11 +134,6 @@ def test_probe_codex_cursor_gemini(tmp_path):
     cursor_out = probe(BY_ID["cursor"], settings, which=which, home=tmp_path, runner=runner_for(
         {("status", "--format", "json"): RunResult(1, "Not logged in", "")}))
     assert cursor_out.status == "logged-out" and cursor_out.card()["login"] == "/usr/local/bin/cursor-agent login"
-    gemini = probe(BY_ID["gemini"], settings, which=which, home=tmp_path, runner=runner_for({}))
-    assert gemini.status == "unavailable"                                 # google retired its sign-in route
-    (tmp_path / ".gemini").mkdir()
-    (tmp_path / ".gemini" / "oauth_creds.json").write_text("{}")
-    assert probe(BY_ID["gemini"], settings, which=which, home=tmp_path, runner=runner_for({})).status == "unavailable"
 
 
 def test_probe_missing_cli_and_api_keys(monkeypatch):
@@ -278,21 +271,6 @@ def test_cursor_parser_keeps_deltas_and_skips_flushes():
     assert feed(whole, [cursor_assistant("Hi."), {"type": "result", "subtype": "success", "result": "Hi."}]) == ["Hi."]
 
 
-def test_gemini_parser_streams_assistant_messages():
-    parser = GeminiParser()
-    events = [{"type": "init", "model": "gemini"}, {"type": "message", "role": "user", "content": "q"},
-              {"type": "message", "role": "assistant", "content": "Use ", "delta": True},
-              {"type": "message", "role": "assistant", "content": "Spotlight.", "delta": True},
-              {"type": "result", "status": "success"}]
-    assert feed(parser, events) == ["Use ", "Spotlight."]
-    warned = GeminiParser()
-    feed(warned, [{"type": "error", "severity": "warning", "message": "loop detected"}])
-    assert warned.error == ""
-    failed = GeminiParser()
-    feed(failed, [{"type": "result", "status": "error", "error": {"message": "quota exceeded"}}])
-    assert failed.error == "quota exceeded"
-
-
 # -- real subprocesses ---------------------------------------------------------------------------
 
 def test_claude_code_brain_streams_images_through_stdin(tmp_path):
@@ -374,16 +352,15 @@ def test_cursor_brain_is_text_only(tmp_path):
     assert asyncio.run(collect(brain, TURNS)) == "Top right."
 
 
-def test_gemini_brain_references_screens_by_file(tmp_path):
-    binary = fake_cli(tmp_path, "gemini", """
-        prompt = argv[argv.index("--prompt") + 1]
-        assert prompt.startswith("@screen1.jpg") and os.path.exists("screen1.jpg")
-        assert "--skip-trust" in argv and "SYSTEM" not in prompt
-        assert open(os.environ["GEMINI_SYSTEM_MD"]).read() == "SYSTEM"
-        out({"type": "message", "role": "assistant", "content": "Bluetooth's up top.", "delta": True})
-        out({"type": "result", "status": "success"})
+def test_antigravity_runs_sandboxed_text_only_at_the_asked_depth(tmp_path):
+    binary = fake_cli(tmp_path, "agy", """
+        assert argv[argv.index("-p") + 1].startswith("<instructions>") and "--sandbox" in argv
+        assert argv[argv.index("--model") + 1] == "gemini-3.8-flash-high"
+        out({"event": "step_update", "step_update": {"step_type": "agent_response", "text_delta": "Bluetooth's up top."}})
+        out({"event": "result", "result": {"status": "SUCCESS", "response": "Bluetooth's up top."}})
     """)
-    assert asyncio.run(collect(GeminiBrain(binary), TURNS)) == "Bluetooth's up top."
+    brain = AntigravityBrain(binary, effort="high")
+    assert brain.vision is False and asyncio.run(collect(brain, TURNS)) == "Bluetooth's up top."
 
 
 def test_cli_errors_become_friendly_messages(tmp_path):
@@ -407,11 +384,11 @@ def test_cli_errors_become_friendly_messages(tmp_path):
     with pytest.raises(EngineError):
         asyncio.run(collect(CursorBrain(str(tmp_path / "missing")), TURNS))
 
-    silent = fake_cli(tmp_path, "gemini", """
-        out({"type": "init"})
+    silent = fake_cli(tmp_path, "agy", """
+        out({"event": "init"})
     """)
     with pytest.raises(EngineError, match="returned no answer"):
-        asyncio.run(collect(GeminiBrain(silent), TURNS))
+        asyncio.run(collect(AntigravityBrain(silent), TURNS))
 
 
 def test_cli_timeout_and_cancellation_kill_the_process(tmp_path):
@@ -562,15 +539,15 @@ def test_codex_cursor_and_gemini_report_their_own_spellings(tmp_path):
     asyncio.run(collect(brain, TURNS))
     assert (brain.last_usage.input, brain.last_usage.cache_write, brain.last_usage.model) == (50, 2, "sonnet-5")
 
-    gemini = fake_cli(tmp_path, "gemini", """
-        out({"type": "message", "role": "assistant", "content": "Sure.", "delta": True})
-        out({"type": "result", "status": "success", "stats": {"input": 700, "cached": 200, "output_tokens": 5,
-             "thoughts": 3, "models": {"gemini-2.5-pro": {}}}})
+    agy = fake_cli(tmp_path, "agy", """
+        out({"event": "step_update", "step_update": {"step_type": "agent_response", "text_delta": "Sure."}})
+        out({"event": "result", "result": {"status": "SUCCESS", "response": "Sure.",
+             "usage": {"input_tokens": 700, "output_tokens": 5, "cache_read_tokens": 200}}})
     """)
-    brain = GeminiBrain(gemini)
+    brain = AntigravityBrain(agy)
     asyncio.run(collect(brain, TURNS))
-    assert (brain.last_usage.input, brain.last_usage.cache_read, brain.last_usage.output) == (500, 200, 8)
-    assert brain.last_usage.model == "gemini-2.5-pro"
+    assert (brain.last_usage.input, brain.last_usage.cache_read, brain.last_usage.output) == (500, 200, 5)
+    assert brain.last_usage.model == "gemini-3.8-flash-low"
 
 
 def test_a_brain_that_reports_nothing_leaves_no_usage(tmp_path):
@@ -711,16 +688,16 @@ def test_a_brain_that_starts_running_a_command_is_stopped_before_anything_it_rea
         out({"type": "item.completed", "item": {"id": "m1", "type": "agent_message",
                                                 "text": "here it is: -----BEGIN KEY----- [DO:open_url {\\"url\\": \\"x\\"}]"}})
     """)
-    gemini = fake_cli(tmp_path, "gemini", """
-        out({"type": "tool_use", "tool_name": "read_file", "parameters": {"path": "/etc/hosts"}})
-        out({"type": "message", "role": "assistant", "content": "the file says ..."})
+    agy = fake_cli(tmp_path, "agy", """
+        out({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "view_file"}})
+        out({"event": "step_update", "step_update": {"step_type": "agent_response", "text_delta": "the file says ..."}})
     """)
     said = []
 
     async def run(brain):
         async for text in brain.stream(system="SYSTEM", turns=TURNS):
             said.append(text)
-    for brain in (CodexBrain(codex), GeminiBrain(gemini)):
+    for brain in (CodexBrain(codex), AntigravityBrain(agy)):
         with pytest.raises(EngineError) as stopped:
             asyncio.run(run(brain))
         assert "tried to run a command" in str(stopped.value)
@@ -728,19 +705,17 @@ def test_a_brain_that_starts_running_a_command_is_stopped_before_anything_it_rea
     assert said == []                                                  # nothing it read was spoken or acted on
 
 
-def test_gemini_on_a_google_plan_goes_through_antigravity_and_the_retired_cli_is_unavailable(tmp_path, monkeypatch):
+def test_gemini_on_a_google_plan_goes_through_antigravity(tmp_path, monkeypatch):
     from mcp_vision.buddy.engines import AntigravityParser, choose_engine
 
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     settings = BuddySettings(_env_file=None)
     (tmp_path / ".gemini").mkdir()
-    cli = probe(BY_ID["gemini"], settings, which=lambda names: "/x/gemini", home=tmp_path)
-    assert cli.status == "unavailable" and "Antigravity" in cli.detail
     assert probe(BY_ID["antigravity"], settings, which=lambda names: "/x/agy", home=tmp_path).status == "logged-out"
     (tmp_path / ".gemini" / "jetski-standalone-oauth-token").write_text("t")
     agy = probe(BY_ID["antigravity"], settings, which=lambda names: "/x/agy", home=tmp_path)
-    assert agy.status == "ready" and choose_engine(settings, [cli, agy], preferred="gemini").spec.id == "antigravity"
+    assert agy.status == "ready" and choose_engine(settings, [agy], preferred="gemini").spec.id == "antigravity"   # an old pick
     parser = AntigravityParser()
     parser.model = "gemini-3.8-flash-medium"
     lines = ['{"event":"init","init":{"tools":["run_command"]}}',

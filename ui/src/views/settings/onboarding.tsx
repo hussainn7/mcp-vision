@@ -252,6 +252,7 @@ function PickBrain({ state, next, back }: StepProps) {
       footer={<><Back onClick={back} />{ready.brain ? <Forward onClick={next} glow /> : <Later onClick={next} />}</>}
     >
       <ConnectAI state={state} compact />
+      <p className="mt-3 text-[11.5px] text-white/35">How fast answers come depends on the provider.</p>
     </Frame>
   )
 }

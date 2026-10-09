@@ -1416,9 +1416,6 @@ def _friendly_error(exc: Exception) -> str:
     lowered = message.lower()
     if "high demand" in lowered or "overloaded" in lowered or "gemini 503" in lowered:
         return "Google's Gemini is overloaded right now. Try again in a moment, or switch to another AI in my settings."
-    if "no longer supported for gemini code assist" in lowered or "ineligibletier" in lowered:
-        return ("Google stopped letting the Gemini CLI answer on free accounts. Use the free Gemini key in my settings "
-                "instead.")
     if "tried to run a command" in lowered:
         return "My brain tried to run a command on your Mac, and I don't let it do that. Try asking again."
     if "not logged in" in lowered or "login" in lowered or "sign in" in lowered:

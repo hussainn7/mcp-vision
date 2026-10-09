@@ -27,7 +27,6 @@ from mcp_vision.buddy.engines import BY_ID, EngineStatus, child_env
 URL_RE = re.compile(r"https://\S+")
 MANUAL = {"antigravity"}                # installed and signed in from its own app, not by us
 CODE_PROMPT = re.compile(r"paste (the )?code", re.IGNORECASE)
-CONSENT = re.compile(r"do you want to continue\? \[y/n\]", re.IGNORECASE)     # gemini, headless: blocks on stdin
 NO_BROWSER = re.compile(r"failed to open (the )?browser|couldn'?t open (the |a )?browser", re.IGNORECASE)
 # Codex CLI: one GitHub binary per Mac, checked against the release's SHA-256
 CODEX_RELEASE = "https://api.github.com/repos/openai/codex/releases/latest"
@@ -156,12 +155,6 @@ class Connector:
             self._shell("curl -fsS https://cursor.com/install | bash", env, "Cursor's CLI")
         elif engine_id == "codex":
             self._install_codex()
-        elif engine_id == "gemini":
-            npm = shutil.which("npm", path=env["PATH"])
-            if npm is None:
-                raise ConnectError("Gemini's app needs Node.js, which isn't on this Mac. Connect Claude or ChatGPT "
-                                   "instead, or install Node from nodejs.org and try again.")
-            self._shell(f'"{npm}" install -g --prefix "{self.home / ".local"}" @google/gemini-cli', env, "Gemini CLI")
 
     def _shell(self, command: str, env: dict[str, str], what: str) -> None:
         try:
@@ -214,10 +207,7 @@ class Connector:
         path = status.path or shutil.which(spec.binaries[0], path=child_env()["PATH"])
         if not path:
             raise ConnectError(f"I can't find {spec.label}'s app. Try again.")
-        argv = {"claude-code": [path, "auth", "login"], "codex": [path, "login"], "cursor": [path, "login"],
-                "gemini": [path, "-p", "Reply with the single word: ok"]}[engine_id]
-        if engine_id == "gemini":
-            self._gemini_google_login()
+        argv = {"claude-code": [path, "auth", "login"], "codex": [path, "login"], "cursor": [path, "login"]}[engine_id]
         self._set(engine_id, "signing-in", f"Finish signing in to {spec.label} in your browser…")
         process = self.spawn(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              env=child_env(path), cwd=str(self.home), start_new_session=True)  # own group
@@ -244,7 +234,7 @@ class Connector:
         if stream is None:
             return
         read = getattr(stream, "read1", None) or (lambda size: stream.read(size))
-        seen, consented, opened = "", False, False
+        seen, opened = "", False
         while True:
             try:
                 chunk = read(4096)
@@ -259,39 +249,12 @@ class Connector:
             found = next((match.group(0).rstrip(".,)") for match in URL_RE.finditer(seen)
                           if match.end() < len(seen)), "")             # a link that's been printed in full
             url = current.url or found
-            if not consented and CONSENT.search(seen):
-                consented = True                      # they clicked Connect: that's the yes
-                self._write(process, "y")
             if url and not opened and NO_BROWSER.search(seen):
                 opened = True                         # the app couldn't open it: we do
                 self.open_url(url)
             needs_code = current.needs_code or bool(CODE_PROMPT.search(seen))
             if (url, needs_code) != (current.url, current.needs_code):
                 self._set(engine_id, "signing-in", current.message, url=url, needs_code=needs_code)
-
-    @staticmethod
-    def _write(process: Any, line: str) -> None:
-        try:
-            process.stdin.write((line + "\n").encode())
-            process.stdin.flush()
-        except (AttributeError, OSError, ValueError):
-            pass
-
-    def _gemini_google_login(self) -> None:
-        """Gemini signs in on first use once "Login with Google" is the chosen method."""
-        import json
-
-        settings = self.home / ".gemini" / "settings.json"
-        try:
-            data = json.loads(settings.read_text()) if settings.exists() else {}
-        except ValueError:
-            data = {}
-        security = data.setdefault("security", {})
-        auth = security.setdefault("auth", {}) if isinstance(security, dict) else {}
-        if isinstance(auth, dict) and not auth.get("selectedType"):
-            auth["selectedType"] = "oauth-personal"
-            settings.parent.mkdir(parents=True, exist_ok=True)
-            settings.write_text(json.dumps(data, indent=2))
 
     # -- bookkeeping ------------------------------------------------------------------------
     def _set(self, engine_id: str, state: str, message: str, *, url: str = "", needs_code: bool = False) -> None:
