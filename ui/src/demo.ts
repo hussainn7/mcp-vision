@@ -142,6 +142,7 @@ export const DEMO_SETTINGS: Partial<SettingsState> = {
     { id: 'cursor', label: 'Cursor', via: 'Your Cursor plan via Cursor CLI', kind: 'subscription', status: 'not-installed', install: 'curl https://cursor.com/install -fsS | bash', detail: 'Not on this Mac yet: Connect installs it and signs you in.' },
     { id: 'gemini', label: 'Gemini', via: 'Google account via Gemini CLI', kind: 'subscription', status: 'not-installed', install: 'npm i -g @google/gemini-cli' },
     { id: 'anthropic', label: 'Claude API', via: 'Anthropic API key', kind: 'api', status: 'missing-key', keyName: 'ANTHROPIC_API_KEY', vision: true },
+    { id: 'gemini-api', label: 'Gemini', via: 'Free key from Google AI Studio', kind: 'api', status: 'missing-key', keyName: 'GEMINI_API_KEY', vision: true, detail: 'Free with a Google account, no AI plan needed. Sees your screenshots.' },
   ],
   permissions: { screen: true, accessibility: true, microphone: true, speech: null },
   voice: { tts: 'elevenlabs', stt: 'assemblyai', elevenlabs: true, assemblyai: false,

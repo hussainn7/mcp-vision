@@ -43,6 +43,18 @@ if (!isNative()) {
         engines: current.engines.map((engine) => (engine.id === id ? { ...engine, status: 'ready', selected: true, connect: undefined, detail: 'Signed in as you' } : { ...engine, selected: false })),
       })), installed ? 2600 : 4200)
     }
+    if (command.cmd === 'paste-key' || (command.cmd === 'set-key' && command.name === 'GEMINI_API_KEY')) {
+      // Browser preview: Google "takes" the key after a beat; with no other brain ready, Gemini becomes the brain.
+      settings.set({ keyCheck: { name: 'GEMINI_API_KEY', state: 'checking', message: 'Checking the key with Google…' } })
+      window.setTimeout(() => settings.set((current) => {
+        const other = current.engines.some((engine) => engine.status === 'ready' && engine.id !== 'gemini-api')
+        return {
+          keyCheck: { name: 'GEMINI_API_KEY', state: 'ok', message: '' },
+          engines: current.engines.map((engine) => engine.id === 'gemini-api' ? { ...engine, status: 'ready', selected: !other }
+            : other ? engine : { ...engine, selected: false }),
+        }
+      }), 900)
+    }
     if (command.cmd === 'engine-connect-cancel')
       settings.set((current) => ({ engines: current.engines.map((engine) => (engine.id === command.id ? { ...engine, connect: undefined } : engine)) }))
     if (command.cmd === 'report-issue' || command.cmd === 'request-feature') settings.set({ report: 'sent' })

@@ -74,9 +74,12 @@ SPECS: tuple[EngineSpec, ...] = (
     EngineSpec("anthropic", "Claude API", "Anthropic API key", "api", True, key_name="ANTHROPIC_API_KEY",
                install="https://console.anthropic.com/settings/keys",
                blurb="Fastest first word: streamed with prompt caching and adaptive effort."),
+    EngineSpec("gemini-api", "Gemini", "Free key from Google AI Studio", "api", True, key_name="GEMINI_API_KEY",
+               install="https://aistudio.google.com/apikey",
+               blurb="Free with a Google account, no AI plan needed. Sees your screenshots."),
 )
 BY_ID = {spec.id: spec for spec in SPECS}
-PREFERENCE = ("claude-code", "anthropic", "codex", "gemini", "cursor")
+PREFERENCE = ("claude-code", "anthropic", "codex", "gemini", "cursor", "gemini-api")
 
 
 # -- finding and probing ---------------------------------------------------------
@@ -302,10 +305,16 @@ class EngineRegistry:
             settings = self.settings()
             self._cache = [probe(spec, settings, runner=self.runner, which=self.which) for spec in SPECS]
             self._stamp = self.clock()
-        return list(self._cache)
+        return self._keys_now(self._cache)
 
     def cached(self) -> list[EngineStatus]:
-        return list(self._cache) if self._cache is not None else [EngineStatus(spec) for spec in SPECS]
+        return self._keys_now(self._cache) if self._cache is not None else [EngineStatus(spec) for spec in SPECS]
+
+    def _keys_now(self, statuses: list[EngineStatus]) -> list[EngineStatus]:
+        """API engines only check for a key, which costs nothing: always current, so a key pasted a second ago
+        counts without waiting for the CLIs to be probed again."""
+        settings = self.settings()
+        return [probe(status.spec, settings) if status.spec.kind == "api" else status for status in statuses]
 
     def cards(self, selected: str = "", probe: bool = False) -> list[dict[str, Any]]:
         """Engine cards for Settings. Without ``probe`` this never spawns a process."""
@@ -345,6 +354,12 @@ def make_engine_brain(status: EngineStatus, settings: Any):
                            model=getattr(settings, "model", "claude-opus-5-5"),
                            effort=getattr(settings, "effort", "low"),
                            max_tokens=getattr(settings, "max_tokens", 16000))
+    if spec.id == "gemini-api":
+        from mcp_vision.buddy.brain_gemini import GeminiKeyBrain
+
+        return GeminiKeyBrain(api_key=getattr(settings, "gemini_api_key", None) or os.environ.get(spec.key_name, ""),
+                              model=getattr(settings, "gemini_model", "") or "",
+                              effort=getattr(settings, "effort", "low"))
     brain_class = {"claude-code": ClaudeCodeBrain, "codex": CodexBrain, "cursor": CursorBrain,
                    "gemini": GeminiBrain}[spec.id]
     return brain_class(status.path or spec.binaries[0], model=getattr(settings, "cli_model", "") or "",

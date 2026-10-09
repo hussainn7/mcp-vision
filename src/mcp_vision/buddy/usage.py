@@ -45,12 +45,14 @@ PRICES: tuple[tuple[str, tuple[float, float, float]], ...] = (
     ("codex", (1.25, 10.0, 0.125)),
     ("o3", (2.0, 8.0, 0.5)),
     ("o4", (1.1, 4.4, 0.275)),
+    ("flash-lite", (0.10, 0.40, 0.025)),
     ("gemini-2.5-flash", (0.30, 2.50, 0.075)),
+    ("flash", (0.30, 2.50, 0.075)),
     ("gemini", (1.25, 10.0, 0.31)),
 )
 # What each brain usually runs when it doesn't say which model answered.
 DEFAULT_PRICES = {"claude-code": "claude-sonnet-5", "claude": "claude-sonnet-5", "codex": "gpt-5",
-                  "cursor": "claude-sonnet-5", "gemini": "gemini-2.5-pro"}
+                  "cursor": "claude-sonnet-5", "gemini": "gemini-2.5-pro", "gemini-api": "gemini-flash"}
 
 
 @dataclass
@@ -145,7 +147,7 @@ def image_tokens(width: int, height: int) -> int:
 
 # Which credential paid for the request, for the "which plan paid" bars.
 LANES = {"claude-code": "Claude plan (Pro/Max)", "codex": "ChatGPT plan", "cursor": "Cursor plan",
-         "gemini": "Google account", "claude": "API key"}
+         "gemini": "Google account", "claude": "API key", "gemini-api": "Free Google key"}
 
 
 # -- the log -----------------------------------------------------------------------------------

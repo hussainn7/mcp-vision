@@ -94,6 +94,12 @@ export interface Engine {
   connect?: ConnectProgress  // while Plip installs its app and waits for the browser sign-in
 }
 
+export interface KeyCheck {
+  name: string               // GEMINI_API_KEY, ANTHROPIC_API_KEY, or '' when no key was found to check
+  state: 'checking' | 'ok' | 'bad'
+  message: string
+}
+
 export interface ConnectProgress {
   state: 'installing' | 'signing-in' | 'ready' | 'failed'
   message: string
@@ -250,6 +256,7 @@ export interface SettingsState {
   usage: UsageState | null
   onboarded: boolean
   connect: string
+  keyCheck?: KeyCheck | null  // a pasted key being checked with its provider, or what was wrong with it
   report: '' | 'sent' | 'failed'     // a bug report or feature request, after Send
   account: AccountState
   update: UpdateState

@@ -199,6 +199,12 @@ def _copy(text: str) -> None:
     board.setString_forType_(text, AppKit.NSPasteboardTypeString)
 
 
+def _clipboard() -> str:
+    import AppKit
+
+    return str(AppKit.NSPasteboard.generalPasteboard().stringForType_(AppKit.NSPasteboardTypeString) or "")
+
+
 def applescript_string(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -638,7 +644,9 @@ def run_buddy_app() -> None:
         platform=Platform(
             copy=_copy, open_url=_open_url, run_in_terminal=_run_in_terminal,
             request_permission=request_permission, permissions=permissions, say=test_voice,
-            quit=lambda: AppKit.NSApp.terminate_(None), open_settings=open_settings, restart=restart),
+            quit=lambda: AppKit.NSApp.terminate_(None), open_settings=open_settings, restart=restart,
+            clipboard=_clipboard),
+        main=lambda job: AppHelper.callAfter(job),
         history=history,
         on_refresh=refresh_engines,
         memory=memory,

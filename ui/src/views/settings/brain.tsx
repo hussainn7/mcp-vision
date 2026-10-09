@@ -1,24 +1,16 @@
-import { ArrowRight, Check, Gauge, LoaderCircle, Plug, RotateCcw, Zap } from 'lucide-react'
-import { useState } from 'react'
-import { send, type ConnectProgress, type Engine, type SettingsState } from '../../bridge'
+import { ArrowRight, Check, Gauge, Plug, RotateCcw, Zap } from 'lucide-react'
+import { send, type Engine, type KeyCheck, type SettingsState } from '../../bridge'
 import { cn } from '../../components/bits'
-import { ConnectAI } from './connect'
+import { ConnectAI, Connecting, ENGINE_GLYPH } from './connect'
 import { money } from './usage'
-import { Button, Card, Header, Input, KeyField, Pill, Section, Segmented } from './ui'
+import { Button, Card, Header, KeyField, Pill, Section, Segmented } from './ui'
 
-export const ENGINE_GLYPH: Record<string, { bg: string; text: string; glyph: string }> = {
-  'claude-code': { bg: 'bg-[#d97757]', text: 'text-white', glyph: '✳' },
-  codex: { bg: 'bg-white', text: 'text-black', glyph: '◎' },
-  cursor: { bg: 'bg-[#111114] hairline', text: 'text-white', glyph: '▲' },
-  gemini: { bg: 'bg-gradient-to-br from-[#4f7cff] to-[#b46bff]', text: 'text-white', glyph: '✦' },
-  anthropic: { bg: 'bg-[#e8dccf]', text: 'text-[#1f1b16]', glyph: 'A' },
-}
 const STATUS: Record<Engine['status'], [string, 'good' | 'warn' | 'muted']> = {
   ready: ['Ready', 'good'], unknown: ['Checking', 'muted'], 'not-installed': ['Not installed', 'warn'],
   'logged-out': ['Sign in needed', 'warn'], 'missing-key': ['Add key', 'warn'],
 }
 
-function EngineCard({ engine }: { engine: Engine }) {
+function EngineCard({ engine, check }: { engine: Engine; check?: KeyCheck | null }) {
   const glyph = ENGINE_GLYPH[engine.id] ?? { bg: 'bg-white/10', text: 'text-white', glyph: '•' }
   const connect = engine.connect
   const busy = connect?.state === 'installing' || connect?.state === 'signing-in'
@@ -60,52 +52,10 @@ function EngineCard({ engine }: { engine: Engine }) {
       </div>
       {connect && (busy || connect.state === 'failed') && <Connecting id={engine.id} progress={connect} />}
       {engine.status === 'missing-key' && engine.keyName && <KeyField name={engine.keyName} placeholder={`Paste ${engine.keyName}`} saved={false} />}
-    </Card>
-  )
-}
-
-/** Live progress while Plip installs a brain's app and waits for the browser sign-in. */
-export function Connecting({ id, progress }: { id: string; progress: ConnectProgress }) {
-  const [help, setHelp] = useState(false)
-  const [code, setCode] = useState('')
-  if (progress.state === 'failed')
-    return <div className="rounded-xl bg-coral/[0.08] px-3 py-2 text-[12px] leading-relaxed text-rose-200/90">{progress.message}</div>
-  return (
-    <div className="rounded-xl bg-white/[0.04] px-3 py-2.5 hairline">
-      <div className="flex items-center gap-2 text-[12.5px] text-white/80">
-        <LoaderCircle className="size-3.5 shrink-0 animate-spin text-plip-300" />
-        <span className="flex-1">{progress.message}</span>
-        <Button variant="quiet" size="sm" onClick={() => send('engine-connect-cancel', { id })}>Cancel</Button>
-      </div>
-      {progress.state === 'signing-in' && progress.url && (
-        <div className="mt-1.5 pl-5.5 text-[11.5px] text-white/40">
-          {!help ? (
-            <button className="underline decoration-white/20 underline-offset-2 hover:text-white/70" onClick={() => setHelp(true)}>
-              Browser didn’t open?
-            </button>
-          ) : (
-            <div className="space-y-2">
-              <button className="font-semibold text-plip-200 hover:text-plip-100" onClick={() => send('open-url', { url: progress.url })}>
-                Open the sign-in page
-              </button>
-              {progress.needsCode && (
-                <form
-                  className="flex items-center gap-2"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    if (code.trim()) send('engine-connect-code', { id, code: code.trim() })
-                    setCode('')
-                  }}
-                >
-                  <Input value={code} onChange={setCode} placeholder="If the page shows a code, paste it here" className="font-mono text-[11.5px]" />
-                  <Button size="sm" disabled={!code.trim()}>Done</Button>
-                </form>
-              )}
-            </div>
-          )}
-        </div>
+      {check && check.state !== 'ok' && (
+        <div className={cn('text-[12px]', check.state === 'bad' ? 'text-rose-200/90' : 'text-white/55')}>{check.message}</div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -116,8 +66,8 @@ export function BrainTab({ state }: { state: SettingsState }) {
     <div>
       <Header
         eyebrow="Brain"
-        title="Use the AI you already pay for"
-        subtitle="Plip thinks with your Claude, ChatGPT, Cursor or Gemini plan through their official command-line apps, with their tools switched off. No extra bill. Or paste an API key."
+        title="The AI Plip thinks with"
+        subtitle="Use the plan you already pay for (Claude, ChatGPT or Cursor): one click connects it, with no extra bill. No plan? Google’s Gemini is free."
       />
       <div className="mb-6"><ConnectAI state={state} /></div>
       {state.usage && state.usage.periods['30'].requests > 0 && (
@@ -131,7 +81,9 @@ export function BrainTab({ state }: { state: SettingsState }) {
         <div className="grid grid-cols-2 gap-3">{plans.map((engine) => <EngineCard key={engine.id} engine={engine} />)}</div>
       </Section>
       <Section title="API keys">
-        <div className="grid grid-cols-2 gap-3">{keys.map((engine) => <EngineCard key={engine.id} engine={engine} />)}</div>
+        <div className="grid grid-cols-2 gap-3">
+          {keys.map((engine) => <EngineCard key={engine.id} engine={engine} check={state.keyCheck?.name === engine.keyName ? state.keyCheck : null} />)}
+        </div>
       </Section>
       <div className="grid grid-cols-2 gap-3">
         <Card>

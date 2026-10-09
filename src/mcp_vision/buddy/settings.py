@@ -34,10 +34,13 @@ class BuddySettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BUDDY_", extra="ignore", populate_by_name=True)
 
     # brain: "" picks the best ready engine (subscription CLIs first, then API keys)
-    engine: str = ""                    # claude-code | codex | cursor | gemini | anthropic
+    engine: str = ""                    # claude-code | codex | cursor | gemini | anthropic | gemini-api
     cli_model: str = ""                 # optional --model for the subscription CLI (e.g. sonnet, gpt-5-codex)
     anthropic_api_key: str | None = Field(default=None, validation_alias=AliasChoices(
         "ANTHROPIC_API_KEY", "BUDDY_ANTHROPIC_API_KEY"))
+    gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices(
+        "GEMINI_API_KEY", "GOOGLE_API_KEY", "BUDDY_GEMINI_API_KEY"))   # free key from aistudio.google.com
+    gemini_model: str = "gemini-flash-latest"
     model: str = "claude-opus-5-5"
     effort: str = "low"                 # low | medium | high | xhigh | max
     max_tokens: int = 16000            # thinking is always on; leave room for it

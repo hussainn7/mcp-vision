@@ -126,6 +126,25 @@ await test('settings: one click connects a brain (no Terminal, nothing to copy)'
   await page.close()
 })
 
+await test('settings: no AI plan? a free Google key in three steps, checked before it counts', async () => {
+  const { page, take } = await open('settings?tab=brain')
+  await page.evaluate(() => window.__plip({ type: 'settings', state: { engines: [
+    { id: 'claude-code', label: 'Claude', via: 'Claude Pro / Max via Claude Code', kind: 'subscription', status: 'not-installed' },
+    { id: 'codex', label: 'ChatGPT', via: 'ChatGPT Plus / Pro via Codex CLI', kind: 'subscription', status: 'not-installed' },
+    { id: 'anthropic', label: 'Claude API', via: 'Anthropic API key', kind: 'api', status: 'missing-key', keyName: 'ANTHROPIC_API_KEY' },
+    { id: 'gemini-api', label: 'Gemini', via: 'Free key from Google AI Studio', kind: 'api', status: 'missing-key', keyName: 'GEMINI_API_KEY' },
+  ] } }))
+  await page.getByText('If you pay for one of these').waitFor()
+  await page.getByText('No AI plan? Use Google’s for free').waitFor()
+  await page.getByRole('button', { name: 'Get my free key' }).click()
+  assert.deepEqual(await take('open-url'), { cmd: 'open-url', url: 'https://aistudio.google.com/apikey' })
+  await page.getByRole('button', { name: 'Paste key' }).click()
+  assert.deepEqual(await take('paste-key'), { cmd: 'paste-key' })
+  await page.getByText('Checking the key with Google').first().waitFor()
+  await page.getByText('Plip thinks with Gemini').waitFor({ timeout: 4000 })        // checked, saved, in use
+  await page.close()
+})
+
 await test('island: only a setup error offers Fix setup', async () => {
   const { page, take } = await open('island', { width: 760, height: 420 })
   await setIsland(page, { phase: 'error', error: 'I didn’t catch that. Hold ⌃⌥ and try again.', fixable: false })

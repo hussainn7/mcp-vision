@@ -6,6 +6,8 @@ tested on any OS.
 """
 from __future__ import annotations
 
+import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,10 +18,22 @@ from mcp_vision import __version__
 from mcp_vision.buddy.hotkey import CHORDS, chord, keyboard_owner
 from mcp_vision.buddy.store import History, Prefs, config_dir
 
-KEY_NAMES = {"ANTHROPIC_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
+KEY_NAMES = {"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "TYPESAFE_API_KEY", "ELEVENLABS_API_KEY", "ASSEMBLYAI_API_KEY"}
 DEPTHS = {"fast", "balanced", "deep"}
 IMPORT_SOURCES = {"contacts", "autofill", "mail"}
 AI_SOURCES = {"chatgpt", "claude", "gemini", "ai"}
+# What a pasted key looks like, by whose it is: a free Google AI Studio key, or an Anthropic one.
+KEY_SHAPES = (("GEMINI_API_KEY", re.compile(r"AIza[0-9A-Za-z_\-]{30,60}")),
+              ("ANTHROPIC_API_KEY", re.compile(r"sk-ant-[0-9A-Za-z_\-]{20,200}")))
+
+
+def _check_key(name: str, value: str) -> str:
+    """"" when the provider takes the key, else what's wrong in plain words. Only Google's is checked."""
+    if name != "GEMINI_API_KEY":
+        return ""
+    from mcp_vision.buddy.brain_gemini import check_key
+
+    return check_key(value)
 
 
 @dataclass
@@ -33,6 +47,7 @@ class Platform:
     quit: Callable[[], None] = lambda: None
     open_settings: Callable[[str], None] = lambda tab: None
     restart: Callable[[], None] = lambda: None             # quit and open Plip again
+    clipboard: Callable[[], str] = lambda: ""                # what's copied (only read when they click Paste key)
 
 
 @dataclass
@@ -55,6 +70,10 @@ class SettingsService:
     updates: Any = None                                    # buddy.updates.Updates (a newer Plip is out)
     check_updates: Callable[[], None] = lambda: None       # ask GitHub now, in the background
     connector: Any = None                                  # buddy.connect.Connector (one-click Connect, no Terminal)
+    check_key: Callable[[str, str], str] = _check_key      # "" when the provider takes a pasted key
+    key_check: dict = field(default_factory=dict)          # {name, state: checking | ok | bad, message}
+    main: Callable[[Callable[[], None]], None] = lambda job: job()       # run on the UI thread
+    background: Callable[[Callable[[], None]], None] = lambda job: threading.Thread(target=job, daemon=True).start()
     connect_note: str = ""                                 # what "Connect AI" just did, shown under the button
     report_note: str = ""                                  # "sent" | "failed" after a bug report or feature request
     hotkey_works: Callable[[], bool] = lambda: True        # macOS passes Plip the keys (see hotkey.can_listen)
@@ -98,6 +117,7 @@ class SettingsService:
             "usage": self._usage(),
             "onboarded": prefs.onboarded,
             "connect": self.connect_note,
+            "keyCheck": dict(self.key_check) or None,
             "report": self.report_note,
             "account": self.account.snapshot() if self.account is not None
             else {"available": False, "required": False},
@@ -142,6 +162,46 @@ class SettingsService:
         name, value = str(command.get("name", "")), str(command.get("value", "")).strip()
         if name not in KEY_NAMES or not value or "\n" in value:
             return
+        if name == "GEMINI_API_KEY":                    # the beginner's way in: say right away if Google takes it
+            self._check_then_save(name, value)
+            return
+        self._save_key(name, value)
+
+    def _cmd_paste_key(self, _command):
+        """"Paste key": take an AI key off the clipboard, whichever kind it is. Nothing else on it is kept."""
+        text = (self.platform.clipboard() or "").strip()
+        for name, shape in KEY_SHAPES:
+            if shape.fullmatch(text):
+                self._cmd_set_key({"name": name, "value": text})
+                return
+        self.key_check = {"name": "", "state": "bad", "message": "There's no key on your clipboard yet. On Google's "
+                          "page, click Copy next to your key, then click Paste key again."}
+        self.push()
+
+    def _check_then_save(self, name: str, value: str) -> None:
+        self.key_check = {"name": name, "state": "checking", "message": "Checking the key with Google…"}
+        self.push()
+
+        def check() -> None:
+            problem = self.check_key(name, value)
+
+            def done() -> None:
+                self.key_check = {"name": name, "state": "bad" if problem else "ok", "message": problem}
+                if problem:
+                    self.push()
+                    return
+                self._save_key(name, value)
+                if not self._ready_engine():
+                    self._update_prefs(engine="gemini-api")     # their only working brain: use it
+            self.main(done)
+        self.background(check)
+
+    def _ready_engine(self) -> str:
+        """A brain that already works (other than the one being added), or ""."""
+        return next((engine["id"] for engine in self.engines() if engine.get("status") == "ready"
+                     and engine.get("id") != "gemini-api"), "")
+
+    def _save_key(self, name: str, value: str) -> None:
         from mcp_vision.buddy.cli import write_env
 
         write_env(self.env_path or config_dir() / ".env", {name: value})
@@ -408,7 +468,8 @@ class SettingsService:
 def _key(settings: Any, name: str) -> str | None:
     import os
 
-    attribute = {"ANTHROPIC_API_KEY": "anthropic_api_key", "TYPESAFE_API_KEY": "typesafe_api_key",
+    attribute = {"ANTHROPIC_API_KEY": "anthropic_api_key", "GEMINI_API_KEY": "gemini_api_key",
+                 "TYPESAFE_API_KEY": "typesafe_api_key",
                  "ELEVENLABS_API_KEY": "elevenlabs_api_key", "ASSEMBLYAI_API_KEY": "assemblyai_api_key"}.get(name)
     value = getattr(settings, attribute, None) if attribute else None
     return value or os.environ.get(name)
